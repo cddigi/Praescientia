@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "portfolio_name": "Contrarian 2026",
+    "starting_bankroll": 100.00,
+    "start_date": "2026-01-06",
+    "strategy": "High-spread underdog plays with conviction",
+    "status": "ACTIVE"
+  },
+  "positions": [
+    {
+      "id": "us-recession-2026",
+      "market": "US Recession by End of 2026",
+      "market_url": "https://polymarket.com/event/us-recession-by-end-of-2026",
+      "position": "YES",
+      "entry_price": 0.255,
+      "shares": 235,
+      "cost": 59.93,
+      "potential_payout": 235.00,
+      "potential_profit": 175.07,
+      "confidence": 0.65,
+      "reasoning": "Unemployment 4.6%, Sahm Rule triggered, tariff shock, yield curve inverted. Market underpricing recession risk.",
+      "resolution_date": "2027-01-31",
+      "resolution_criteria": "Two consecutive quarters negative GDP OR NBER declaration",
+      "outcome": null,
+      "pnl": null
+    },
+    {
+      "id": "fed-rate-hike-2026",
+      "market": "Fed Rate Hike in 2026",
+      "market_url": "https://polymarket.com/event/fed-rate-hike-in-2026",
+      "position": "YES",
+      "entry_price": 0.115,
+      "shares": 175,
+      "cost": 20.13,
+      "potential_payout": 175.00,
+      "potential_profit": 154.87,
+      "confidence": 0.40,
+      "reasoning": "Hedge against no-recession scenario. If inflation sticky and economy strong, Fed may hike.",
+      "resolution_date": "2026-12-09",
+      "resolution_criteria": "Fed funds upper bound increased any time Jan 1 - Dec 9, 2026",
+      "outcome": null,
+      "pnl": null
+    },
+    {
+      "id": "fed-emergency-cut-2026",
+      "market": "Fed Emergency Rate Cut Before 2027",
+      "market_url": "https://polymarket.com/event/fed-emergency-rate-cut-before-2027",
+      "position": "YES",
+      "entry_price": 0.130,
+      "shares": 154,
+      "cost": 20.02,
+      "potential_payout": 154.00,
+      "potential_profit": 133.98,
+      "confidence": 0.45,
+      "reasoning": "Correlated with recession bet. If crisis hits, Fed cuts between meetings like 2008/2020.",
+      "resolution_date": "2026-12-31",
+      "resolution_criteria": "Fed cuts rates outside scheduled FOMC meeting before 2027",
+      "outcome": null,
+      "pnl": null
+    }
+  ],
+  "summary": {
+    "total_invested": 100.08,
+    "cash_remaining": 0.00,
+    "positions_count": 3,
+    "max_potential_payout": 564.00,
+    "max_potential_profit": 463.92,
+    "max_potential_roi_pct": 463.5,
+    "weighted_expected_profit": 48.52,
+    "weighted_expected_roi_pct": 48.5
+  },
+  "correlations": {
+    "recession_rate_hike": -0.70,
+    "recession_emergency_cut": 0.80,
+    "rate_hike_emergency_cut": -0.90
+  },
+  "scenarios": [
+    {"name": "Soft Landing", "probability": 0.50, "pnl": -100.08},
+    {"name": "Recession + Emergency Cut", "probability": 0.25, "pnl": 288.97},
+    {"name": "Recession, No Emergency", "probability": 0.10, "pnl": 175.07},
+    {"name": "No Recession + Rate Hike", "probability": 0.10, "pnl": 154.87},
+    {"name": "Stagflation", "probability": 0.05, "pnl": 329.94}
+  ],
+  "key_dates": [
+    {"date": "2026-01-28", "event": "FOMC Meeting"},
+    {"date": "2026-01-30", "event": "Q4 2025 GDP Advance"},
+    {"date": "2026-03-18", "event": "FOMC Meeting"},
+    {"date": "2026-04-30", "event": "Q1 2026 GDP"},
+    {"date": "2026-05-06", "event": "FOMC Meeting"},
+    {"date": "2026-07-30", "event": "Q2 2026 GDP"},
+    {"date": "2026-11-03", "event": "Midterm Elections"},
+    {"date": "2026-12-09", "event": "Final FOMC 2026"}
+  ],
+  "grace_hopper_calculus": {
+    "total_at_risk": 100.08,
+    "worst_case_loss": -100.08,
+    "best_case_profit": 463.92,
+    "expected_value": 48.52,
+    "risk_reward_ratio": 4.64
+  }
+}

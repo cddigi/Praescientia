@@ -36,6 +36,7 @@ secrets.json
 .claude/logs/
 .claude/cache/
 IMPLEMENTATION_PLAN.md
+CLAUDE.md
 
 # macOS
 .DS_Store
