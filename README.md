@@ -146,12 +146,20 @@ end
 
 ```
 praescientia/
-├── Project.toml              # Julia package manifest
+├── src/
+│   ├── Praescientia.jl       # Core state chain + prediction logic
+│   └── PolymarketAuth.jl     # API authentication + trading
+├── data/                     # Resolved market data for backtesting
+├── portfolios/               # Active portfolio tracking
+├── scripts/
+│   ├── but-cleanup.sh        # GitButler workspace cleanup
+│   └── but-delete-branch.sh  # GitButler branch deletion helper
 ├── demo.jl                   # Demonstration script
-├── README.md                 # This file
-└── src/
-    ├── Praescientia.jl       # Core state chain + prediction logic
-    └── PolymarketAuth.jl     # API authentication + trading
+├── backtest.jl               # Backtesting against historical data
+├── check_portfolios.jl       # Portfolio checker with live odds
+├── Project.toml              # Julia package manifest
+├── CLAUDE.md                 # Session context for Claude Code
+└── README.md                 # This file
 ```
 
 ## Requirements
@@ -186,7 +194,7 @@ For prediction markets, the market IS the source of truth. When our model diverg
 
 ## License
 
-MIT
+[Unlicense](UNLICENSE) — Public Domain
 
 ---
 

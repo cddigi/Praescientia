@@ -1,6 +1,6 @@
 # Praescientia — Session Context
 
-> **Last Updated:** January 6, 2026
+> **Last Updated:** January 7, 2026
 > **Status:** Active trading simulation
 
 ---
@@ -12,7 +12,6 @@
 **Core Concept:** Discrete, hashed state checkpoints enable O(1) divergence identification instead of O(n) context reprocessing — narrowing the gap between human "obvious" pattern recognition and GenAI's brute-force approach.
 
 **GitHub:** https://github.com/cddigi/Praescientia
-**Open PR:** https://github.com/cddigi/Praescientia/pull/2
 
 ---
 
@@ -140,12 +139,16 @@ praescientia/
 │   ├── daily_jan7_2026.md
 │   ├── contrarian_2026.md
 │   └── seneca_strategy.md
+├── scripts/
+│   ├── but-cleanup.sh       # GitButler workspace cleanup
+│   └── but-delete-branch.sh # GitButler branch deletion helper
 ├── demo.jl                  # Demonstration script
 ├── backtest.jl              # Backtesting (oct/nov/dec 2025)
+├── check_portfolios.jl      # Portfolio status checker with live odds
 ├── Project.toml
 ├── README.md
 ├── UNLICENSE
-└── CLAUDE.md                # This file (local only)
+└── CLAUDE.md                # Session context (tracked in git)
 ```
 
 ---
@@ -176,14 +179,17 @@ praescientia/
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
-| `check_portfolios.jl` | Check wager status & outcomes | `julia --project=. check_portfolios.jl` |
+| `check_portfolios.jl` | Check wager status & outcomes | `julia --project=. check_portfolios.jl [daily\|weekly\|contrarian]` |
 | `backtest.jl` | Backtest against historical data | `julia --project=. backtest.jl [month]` |
 | `demo.jl` | Demonstrate core functionality | `julia --project=. demo.jl` |
+| `scripts/but-cleanup.sh` | GitButler workspace cleanup | `./scripts/but-cleanup.sh [--all]` |
+| `scripts/but-delete-branch.sh` | Delete GitButler branches | `./scripts/but-delete-branch.sh <name>` |
 
 **When to create a script:**
 - Any task that fetches external data (prices, API calls)
 - Any task that parses or evaluates portfolio positions
 - Any repetitive analysis or reporting task
+- Any GitButler/version control maintenance task
 
 ---
 
@@ -198,9 +204,9 @@ praescientia/
 
 ## Notes
 
-- GitButler manages version control (don't use raw git commit)
+- GitButler manages version control (don't use raw git commands)
 - Polymarket APIs sometimes return stale data — use WebSearch/WebFetch on event pages
-- This file is LOCAL ONLY — do not push to remote
+- Branch names should be short, use common abbreviations (e.g., `gb-scripts`, `pm-api`)
 - Grace Hopper is our hero
 
 ---
