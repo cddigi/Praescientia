@@ -58,3 +58,14 @@ data/*.parquet
 # Logs
 *.log
 logs/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Transaction logs (JSONL blockchain)
+portfolios/*.jsonl
+portfolios/archive/*.jsonl
+!portfolios/archive/.gitkeep
+data/portfolio_state.json
+data/trade_log.json
