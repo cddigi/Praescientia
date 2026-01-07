@@ -1,21 +1,22 @@
 #!/usr/bin/env julia
 #=
 =====================================================================
-POLYMARKET ORACLE - BACKTESTING MODULE
+PRAESCIENTIA - BACKTESTING MODULE
 =====================================================================
+Latin: praescientia (foreknowledge)
 
 "The cost of incorrect information... I can go up to almost half a
 million dollars to get that file to a higher level of correctness,
 because that's what I stand to lose."
                                         - Grace Hopper, 1982
 
-This script backtests predictions against actual December 2025
-Polymarket resolutions to validate our prediction engine.
+This script backtests predictions against actual Polymarket
+resolutions to validate our prediction engine.
 =====================================================================
 =#
 
-include("src/PolymarketOracle.jl")
-using .PolymarketOracle
+include("src/Praescientia.jl")
+using .Praescientia
 using JSON3
 using Dates
 using Printf
@@ -264,7 +265,7 @@ end
 function main()
     println()
     println("╔══════════════════════════════════════════════════════════════════════╗")
-    println("║  POLYMARKET ORACLE - BACKTESTING                                     ║")
+    println("║  PRAESCIENTIA - BACKTESTING                                          ║")
     println("║  Validating predictions against market resolutions                   ║")
     println("╚══════════════════════════════════════════════════════════════════════╝")
     println()
