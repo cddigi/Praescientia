@@ -3,7 +3,7 @@
     "source": "Polymarket",
     "period": "December 2025",
     "fetched_at": "2026-01-06",
-    "notes": "Resolved prediction markets for backtesting"
+    "notes": "Resolved prediction markets for backtesting - expanded dataset"
   },
   "markets": [
     {
@@ -135,6 +135,189 @@
       "options": [
         {"label": "Yes", "outcome": "YES", "final_price": 1.0},
         {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "nvidia-largest-company-2025",
+      "question": "NVIDIA largest company by market cap end of 2025?",
+      "category": "stocks",
+      "volume_usd": 62339410,
+      "resolution_date": "2025-12-31",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "NVIDIA", "outcome": "YES", "final_price": 1.0},
+        {"label": "Apple", "outcome": "NO", "final_price": 0.0},
+        {"label": "Microsoft", "outcome": "NO", "final_price": 0.0},
+        {"label": "Other", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "nvidia-price-before-2026",
+      "question": "NVIDIA price targets before 2026",
+      "category": "stocks",
+      "volume_usd": 15000000,
+      "resolution_date": "2025-12-31",
+      "outcome": "NVDA peaked ~$190, range $165-190",
+      "targets": [
+        {"target": 190, "type": "reach", "outcome": "YES"},
+        {"target": 185, "type": "reach", "outcome": "YES"},
+        {"target": 200, "type": "reach", "outcome": "NO"},
+        {"target": 215, "type": "reach", "outcome": "NO"},
+        {"target": 230, "type": "reach", "outcome": "NO"},
+        {"target": 245, "type": "reach", "outcome": "NO"},
+        {"target": 260, "type": "reach", "outcome": "NO"},
+        {"target": 180, "type": "dip", "outcome": "YES"},
+        {"target": 170, "type": "dip", "outcome": "YES"},
+        {"target": 165, "type": "dip", "outcome": "NO"},
+        {"target": 160, "type": "dip", "outcome": "NO"},
+        {"target": 145, "type": "dip", "outcome": "NO"},
+        {"target": 125, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "israel-hamas-ceasefire-2025",
+      "question": "Israel x Hamas ceasefire before 2026?",
+      "category": "geopolitics",
+      "volume_usd": 3556471,
+      "resolution_date": "2025-10-09",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "Ceasefire agreed January 15, 2025. Ended March 17 with Israeli strikes, but market resolved YES as agreement existed.",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "russia-ukraine-ceasefire-2025",
+      "question": "Russia x Ukraine ceasefire in 2025?",
+      "category": "geopolitics",
+      "volume_usd": 50000000,
+      "resolution_date": "2025-12-31",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "notes": "No ceasefire reached. Odds were 6% at end of year.",
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "inflation-2025-above-8pct",
+      "question": "2025 inflation above 8%?",
+      "category": "economics",
+      "volume_usd": 5000000,
+      "resolution_date": "2025-12-31",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "Inflation hit between 8-10% during 2025",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "inflation-2025-above-10pct",
+      "question": "2025 inflation above 10%?",
+      "category": "economics",
+      "volume_usd": 3000000,
+      "resolution_date": "2025-12-31",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "ethereum-price-2025",
+      "question": "Ethereum price targets in 2025",
+      "category": "crypto",
+      "volume_usd": 25000000,
+      "resolution_date": "2025-12-31",
+      "outcome": "ETH peaked ~$4400",
+      "targets": [
+        {"target": 4400, "type": "reach", "outcome": "YES"},
+        {"target": 4000, "type": "reach", "outcome": "YES"},
+        {"target": 3000, "type": "reach", "outcome": "YES"},
+        {"target": 2500, "type": "reach", "outcome": "YES"},
+        {"target": 2000, "type": "reach", "outcome": "YES"},
+        {"target": 5000, "type": "reach", "outcome": "NO"},
+        {"target": 6000, "type": "reach", "outcome": "NO"},
+        {"target": 7000, "type": "reach", "outcome": "NO"},
+        {"target": 8000, "type": "reach", "outcome": "NO"},
+        {"target": 10000, "type": "reach", "outcome": "NO"},
+        {"target": 1500, "type": "dip", "outcome": "YES"},
+        {"target": 1300, "type": "dip", "outcome": "NO"},
+        {"target": 1000, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "ethereum-ath-before-2026",
+      "question": "Ethereum all time high before 2026?",
+      "category": "crypto",
+      "volume_usd": 1320759,
+      "resolution_date": "2025-12-31",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "ETH surpassed previous ATH of ~$4878",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "trump-hegseth-confirmed",
+      "question": "Will Pete Hegseth be confirmed as Secretary of Defense?",
+      "category": "politics",
+      "volume_usd": 3251258,
+      "resolution_date": "2025-01-25",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "trump-gabbard-confirmed",
+      "question": "Will Tulsi Gabbard be confirmed as DNI?",
+      "category": "politics",
+      "volume_usd": 5257374,
+      "resolution_date": "2025-02-01",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "trump-patel-confirmed",
+      "question": "Will Kash Patel be confirmed as FBI Director?",
+      "category": "politics",
+      "volume_usd": 2746033,
+      "resolution_date": "2025-02-15",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "trump-gaetz-confirmed",
+      "question": "Will Matt Gaetz be confirmed as Attorney General?",
+      "category": "politics",
+      "volume_usd": 3200000,
+      "resolution_date": "2025-01-15",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "notes": "Gaetz withdrew nomination",
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
       ]
     }
   ]

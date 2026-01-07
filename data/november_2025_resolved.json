@@ -3,7 +3,7 @@
     "source": "Polymarket",
     "period": "November 2025",
     "fetched_at": "2026-01-06",
-    "notes": "Resolved prediction markets for backtesting - includes late October FOMC"
+    "notes": "Resolved prediction markets for backtesting - expanded dataset"
   },
   "markets": [
     {
@@ -92,6 +92,36 @@
       ]
     },
     {
+      "id": "solana-price-november-2025",
+      "question": "Solana price targets in November 2025",
+      "category": "crypto",
+      "volume_usd": 8000000,
+      "resolution_date": "2025-12-01",
+      "outcome": "SOL dipped to ~$130, didn't reach $190+",
+      "targets": [
+        {"target": 180, "type": "dip", "outcome": "YES"},
+        {"target": 170, "type": "dip", "outcome": "YES"},
+        {"target": 160, "type": "dip", "outcome": "YES"},
+        {"target": 150, "type": "dip", "outcome": "YES"},
+        {"target": 140, "type": "dip", "outcome": "YES"},
+        {"target": 130, "type": "dip", "outcome": "YES"},
+        {"target": 120, "type": "dip", "outcome": "NO"},
+        {"target": 110, "type": "dip", "outcome": "NO"},
+        {"target": 100, "type": "dip", "outcome": "NO"},
+        {"target": 90, "type": "dip", "outcome": "NO"},
+        {"target": 190, "type": "reach", "outcome": "NO"},
+        {"target": 200, "type": "reach", "outcome": "NO"},
+        {"target": 210, "type": "reach", "outcome": "NO"},
+        {"target": 220, "type": "reach", "outcome": "NO"},
+        {"target": 230, "type": "reach", "outcome": "NO"},
+        {"target": 240, "type": "reach", "outcome": "NO"},
+        {"target": 250, "type": "reach", "outcome": "NO"},
+        {"target": 260, "type": "reach", "outcome": "NO"},
+        {"target": 270, "type": "reach", "outcome": "NO"},
+        {"target": 300, "type": "reach", "outcome": "NO"}
+      ]
+    },
+    {
       "id": "elon-tweets-oct28-nov4",
       "question": "Elon Musk # tweets October 28 - November 4, 2025?",
       "category": "social",
@@ -150,6 +180,97 @@
       "resolution_date": "2025-11-30",
       "outcome": "YES",
       "notes": "43-day shutdown (longest in US history) ended in November 2025",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "polymarket-us-cftc-approval",
+      "question": "Polymarket receives CFTC approval by end of November 2025?",
+      "category": "crypto",
+      "volume_usd": 5000000,
+      "resolution_date": "2025-11-25",
+      "outcome": "YES",
+      "notes": "CFTC granted Amended Order of Designation on November 25, 2025",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "solana-etf-by-end-november",
+      "question": "Solana ETF approved by end of November 2025?",
+      "category": "crypto",
+      "volume_usd": 3000000,
+      "resolution_date": "2025-11-30",
+      "outcome": "NO",
+      "notes": "Solana ETFs launched October 28, but spot ETF not yet approved by SEC",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "solana-ath-november-2025",
+      "question": "Solana all time high in November 2025?",
+      "category": "crypto",
+      "volume_usd": 2000000,
+      "resolution_date": "2025-12-01",
+      "outcome": "NO",
+      "notes": "SOL crashed 36% from October peak of $240 to ~$153. ATH is $295.",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "nvidia-price-november-2025",
+      "question": "NVIDIA price targets in November 2025",
+      "category": "stocks",
+      "volume_usd": 10000000,
+      "resolution_date": "2025-12-01",
+      "outcome": "NVDA range $165-185",
+      "targets": [
+        {"target": 185, "type": "reach", "outcome": "YES"},
+        {"target": 180, "type": "reach", "outcome": "YES"},
+        {"target": 175, "type": "reach", "outcome": "YES"},
+        {"target": 190, "type": "reach", "outcome": "NO"},
+        {"target": 200, "type": "reach", "outcome": "NO"},
+        {"target": 210, "type": "reach", "outcome": "NO"},
+        {"target": 170, "type": "dip", "outcome": "YES"},
+        {"target": 165, "type": "dip", "outcome": "YES"},
+        {"target": 160, "type": "dip", "outcome": "NO"},
+        {"target": 155, "type": "dip", "outcome": "NO"},
+        {"target": 150, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "assad-leaves-syria-2024",
+      "question": "Assad leaves Syria before 2025?",
+      "category": "geopolitics",
+      "volume_usd": 5000000,
+      "resolution_date": "2024-12-08",
+      "outcome": "YES",
+      "notes": "Assad fled Syria on December 8, 2024",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "ice-polymarket-investment",
+      "question": "ICE (NYSE parent) invests in Polymarket?",
+      "category": "crypto",
+      "volume_usd": 1500000,
+      "resolution_date": "2025-10-15",
+      "outcome": "YES",
+      "notes": "ICE announced $2B strategic investment valuing Polymarket at $8B",
       "winning_price": 1.0,
       "options": [
         {"label": "Yes", "outcome": "YES", "final_price": 1.0},

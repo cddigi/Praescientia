@@ -21,6 +21,13 @@
       "Bash(git push:*)",
       "Bash(gh pr create:*)",
       "Bash(julia --project=. check_portfolios.jl:*)"
+      "Bash(julia:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git pull:*)",
+      "Bash(/usr/local/bin/julia:*)"
     ]
   }
 }
