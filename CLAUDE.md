@@ -203,6 +203,44 @@ praescientia/
 
 ---
 
+## GitButler MCP Workflow Caveats
+
+### The Problem: `gitbutler_update_branches` Doesn't Target Branches
+
+**Incident (Jan 7, 2026):** Created branch `dash-update` via `but branch new dash-update`, then called `gitbutler_update_branches` MCP tool. The commit landed on `cd-branch-1` instead of the new branch.
+
+**Root Cause:** The `gitbutler_update_branches` MCP tool has no parameter to specify which branch receives the commit. GitButler commits changes to whichever branch currently "owns" the modified files. Creating a new branch with `but branch new` doesn't automatically assign existing uncommitted changes to it.
+
+### Why Standard Fixes Don't Work
+
+| Approach | Why It Failed |
+|----------|---------------|
+| **Move commit** (`but rub <commit> <target>`) | Target branch was empty; GitButler throws "anonymous segment" error when source branch becomes empty |
+| **Rename branch** | GitButler CLI has no `but branch rename` command |
+| **Delete empty + rename** | Still no rename; would require: create new branch → move commit → delete old branch (3+ steps with potential errors) |
+
+### Correct Workflow
+
+**Option A: Use existing active branch**
+If changes are already associated with a branch, just use that branch. Don't create a new one.
+
+**Option B: Assign files before committing**
+1. `but branch new <name>`
+2. Use GitButler UI to drag/assign changed files to the new branch
+3. Then call `gitbutler_update_branches`
+
+**Option C: Create branch first, then make changes**
+1. `but branch new <name>` (while working directory is clean)
+2. Make file changes
+3. Changes will automatically associate with the new branch
+4. Call `gitbutler_update_branches`
+
+### Key Insight
+
+GitButler's virtual branch model tracks file ownership at the hunk/change level, not at the "current branch" level like traditional git. The MCP tool commits based on which branch owns the changes, not which branch was most recently created or selected.
+
+---
+
 ## Notes
 
 - GitButler manages version control (don't use raw git commands)
