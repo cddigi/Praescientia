@@ -1,0 +1,232 @@
+{
+  "metadata": {
+    "source": "Polymarket",
+    "period": "October 2025",
+    "fetched_at": "2026-01-06",
+    "notes": "Resolved prediction markets for backtesting"
+  },
+  "markets": [
+    {
+      "id": "fed-decision-september-2025",
+      "question": "Fed decision in September 2025?",
+      "category": "economics",
+      "volume_usd": 188000000,
+      "resolution_date": "2025-09-17",
+      "outcome": "25 bps decrease",
+      "winning_price": 1.0,
+      "notes": "91% prediction accuracy. First cut in easing cycle.",
+      "options": [
+        {"label": "50+ bps decrease", "outcome": "NO", "final_price": 0.0},
+        {"label": "25 bps decrease", "outcome": "YES", "final_price": 1.0},
+        {"label": "No change", "outcome": "NO", "final_price": 0.0},
+        {"label": "25+ bps increase", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "fed-decision-october-2025",
+      "question": "Fed decision in October 2025?",
+      "category": "economics",
+      "volume_usd": 252490000,
+      "resolution_date": "2025-10-29",
+      "outcome": "25 bps decrease",
+      "winning_price": 1.0,
+      "notes": "98% prediction pre-meeting. FOMC meeting Oct 28-29.",
+      "options": [
+        {"label": "50+ bps decrease", "outcome": "NO", "final_price": 0.0},
+        {"label": "25 bps decrease", "outcome": "YES", "final_price": 1.0},
+        {"label": "No change", "outcome": "NO", "final_price": 0.0},
+        {"label": "25+ bps increase", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "bitcoin-price-october-2025",
+      "question": "What price will Bitcoin hit in October 2025?",
+      "category": "crypto",
+      "volume_usd": 15000000,
+      "resolution_date": "2025-11-01",
+      "outcome": "BTC hit $126k high, stayed above $104k",
+      "notes": "Resolution source: Binance BTC/USDT 1-minute candle highs",
+      "targets": [
+        {"target": 126000, "type": "reach", "outcome": "YES"},
+        {"target": 124000, "type": "reach", "outcome": "YES"},
+        {"target": 122000, "type": "reach", "outcome": "YES"},
+        {"target": 120000, "type": "reach", "outcome": "YES"},
+        {"target": 118000, "type": "reach", "outcome": "YES"},
+        {"target": 116000, "type": "reach", "outcome": "YES"},
+        {"target": 114000, "type": "reach", "outcome": "YES"},
+        {"target": 112000, "type": "reach", "outcome": "YES"},
+        {"target": 110000, "type": "reach", "outcome": "YES"},
+        {"target": 108000, "type": "reach", "outcome": "YES"},
+        {"target": 106000, "type": "reach", "outcome": "YES"},
+        {"target": 104000, "type": "reach", "outcome": "YES"},
+        {"target": 200000, "type": "reach", "outcome": "NO"},
+        {"target": 150000, "type": "reach", "outcome": "NO"},
+        {"target": 135000, "type": "reach", "outcome": "NO"},
+        {"target": 130000, "type": "reach", "outcome": "NO"},
+        {"target": 100000, "type": "dip", "outcome": "NO"},
+        {"target": 95000, "type": "dip", "outcome": "NO"},
+        {"target": 90000, "type": "dip", "outcome": "NO"},
+        {"target": 80000, "type": "dip", "outcome": "NO"},
+        {"target": 70000, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "ethereum-price-october-2025",
+      "question": "What price will Ethereum hit in October 2025?",
+      "category": "crypto",
+      "volume_usd": 5000000,
+      "resolution_date": "2025-11-01",
+      "outcome": "ETH range $3,600-$4,600",
+      "notes": "Resolution source: Binance ETH/USDT 1-minute candle highs",
+      "targets": [
+        {"target": 4600, "type": "reach", "outcome": "YES"},
+        {"target": 4400, "type": "reach", "outcome": "YES"},
+        {"target": 4200, "type": "reach", "outcome": "YES"},
+        {"target": 4000, "type": "reach", "outcome": "YES"},
+        {"target": 3800, "type": "reach", "outcome": "YES"},
+        {"target": 3600, "type": "reach", "outcome": "YES"},
+        {"target": 8000, "type": "reach", "outcome": "NO"},
+        {"target": 6000, "type": "reach", "outcome": "NO"},
+        {"target": 5600, "type": "reach", "outcome": "NO"},
+        {"target": 5400, "type": "reach", "outcome": "NO"},
+        {"target": 5200, "type": "reach", "outcome": "NO"},
+        {"target": 5000, "type": "reach", "outcome": "NO"},
+        {"target": 4800, "type": "reach", "outcome": "NO"},
+        {"target": 3400, "type": "dip", "outcome": "NO"},
+        {"target": 3200, "type": "dip", "outcome": "NO"},
+        {"target": 3000, "type": "dip", "outcome": "NO"},
+        {"target": 2800, "type": "dip", "outcome": "NO"},
+        {"target": 2600, "type": "dip", "outcome": "NO"},
+        {"target": 2000, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "solana-price-october-2025",
+      "question": "What price will Solana hit in October 2025?",
+      "category": "crypto",
+      "volume_usd": 2000000,
+      "resolution_date": "2025-11-01",
+      "outcome": "SOL hit $235 peak, range $170-$235",
+      "notes": "Crashed 36% from peak by mid-Nov. Overheating at $200 triggered liquidation cascade.",
+      "targets": [
+        {"target": 235, "type": "reach", "outcome": "YES"},
+        {"target": 230, "type": "reach", "outcome": "YES"},
+        {"target": 225, "type": "reach", "outcome": "YES"},
+        {"target": 220, "type": "reach", "outcome": "YES"},
+        {"target": 215, "type": "reach", "outcome": "YES"},
+        {"target": 200, "type": "reach", "outcome": "YES"},
+        {"target": 195, "type": "reach", "outcome": "YES"},
+        {"target": 190, "type": "reach", "outcome": "YES"},
+        {"target": 185, "type": "reach", "outcome": "YES"},
+        {"target": 180, "type": "reach", "outcome": "YES"},
+        {"target": 175, "type": "reach", "outcome": "YES"},
+        {"target": 170, "type": "reach", "outcome": "YES"},
+        {"target": 350, "type": "reach", "outcome": "NO"},
+        {"target": 300, "type": "reach", "outcome": "NO"},
+        {"target": 270, "type": "reach", "outcome": "NO"},
+        {"target": 250, "type": "reach", "outcome": "NO"},
+        {"target": 240, "type": "reach", "outcome": "NO"},
+        {"target": 150, "type": "dip", "outcome": "NO"},
+        {"target": 120, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "microstrategy-650k-btc-october-2025",
+      "question": "Will MicroStrategy announce holding 650k+ BTC by October 31?",
+      "category": "crypto",
+      "volume_usd": 500000,
+      "resolution_date": "2025-11-01",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "notes": "MSTR did not reach 650k BTC holdings by deadline",
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "polymarket-volume-october-2025",
+      "question": "Polymarket monthly volume exceeds $3B in October 2025?",
+      "category": "crypto",
+      "volume_usd": 1000000,
+      "resolution_date": "2025-11-01",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "First month to exceed $3B. ~110% increase from September's $1.427B. Platform recorded 478k active traders.",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "eth-ath-october-2025",
+      "question": "Ethereum ATH in October 2025?",
+      "category": "crypto",
+      "volume_usd": 800000,
+      "resolution_date": "2025-11-01",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "notes": "ETH peaked ~$4600 in October, previous ATH was ~$4878. ATH not reached until later.",
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "btc-above-100k-october-2025",
+      "question": "Bitcoin above $100k in October 2025?",
+      "category": "crypto",
+      "volume_usd": 3000000,
+      "resolution_date": "2025-11-01",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "BTC stayed above $100k throughout October, with lowest around $104k",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "sol-above-200-october-2025",
+      "question": "Solana above $200 in October 2025?",
+      "category": "crypto",
+      "volume_usd": 128811,
+      "resolution_date": "2025-11-01",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "SOL reached $235 peak in October, exceeding $200 target",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "ice-polymarket-investment-oct-2025",
+      "question": "ICE (NYSE parent) invests in Polymarket by October 2025?",
+      "category": "crypto",
+      "volume_usd": 500000,
+      "resolution_date": "2025-10-31",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "ICE announced up to $2B investment in October, valuing Polymarket at ~$8B",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "eth-above-4000-october-2025",
+      "question": "Ethereum above $4000 in October 2025?",
+      "category": "crypto",
+      "volume_usd": 871741,
+      "resolution_date": "2025-11-01",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "ETH traded above $4000 in mid-to-late October",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    }
+  ]
+}

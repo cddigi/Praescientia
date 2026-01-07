@@ -242,6 +242,32 @@ function november_predictions()
     ]
 end
 
+"""
+    october_predictions()
+
+Generate sample predictions for October 2025 markets.
+"""
+function october_predictions()
+    return [
+        # (market_id, predicted_outcome, confidence, stake)
+        # Economics
+        ("fed-decision-september-2025", "25 bps decrease", 0.90, 800.0),
+        ("fed-decision-october-2025", "25 bps decrease", 0.95, 1000.0),
+        # Crypto - Bitcoin
+        ("btc-above-100k-october-2025", "Yes", 0.85, 500.0),
+        # Crypto - Ethereum
+        ("eth-above-4000-october-2025", "Yes", 0.80, 400.0),
+        ("eth-ath-october-2025", "No", 0.70, 300.0),
+        # Crypto - Solana
+        ("sol-above-200-october-2025", "Yes", 0.65, 300.0),
+        # Crypto - MicroStrategy
+        ("microstrategy-650k-btc-october-2025", "No", 0.75, 400.0),
+        # Crypto - Polymarket
+        ("polymarket-volume-october-2025", "Yes", 0.70, 300.0),
+        ("ice-polymarket-investment-oct-2025", "Yes", 0.60, 300.0),
+    ]
+end
+
 # Alias for backwards compatibility
 demo_predictions() = december_predictions()
 
@@ -253,12 +279,16 @@ demo_predictions() = december_predictions()
     run_month(month::String)
 
 Run backtest for a specific month.
-Supported months: "november", "december"
+Supported months: "october", "november", "december"
 """
 function run_month(month::String)
     month_lower = lowercase(month)
 
-    if month_lower == "november"
+    if month_lower == "october"
+        data_file = "october_2025_resolved.json"
+        predictions = october_predictions()
+        display_name = "October 2025"
+    elseif month_lower == "november"
         data_file = "november_2025_resolved.json"
         predictions = november_predictions()
         display_name = "November 2025"
@@ -267,7 +297,7 @@ function run_month(month::String)
         predictions = december_predictions()
         display_name = "December 2025"
     else
-        error("Unknown month: $month. Supported: november, december")
+        error("Unknown month: $month. Supported: october, november, december")
     end
 
     data_path = joinpath(@__DIR__, "data", data_file)
