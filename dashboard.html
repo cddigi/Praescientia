@@ -725,6 +725,7 @@
                     <button class="btn btn-secondary btn-sm" onclick="selectPortfolio('weekly')">Weekly</button>
                     <button class="btn btn-secondary btn-sm" onclick="selectPortfolio('contrarian')">Contrarian</button>
                     <span style="width: 1px; background: var(--border-color); margin: 0 8px;"></span>
+                    <button class="btn btn-primary btn-sm" onclick="executeRecommended()" id="btn-recommended" disabled>Take Recommended Action</button>
                     <button class="btn btn-success btn-sm" onclick="executeSelected('buy')" id="btn-buy-selected" disabled>Buy Selected</button>
                     <button class="btn btn-danger btn-sm" onclick="executeSelected('sell')" id="btn-sell-selected" disabled>Sell Selected</button>
                 </div>
@@ -1679,6 +1680,7 @@
 
             // Update action buttons
             const hasSelection = selectedPositions.size > 0;
+            document.getElementById('btn-recommended').disabled = !hasSelection;
             document.getElementById('btn-buy-selected').disabled = !hasSelection;
             document.getElementById('btn-sell-selected').disabled = !hasSelection;
         }
@@ -1730,15 +1732,100 @@
             document.getElementById('modal-overlay').classList.add('visible');
         }
 
+        function executeRecommended() {
+            if (selectedPositions.size === 0) return;
+
+            const selectedIds = Array.from(selectedPositions);
+            const actionGroups = { buy: [], sell: [], flip: [] };
+
+            Object.entries(portfolios).forEach(([key, p]) => {
+                p.positions.forEach(pos => {
+                    if (selectedIds.includes(pos.id) && pos.action !== 'hold' && pos.action !== 'closed') {
+                        const posWithPortfolio = { ...pos, portfolioName: p.name };
+                        if (actionGroups[pos.action]) {
+                            actionGroups[pos.action].push(posWithPortfolio);
+                        }
+                    }
+                });
+            });
+
+            const allPositions = [...actionGroups.buy, ...actionGroups.sell, ...actionGroups.flip];
+            if (allPositions.length === 0) return;
+
+            pendingAction = {
+                type: 'recommended',
+                positions: allPositions,
+                ids: selectedIds,
+                actionGroups: actionGroups
+            };
+
+            // Build summary HTML
+            let summaryHTML = '<p>Execute recommended actions for selected positions:</p>';
+
+            if (actionGroups.buy.length > 0) {
+                summaryHTML += `
+                    <div style="margin: 12px 0; padding: 10px; background: rgba(0, 210, 106, 0.1); border-radius: 6px;">
+                        <strong style="color: var(--accent-green);">BUY (${actionGroups.buy.length})</strong>
+                        <ul style="margin: 8px 0 0 20px;">
+                            ${actionGroups.buy.map(p => `<li>${p.market} - ${formatCurrencyPlain(p.cost)}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            if (actionGroups.sell.length > 0) {
+                summaryHTML += `
+                    <div style="margin: 12px 0; padding: 10px; background: rgba(255, 107, 107, 0.1); border-radius: 6px;">
+                        <strong style="color: var(--accent-red);">SELL (${actionGroups.sell.length})</strong>
+                        <ul style="margin: 8px 0 0 20px;">
+                            ${actionGroups.sell.map(p => `<li>${p.market} - ${formatCurrencyPlain(p.cost)}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            if (actionGroups.flip.length > 0) {
+                summaryHTML += `
+                    <div style="margin: 12px 0; padding: 10px; background: rgba(255, 146, 43, 0.1); border-radius: 6px;">
+                        <strong style="color: var(--accent-orange);">FLIP (${actionGroups.flip.length})</strong>
+                        <ul style="margin: 8px 0 0 20px;">
+                            ${actionGroups.flip.map(p => `<li>${p.market} - ${formatCurrencyPlain(p.cost)}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            summaryHTML += `
+                <p style="margin-top: 12px; color: var(--accent-yellow);">
+                    Note: This is a simulation. No real trades will be executed.
+                </p>
+            `;
+
+            document.getElementById('modal-title').textContent = 'Confirm Recommended Actions';
+            document.getElementById('modal-body').innerHTML = summaryHTML;
+            document.getElementById('modal-confirm').className = 'btn btn-primary';
+            document.getElementById('modal-confirm').textContent = 'Execute All';
+
+            document.getElementById('modal-overlay').classList.add('visible');
+        }
+
         function confirmAction() {
             if (!pendingAction) return;
 
             // Simulate the action
-            const { type, positions, ids } = pendingAction;
+            const { type, positions, ids, actionGroups } = pendingAction;
 
             // In a real app, this would call an API
             // For simulation, just show a toast
-            showToast(`${type === 'buy' ? 'Bought' : 'Sold'} ${positions.length} position(s)`, 'success');
+            if (type === 'recommended' && actionGroups) {
+                const parts = [];
+                if (actionGroups.buy.length > 0) parts.push(`Bought ${actionGroups.buy.length}`);
+                if (actionGroups.sell.length > 0) parts.push(`Sold ${actionGroups.sell.length}`);
+                if (actionGroups.flip.length > 0) parts.push(`Flipped ${actionGroups.flip.length}`);
+                showToast(`${parts.join(', ')} position(s)`, 'success');
+            } else {
+                showToast(`${type === 'buy' ? 'Bought' : 'Sold'} ${positions.length} position(s)`, 'success');
+            }
 
             // Clear selection
             selectedPositions.clear();
