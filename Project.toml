@@ -1,12 +1,13 @@
 [project]
-name = "PolymarketOracle"
+name = "Praescientia"
 uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 version = "0.1.0"
 authors = ["First Trust GenAI Team"]
 description = """
-Polymarket prediction system with conversational state rollback architecture.
-Inspired by Grace Hopper's insights on the cost of incorrect information
-and the value of distributed systems of computers.
+Praescientia (Latin: foreknowledge) - Polymarket prediction system with 
+conversational state rollback architecture. Inspired by Grace Hopper's 
+insights on the cost of incorrect information and the value of distributed 
+systems of computers.
 """
 
 [deps]
