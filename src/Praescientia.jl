@@ -1,4 +1,4 @@
-module PolymarketOracle
+module Praescientia
 
 using HTTP
 using JSON3

@@ -1,8 +1,9 @@
 #!/usr/bin/env julia
 #=
 =====================================================================
-POLYMARKET ORACLE - DEMONSTRATION
+PRAESCIENTIA - DEMONSTRATION
 =====================================================================
+Latin: praescientia (foreknowledge)
 
 "We should be looking at the information flow, and then selecting
 the computers to implement that information flow."
@@ -17,8 +18,8 @@ identification instead of O(n) context reprocessing.
 =====================================================================
 =#
 
-include("src/PolymarketOracle.jl")
-using .PolymarketOracle
+include("src/Praescientia.jl")
+using .Praescientia
 using Dates
 using UUIDs
 
@@ -247,7 +248,8 @@ end
 function main()
     println()
     println("╔══════════════════════════════════════════════════════════════════╗")
-    println("║  POLYMARKET ORACLE                                                ║")
+    println("║  PRAESCIENTIA                                                    ║")
+    println("║  Latin: foreknowledge                                            ║")
     println("║  Conversational State Rollback for Prediction Markets            ║")
     println("║                                                                   ║")
     println("║  'The hardware and software are, after all, only the tools       ║")

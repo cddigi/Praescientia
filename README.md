@@ -1,4 +1,6 @@
-# Polymarket Oracle
+# Praescientia
+
+**Latin:** *praescientia* (foreknowledge)
 
 > "The hardware and software are, after all, only the tools with which we do the processing and should not occupied the primary position in our thinking. It's high time we began to turn our attention to the data and the information."
 > — **Grace Hopper, 1982**
@@ -113,7 +115,7 @@ This captures the reality that confidence isn't static—it naturally oscillates
 ### Example Flow
 
 ```julia
-using PolymarketOracle, PolymarketAuth
+using Praescientia, PolymarketAuth
 
 # Initialize client (read-only)
 client = CLOBClient()
@@ -143,12 +145,12 @@ end
 ## Project Structure
 
 ```
-polymarket_oracle/
+praescientia/
 ├── Project.toml              # Julia package manifest
 ├── demo.jl                   # Demonstration script
 ├── README.md                 # This file
 └── src/
-    ├── PolymarketOracle.jl   # Core state chain + prediction logic
+    ├── Praescientia.jl       # Core state chain + prediction logic
     └── PolymarketAuth.jl     # API authentication + trading
 ```
 
@@ -162,7 +164,7 @@ polymarket_oracle/
 
 ```julia
 using Pkg
-Pkg.activate("polymarket_oracle")
+Pkg.activate("praescientia")
 Pkg.instantiate()
 ```
 
@@ -184,8 +186,8 @@ For prediction markets, the market IS the source of truth. When our model diverg
 
 ## License
 
-[UNLICENSE](UNLICENSE) - Public Domain
+MIT
 
 ---
 
-*Built for First Trust GenAI team. Grace Hopper is our hero.*
+*Praescientia — Built for First Trust GenAI team. Grace Hopper is our hero.*
