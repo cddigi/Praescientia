@@ -984,7 +984,8 @@
         let selectedPositions = new Set();
         let pendingAction = null;
 
-        const portfolios = {
+        // Load portfolios from localStorage or use defaults
+        const defaultPortfolios = {
             daily: {
                 name: 'Daily (Jan 7)',
                 color: '#4dabf7',
@@ -1041,6 +1042,81 @@
                 ]
             }
         };
+
+        // API base URL (empty for same-origin, or set to server URL)
+        const API_BASE = '';
+
+        // Load from localStorage as fallback, will be replaced by API data
+        let portfolios = JSON.parse(JSON.stringify(defaultPortfolios));
+
+        // Check if API is available
+        let useApi = false;
+
+        // Load portfolios from API
+        async function loadFromApi() {
+            try {
+                const response = await fetch(`${API_BASE}/api/portfolios`);
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        portfolios = result.data;
+                        useApi = true;
+                        console.log('Loaded portfolio data from API');
+                        return true;
+                    }
+                }
+            } catch (error) {
+                console.log('API not available, using localStorage fallback');
+            }
+            return false;
+        }
+
+        // Load from localStorage as fallback
+        function loadFromLocalStorage() {
+            const savedData = localStorage.getItem('praescientia_portfolios');
+            if (savedData) {
+                try {
+                    portfolios = JSON.parse(savedData);
+                    console.log('Loaded portfolio data from localStorage');
+                } catch (e) {
+                    console.warn('Failed to parse saved data, using defaults');
+                    portfolios = JSON.parse(JSON.stringify(defaultPortfolios));
+                }
+            }
+        }
+
+        // Save portfolios (API or localStorage)
+        async function savePortfolios() {
+            if (useApi) {
+                // API handles saving in trade execution
+                console.log('Portfolio data managed by API');
+            } else {
+                localStorage.setItem('praescientia_portfolios', JSON.stringify(portfolios));
+                console.log('Portfolio data saved to localStorage');
+            }
+        }
+
+        // Reset to defaults
+        async function resetPortfolios() {
+            if (confirm('Reset all portfolio data to defaults? This cannot be undone.')) {
+                if (useApi) {
+                    try {
+                        const response = await fetch(`${API_BASE}/api/reset`, { method: 'POST' });
+                        if (response.ok) {
+                            showToast('Portfolio data reset to defaults', 'success');
+                            location.reload();
+                            return;
+                        }
+                    } catch (error) {
+                        console.error('API reset failed:', error);
+                    }
+                }
+                // Fallback to localStorage
+                portfolios = JSON.parse(JSON.stringify(defaultPortfolios));
+                localStorage.setItem('praescientia_portfolios', JSON.stringify(portfolios));
+                location.reload();
+            }
+        }
 
         // ============================================================
         // UTILITY FUNCTIONS
