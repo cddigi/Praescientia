@@ -157,6 +157,7 @@ praescientia/
 ├── demo.jl                   # Demonstration script
 ├── backtest.jl               # Backtesting against historical data
 ├── check_portfolios.jl       # Portfolio checker with live odds
+├── dashboard.html            # D3.js portfolio visualization dashboard
 ├── Project.toml              # Julia package manifest
 ├── CLAUDE.md                 # Session context for Claude Code
 └── README.md                 # This file

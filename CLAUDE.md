@@ -145,6 +145,7 @@ praescientia/
 ├── demo.jl                  # Demonstration script
 ├── backtest.jl              # Backtesting (oct/nov/dec 2025)
 ├── check_portfolios.jl      # Portfolio status checker with live odds
+├── dashboard.html           # D3.js portfolio visualization
 ├── Project.toml
 ├── README.md
 ├── UNLICENSE

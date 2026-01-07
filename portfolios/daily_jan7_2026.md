@@ -2,7 +2,7 @@
 
 **Test Budget:** $50.00 (separate from weekly portfolio)
 **Strategy:** Short-term momentum + mean reversion
-**Status:** ACTIVE
+**Status:** CLOSED - Positions Liquidated Jan 7 @ 1:30 PM ET
 
 ---
 
@@ -30,7 +30,7 @@
 - ETH/SOL following BTC correlation, slight bullish bias
 - SPX typically mean-reverts after up days, but momentum can persist
 
-### Positions
+### Original Positions (Opened Jan 6)
 
 | # | Market | Position | Entry | Shares | Cost | Potential Profit | Confidence |
 |:-:|--------|:--------:|------:|-------:|-----:|-----------------:|-----------:|
@@ -41,15 +41,33 @@
 
 ---
 
+## Trade Log - Jan 7 @ 1:30 PM ET
+
+Market conditions changed significantly. BTC/ETH trending DOWN, invalidating UP thesis.
+
+| Action | Market | Position | Price | Shares | P&L |
+|--------|--------|:--------:|------:|-------:|----:|
+| SELL | BTC Up/Down | UP | $0.004 | 26 | -$14.85 |
+| SELL | ETH Up/Down | UP | $0.004 | 24 | -$14.78 |
+| SELL | SOL Up/Down | DOWN | $0.997 | 26 | +$16.04 |
+| SELL | SPX Up/Down | DOWN | $0.997 | 25 | +$15.05 |
+
+**Reason:** Cut losses on UP bets (thesis invalidated), lock in profits on DOWN bets.
+
+### Final Positions: NONE (fully liquidated)
+
+---
+
 ## Portfolio Summary
 
 ```
 Total Invested:     $49.59
 Cash Remaining:      $0.41
 
-If All Correct:    +$51.41  (103.7% ROI)
-Expected Value:    +$10.82  (21.8% ROI)
-If All Wrong:      -$49.59
+EARLY EXIT RESULTS (Jan 7 @ 1:30 PM ET):
+  Realized P&L:     +$1.46
+  Final Balance:    $51.46
+  ROI:              +2.9%
 ```
 
 ---
@@ -93,9 +111,15 @@ If All Wrong:      -$49.59
 
 ## Final Results
 
-**Correct Predictions:** /4
-**Final P&L:** $
-**Final ROI:** %
+**Strategy:** Early exit to lock in gains / cut losses
+**Correct Predictions:** 2/4 (SOL DOWN, SPX DOWN)
+**Final P&L:** +$1.46
+**Final ROI:** +2.9%
+
+### Lessons Learned
+- Original UP thesis on BTC/ETH was wrong - should have recognized downtrend earlier
+- DOWN bets on SOL/SPX were correct - contrarian plays paid off
+- Early exit preserved capital instead of riding to zero on UP bets
 
 ---
 
