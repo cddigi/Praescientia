@@ -721,13 +721,15 @@
                 <div class="rebalance-actions">
                     <button class="btn btn-secondary btn-sm" onclick="selectAll()">Select All</button>
                     <button class="btn btn-secondary btn-sm" onclick="selectNone()">Select None</button>
+                    <span style="width: 1px; background: var(--border-color); margin: 0 4px;"></span>
                     <button class="btn btn-secondary btn-sm" onclick="selectPortfolio('daily')">Daily</button>
                     <button class="btn btn-secondary btn-sm" onclick="selectPortfolio('weekly')">Weekly</button>
                     <button class="btn btn-secondary btn-sm" onclick="selectPortfolio('contrarian')">Contrarian</button>
-                    <span style="width: 1px; background: var(--border-color); margin: 0 8px;"></span>
-                    <button class="btn btn-primary btn-sm" onclick="executeRecommended()" id="btn-recommended" disabled>Recommended Action</button>
-                    <button class="btn btn-success btn-sm" onclick="executeSelected('buy')" id="btn-buy-selected" disabled>Buy Selected</button>
-                    <button class="btn btn-danger btn-sm" onclick="executeSelected('sell')" id="btn-sell-selected" disabled>Sell Selected</button>
+                    <span style="width: 1px; background: var(--border-color); margin: 0 4px;"></span>
+                    <button class="btn btn-secondary btn-sm" onclick="selectByAction('buy')" style="border-color: var(--accent-green); color: var(--accent-green);">Buy</button>
+                    <button class="btn btn-secondary btn-sm" onclick="selectByAction('sell')" style="border-color: var(--accent-red); color: var(--accent-red);">Sell</button>
+                    <span style="width: 1px; background: var(--border-color); margin: 0 4px;"></span>
+                    <button class="btn btn-primary btn-sm" onclick="executeRecommended()" id="btn-execute" disabled>Execute</button>
                 </div>
             </div>
             <table class="rebalance-table">
@@ -1659,6 +1661,29 @@
             updateSelectionUI();
         }
 
+        function selectByAction(actionType) {
+            // Toggle: if all with this action are selected, deselect; otherwise select all
+            const matchingIds = [];
+            Object.values(portfolios).forEach(p => {
+                if (p.status === 'closed') return;
+                p.positions.forEach(pos => {
+                    if (pos.action === actionType) {
+                        matchingIds.push(pos.id);
+                    }
+                });
+            });
+
+            const allSelected = matchingIds.length > 0 && matchingIds.every(id => selectedPositions.has(id));
+
+            if (allSelected) {
+                matchingIds.forEach(id => selectedPositions.delete(id));
+            } else {
+                matchingIds.forEach(id => selectedPositions.add(id));
+            }
+
+            updateSelectionUI();
+        }
+
         function updateSelectionUI() {
             // Update checkboxes
             document.querySelectorAll('.rebalance-table tbody tr').forEach(row => {
@@ -1678,59 +1703,14 @@
                     recommendations.every(rec => selectedPositions.has(rec.id));
             }
 
-            // Update action buttons
+            // Update execute button
             const hasSelection = selectedPositions.size > 0;
-            document.getElementById('btn-recommended').disabled = !hasSelection;
-            document.getElementById('btn-buy-selected').disabled = !hasSelection;
-            document.getElementById('btn-sell-selected').disabled = !hasSelection;
+            document.getElementById('btn-execute').disabled = !hasSelection;
         }
 
         // ============================================================
         // ACTION EXECUTION
         // ============================================================
-
-        function executeSelected(actionType) {
-            if (selectedPositions.size === 0) return;
-
-            const selectedIds = Array.from(selectedPositions);
-            const positions = [];
-
-            Object.entries(portfolios).forEach(([key, p]) => {
-                p.positions.forEach(pos => {
-                    if (selectedIds.includes(pos.id)) {
-                        positions.push({
-                            ...pos,
-                            portfolioName: p.name
-                        });
-                    }
-                });
-            });
-
-            const totalValue = positions.reduce((sum, p) => sum + p.cost, 0);
-
-            pendingAction = {
-                type: actionType,
-                positions: positions,
-                ids: selectedIds
-            };
-
-            const actionText = actionType === 'buy' ? 'BUY MORE' : 'SELL';
-            document.getElementById('modal-title').textContent = `Confirm ${actionText}`;
-            document.getElementById('modal-body').innerHTML = `
-                <p>You are about to <strong>${actionText}</strong> ${positions.length} position(s):</p>
-                <ul style="margin: 12px 0; padding-left: 20px;">
-                    ${positions.map(p => `<li>${p.market} (${p.portfolioName}) - ${formatCurrencyPlain(p.cost)}</li>`).join('')}
-                </ul>
-                <p>Total value: <strong>${formatCurrencyPlain(totalValue)}</strong></p>
-                <p style="margin-top: 12px; color: var(--accent-yellow);">
-                    Note: This is a simulation. No real trades will be executed.
-                </p>
-            `;
-            document.getElementById('modal-confirm').className = actionType === 'buy' ? 'btn btn-success' : 'btn btn-danger';
-            document.getElementById('modal-confirm').textContent = actionText;
-
-            document.getElementById('modal-overlay').classList.add('visible');
-        }
 
         function executeRecommended() {
             if (selectedPositions.size === 0) return;
@@ -1812,20 +1792,15 @@
         function confirmAction() {
             if (!pendingAction) return;
 
-            // Simulate the action
-            const { type, positions, ids, actionGroups } = pendingAction;
+            const { actionGroups } = pendingAction;
 
             // In a real app, this would call an API
-            // For simulation, just show a toast
-            if (type === 'recommended' && actionGroups) {
-                const parts = [];
-                if (actionGroups.buy.length > 0) parts.push(`Bought ${actionGroups.buy.length}`);
-                if (actionGroups.sell.length > 0) parts.push(`Sold ${actionGroups.sell.length}`);
-                if (actionGroups.flip.length > 0) parts.push(`Flipped ${actionGroups.flip.length}`);
-                showToast(`${parts.join(', ')} position(s)`, 'success');
-            } else {
-                showToast(`${type === 'buy' ? 'Bought' : 'Sold'} ${positions.length} position(s)`, 'success');
-            }
+            // For simulation, show a toast with summary
+            const parts = [];
+            if (actionGroups.buy.length > 0) parts.push(`Bought ${actionGroups.buy.length}`);
+            if (actionGroups.sell.length > 0) parts.push(`Sold ${actionGroups.sell.length}`);
+            if (actionGroups.flip.length > 0) parts.push(`Flipped ${actionGroups.flip.length}`);
+            showToast(`${parts.join(', ')} position(s)`, 'success');
 
             // Clear selection
             selectedPositions.clear();
