@@ -684,6 +684,9 @@
                     </svg>
                     Refresh Data
                 </button>
+                <button class="btn btn-secondary" onclick="resetPortfolios()">
+                    Reset to Defaults
+                </button>
             </div>
             <p class="last-updated" id="last-updated">Last updated: --</p>
         </header>
@@ -1794,18 +1797,59 @@
 
             const { actionGroups } = pendingAction;
 
-            // In a real app, this would call an API
-            // For simulation, show a toast with summary
+            // Update portfolio data based on actions
+            Object.entries(portfolios).forEach(([key, portfolio]) => {
+                portfolio.positions.forEach(pos => {
+                    // Check if this position was acted upon
+                    const wasSold = actionGroups.sell.some(p => p.id === pos.id);
+                    const wasBought = actionGroups.buy.some(p => p.id === pos.id);
+                    const wasFlipped = actionGroups.flip.some(p => p.id === pos.id);
+
+                    if (wasSold) {
+                        // Mark as sold - realize the P/L and change action to hold
+                        portfolio.realized += pos.pl;
+                        pos.action = 'closed';
+                        pos.reason = 'Position sold';
+                        pos.exit = pos.current;
+                    } else if (wasBought) {
+                        // Mark as bought more - change action to hold
+                        pos.action = 'hold';
+                        pos.reason = 'Added to position';
+                    } else if (wasFlipped) {
+                        // Flip the position
+                        pos.position = pos.position === 'YES' ? 'NO' : (pos.position === 'NO' ? 'YES' : (pos.position === 'UP' ? 'DOWN' : 'UP'));
+                        pos.action = 'hold';
+                        pos.reason = 'Position flipped';
+                        pos.entry = pos.current;
+                    }
+                });
+
+                // Recalculate unrealized P/L for portfolio
+                portfolio.unrealized = portfolio.positions
+                    .filter(p => p.action !== 'closed')
+                    .reduce((sum, p) => sum + p.pl, 0);
+            });
+
+            // Save to localStorage
+            savePortfolios();
+
+            // Show toast with summary
             const parts = [];
             if (actionGroups.buy.length > 0) parts.push(`Bought ${actionGroups.buy.length}`);
             if (actionGroups.sell.length > 0) parts.push(`Sold ${actionGroups.sell.length}`);
             if (actionGroups.flip.length > 0) parts.push(`Flipped ${actionGroups.flip.length}`);
             showToast(`${parts.join(', ')} position(s)`, 'success');
 
-            // Clear selection
+            // Clear selection and refresh UI
             selectedPositions.clear();
             updateSelectionUI();
             createRebalanceTable();
+
+            // Refresh position tables
+            document.getElementById('daily-positions').innerHTML = '';
+            document.getElementById('weekly-positions').innerHTML = '';
+            document.getElementById('contrarian-positions').innerHTML = '';
+            createPositionsTables();
 
             closeModal();
             pendingAction = null;
