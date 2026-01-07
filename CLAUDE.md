@@ -1,0 +1,208 @@
+# Praescientia — Session Context
+
+> **Last Updated:** January 6, 2026
+> **Status:** Active trading simulation
+
+---
+
+## Project Overview
+
+**Praescientia** (Latin: foreknowledge) is a Polymarket prediction system with state rollback architecture, inspired by Grace Hopper's insights on the cost of incorrect information.
+
+**Core Concept:** Discrete, hashed state checkpoints enable O(1) divergence identification instead of O(n) context reprocessing — narrowing the gap between human "obvious" pattern recognition and GenAI's brute-force approach.
+
+**GitHub:** https://github.com/cddigi/Praescientia
+**Open PR:** https://github.com/cddigi/Praescientia/pull/2
+
+---
+
+## Active Portfolios (Simulated)
+
+### 1. Weekly Portfolio — Jan 6-12, 2026
+**File:** `portfolios/week1_jan6-12_2026.md`
+**Budget:** $499.17
+**Resolution:** January 12, 2026
+
+| Position | Market | Entry | Cost |
+|----------|--------|-------|------|
+| NO | BTC hits $100k | $0.87 | $100.05 |
+| NO | ETH dips to $3k | $0.84 | $79.80 |
+| NO | BTC dips to $88k | $0.78 | $70.20 |
+| YES | ETH hits $3,400 | $0.56 | $89.60 |
+| YES | BTC hits $96k | $0.50 | $80.00 |
+| NO | SOL hits $150 | $0.71 | $79.52 |
+
+### 2. Daily Portfolio — Jan 7, 2026
+**File:** `portfolios/daily_jan7_2026.md`
+**Budget:** $49.59
+**Resolution:** January 7, 2026 @ 5 PM ET
+
+| Position | Market | Entry | Cost |
+|----------|--------|-------|------|
+| UP | BTC Up/Down Jan 7 | $0.575 | $14.95 |
+| UP | ETH Up/Down Jan 7 | $0.62 | $14.88 |
+| DOWN | SOL Up/Down Jan 7 | $0.38 | $9.88 |
+| DOWN | SPX Up/Down Jan 7 | $0.395 | $9.88 |
+
+### 3. Contrarian Portfolio — 2026
+**File:** `portfolios/contrarian_2026.md`
+**Budget:** $100.08
+**Resolution:** Throughout 2026
+
+| Position | Market | Entry | Cost |
+|----------|--------|-------|------|
+| YES | US Recession 2026 | $0.255 | $59.93 |
+| YES | Fed Rate Hike 2026 | $0.115 | $20.13 |
+| YES | Fed Emergency Cut 2026 | $0.130 | $20.02 |
+
+**Total Simulated Capital:** $648.84
+
+---
+
+## The Seneca Strategy
+
+**File:** `portfolios/seneca_strategy.md`
+
+Core philosophy for contrarian betting:
+- Bet against unanimous consensus
+- Use "Grandmother Test" — if common sense sees the risk, bet on it
+- Prepare for tail risks the crowd ignores (premeditatio malorum)
+- Asymmetric payouts: risk $1 to make $4-10
+
+**Current Mispricings Identified:**
+- Wall Street unanimity on 2026 rally (0/21 predict decline)
+- CAPE ratio at 40 (only second time ever, first was dot-com)
+- Inflation "solved" narrative (1970s had 3 waves)
+- Soft landing consensus despite Sahm Rule triggering
+
+---
+
+## Trading Principles
+
+**You can sell shares before resolution.** This is critical for risk management:
+
+### When to Sell (Take Profits)
+- Odds shift unexpectedly in your favor → possible manipulation, lock in gains
+- Position reaches target profit threshold (e.g., 50%+ return)
+- New information validates your thesis early
+
+### When to Cut Losses
+- Thesis invalidated by new information
+- Odds move significantly against you (limit losses to X%)
+- Better opportunity emerges elsewhere
+
+### When to Flip Position
+- Confidence shifts based on new evidence
+- Original thesis was wrong — switch to the other side
+- Market dynamics changed fundamentally
+
+### Unrealized P&L
+Always know what you could sell for NOW, not just at resolution:
+```
+Unrealized P&L = (Current Odds × Shares) - Cost
+```
+
+**Red Flags for Manipulation:**
+- Sudden large odds movements without news
+- Unusual volume spikes
+- Odds moving opposite to underlying asset direction
+
+---
+
+## Key Dates
+
+| Date | Event | Portfolio Impact |
+|------|-------|------------------|
+| **Jan 7, 5 PM ET** | Daily markets resolve | Check daily_jan7 results |
+| **Jan 12** | Weekly markets resolve | Check week1 results |
+| Jan 28-29 | FOMC Meeting | Fed decision |
+| Jan 30 | Q4 2025 GDP | Recession signal |
+| Jan 31 | Gov't funding deadline | Shutdown risk |
+| Feb 12 | January CPI | Inflation signal |
+
+---
+
+## Project Structure
+
+```
+praescientia/
+├── src/
+│   ├── Praescientia.jl      # Core module (state chains, predictions)
+│   └── PolymarketAuth.jl    # API authentication
+├── data/
+│   ├── october_2025_resolved.json
+│   ├── november_2025_resolved.json
+│   ├── december_2025_resolved.json
+│   ├── january_2026_live_predictions.json
+│   └── contrarian_2026_predictions.json
+├── portfolios/
+│   ├── week1_jan6-12_2026.md
+│   ├── daily_jan7_2026.md
+│   ├── contrarian_2026.md
+│   └── seneca_strategy.md
+├── demo.jl                  # Demonstration script
+├── backtest.jl              # Backtesting (oct/nov/dec 2025)
+├── Project.toml
+├── README.md
+├── UNLICENSE
+└── CLAUDE.md                # This file (local only)
+```
+
+---
+
+## Backtest Results (Historical)
+
+| Month | Accuracy | Stake | P&L | ROI |
+|-------|----------|-------|-----|-----|
+| October 2025 | 9/9 (100%) | $4,300 | +$790 | 18.4% |
+| November 2025 | 4/6 (66.7%) | $2,000 | +$240 | 12.0% |
+| December 2025 | 6/7 (85.7%) | $3,000 | +$540 | 18.0% |
+| **Combined** | **19/22 (86.4%)** | **$9,300** | **+$1,570** | **16.9%** |
+
+---
+
+## User Context
+
+- User has ~$500 in Schwab checking for real wagers (simulating first)
+- Goal: Steady passive income from prediction markets
+- Prefers high-confidence plays and Seneca-style contrarian bets
+- Interested in short-term (daily) and long-term (yearly) markets
+
+---
+
+## Scripts for Quick Reproducibility
+
+**Principle:** If asked to do something once, there is a high probability of having to do it again. Create scripts to avoid rethinking completed tasks.
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `check_portfolios.jl` | Check wager status & outcomes | `julia --project=. check_portfolios.jl` |
+| `backtest.jl` | Backtest against historical data | `julia --project=. backtest.jl [month]` |
+| `demo.jl` | Demonstrate core functionality | `julia --project=. demo.jl` |
+
+**When to create a script:**
+- Any task that fetches external data (prices, API calls)
+- Any task that parses or evaluates portfolio positions
+- Any repetitive analysis or reporting task
+
+---
+
+## Next Actions
+
+1. **Jan 7 evening:** Run `julia --project=. check_portfolios.jl` to check daily results
+2. **Jan 12:** Run portfolio check for weekly results
+3. **Ongoing:** Monitor contrarian positions for entry/exit opportunities
+4. **If profitable:** Consider transitioning from simulation to real wagers
+
+---
+
+## Notes
+
+- GitButler manages version control (don't use raw git commit)
+- Polymarket APIs sometimes return stale data — use WebSearch/WebFetch on event pages
+- This file is LOCAL ONLY — do not push to remote
+- Grace Hopper is our hero
+
+---
+
+*"The cost of incorrect information... I can go up to almost half a million dollars to get that file to a higher level of correctness, because that's what I stand to lose."* — Grace Hopper, 1982
