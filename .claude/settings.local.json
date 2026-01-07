@@ -23,7 +23,9 @@
       "Bash(git checkout:*)",
       "Bash(git merge:*)",
       "Bash(git stash:*)",
-      "Bash(git cherry-pick:*)"
+      "Bash(git cherry-pick:*)",
+      "Bash(git pull:*)",
+      "Bash(/usr/local/bin/julia:*)"
     ]
   }
 }

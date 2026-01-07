@@ -189,13 +189,29 @@ Generate sample predictions for December 2025 markets.
 function december_predictions()
     return [
         # (market_id, predicted_outcome, confidence, stake)
+        # Economics
         ("fed-decision-december-2025", "25 bps decrease", 0.85, 1000.0),
         ("fed-rate-cuts-2025", "3 (75 bps)", 0.70, 500.0),
+        ("inflation-2025-above-8pct", "Yes", 0.60, 300.0),
+        ("inflation-2025-above-10pct", "No", 0.75, 300.0),
+        # Social
         ("elon-musk-tweets-december-2025", "1100-1399", 0.60, 100.0),  # Wrong!
+        # Crypto
         ("microstrategy-sells-btc-2025", "No", 0.90, 500.0),
-        ("macron-out-2025", "No", 0.80, 300.0),
         ("kraken-ipo-2025", "No", 0.75, 200.0),
         ("polymarket-us-live-2025", "Yes", 0.65, 400.0),
+        ("ethereum-ath-before-2026", "Yes", 0.80, 400.0),
+        # Stocks
+        ("nvidia-largest-company-2025", "NVIDIA", 0.70, 500.0),
+        # Politics
+        ("macron-out-2025", "No", 0.80, 300.0),
+        ("trump-hegseth-confirmed", "Yes", 0.55, 200.0),
+        ("trump-gabbard-confirmed", "Yes", 0.60, 200.0),
+        ("trump-patel-confirmed", "Yes", 0.65, 200.0),
+        ("trump-gaetz-confirmed", "No", 0.70, 300.0),
+        # Geopolitics
+        ("israel-hamas-ceasefire-2025", "Yes", 0.50, 300.0),
+        ("russia-ukraine-ceasefire-2025", "No", 0.85, 500.0),
     ]
 end
 
@@ -207,12 +223,22 @@ Generate sample predictions for November 2025 markets.
 function november_predictions()
     return [
         # (market_id, predicted_outcome, confidence, stake)
+        # Economics
         ("fed-decision-october-2025", "25 bps decrease", 0.80, 1000.0),
+        # Social
         ("elon-musk-tweets-november-2025", "880-919", 0.55, 200.0),  # Close but wrong
         ("elon-tweets-oct28-nov4", "200-219", 0.65, 100.0),
-        ("elon-tweets-nov11-nov18", "240+", 0.50, 100.0),  # Wrong - was 260-279
+        ("elon-tweets-nov11-nov18", "260-279", 0.50, 100.0),
         ("elon-tweets-nov18-nov25", "200-219", 0.60, 100.0),
+        # Politics
         ("government-shutdown-nov-2025", "Yes", 0.75, 500.0),
+        # Crypto
+        ("polymarket-us-cftc-approval", "Yes", 0.70, 400.0),
+        ("solana-etf-by-end-november", "No", 0.60, 200.0),
+        ("solana-ath-november-2025", "No", 0.80, 300.0),
+        ("ice-polymarket-investment", "Yes", 0.55, 200.0),
+        # Geopolitics
+        ("assad-leaves-syria-2024", "Yes", 0.65, 300.0),
     ]
 end
 
