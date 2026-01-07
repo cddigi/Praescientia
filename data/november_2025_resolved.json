@@ -1,0 +1,160 @@
+{
+  "metadata": {
+    "source": "Polymarket",
+    "period": "November 2025",
+    "fetched_at": "2026-01-06",
+    "notes": "Resolved prediction markets for backtesting - includes late October FOMC"
+  },
+  "markets": [
+    {
+      "id": "fed-decision-october-2025",
+      "question": "Fed decision in October 2025?",
+      "category": "economics",
+      "volume_usd": 252485550,
+      "resolution_date": "2025-10-29",
+      "outcome": "25 bps decrease",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "50+ bps decrease", "outcome": "NO", "final_price": 0.0},
+        {"label": "25 bps decrease", "outcome": "YES", "final_price": 1.0},
+        {"label": "No change", "outcome": "NO", "final_price": 0.0},
+        {"label": "25+ bps increase", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "bitcoin-price-november-2025",
+      "question": "Bitcoin price targets in November 2025",
+      "category": "crypto",
+      "volume_usd": 53000000,
+      "resolution_date": "2025-12-01",
+      "outcome": "BTC peaked ~$110k, dipped to ~$85k",
+      "targets": [
+        {"target": 110000, "type": "reach", "outcome": "YES"},
+        {"target": 105000, "type": "dip", "outcome": "YES"},
+        {"target": 100000, "type": "dip", "outcome": "YES"},
+        {"target": 95000, "type": "dip", "outcome": "YES"},
+        {"target": 90000, "type": "dip", "outcome": "YES"},
+        {"target": 85000, "type": "dip", "outcome": "YES"},
+        {"target": 115000, "type": "reach", "outcome": "NO"},
+        {"target": 120000, "type": "reach", "outcome": "NO"},
+        {"target": 125000, "type": "reach", "outcome": "NO"},
+        {"target": 130000, "type": "reach", "outcome": "NO"},
+        {"target": 150000, "type": "reach", "outcome": "NO"},
+        {"target": 200000, "type": "reach", "outcome": "NO"},
+        {"target": 80000, "type": "dip", "outcome": "NO"},
+        {"target": 75000, "type": "dip", "outcome": "NO"},
+        {"target": 70000, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "elon-musk-tweets-november-2025",
+      "question": "Elon Musk # tweets in November 2025?",
+      "category": "social",
+      "volume_usd": 1472323,
+      "resolution_date": "2025-12-02",
+      "outcome": "920-959",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "0-399", "outcome": "NO", "final_price": 0.0},
+        {"label": "400-599", "outcome": "NO", "final_price": 0.0},
+        {"label": "600-799", "outcome": "NO", "final_price": 0.0},
+        {"label": "800-879", "outcome": "NO", "final_price": 0.0},
+        {"label": "880-919", "outcome": "NO", "final_price": 0.0},
+        {"label": "920-959", "outcome": "YES", "final_price": 1.0},
+        {"label": "960-999", "outcome": "NO", "final_price": 0.0},
+        {"label": "1000+", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "tesla-price-november-2025",
+      "question": "Tesla (TSLA) price targets in November 2025",
+      "category": "stocks",
+      "volume_usd": 15000000,
+      "resolution_date": "2025-12-01",
+      "outcome": "TSLA peaked ~$465, dipped to ~$398",
+      "targets": [
+        {"target": 465, "type": "reach", "outcome": "YES"},
+        {"target": 430, "type": "reach", "outcome": "YES"},
+        {"target": 450, "type": "dip", "outcome": "YES"},
+        {"target": 435, "type": "dip", "outcome": "YES"},
+        {"target": 420, "type": "dip", "outcome": "YES"},
+        {"target": 398, "type": "dip", "outcome": "YES"},
+        {"target": 480, "type": "reach", "outcome": "NO"},
+        {"target": 495, "type": "reach", "outcome": "NO"},
+        {"target": 518, "type": "reach", "outcome": "NO"},
+        {"target": 548, "type": "reach", "outcome": "NO"},
+        {"target": 578, "type": "reach", "outcome": "NO"},
+        {"target": 615, "type": "reach", "outcome": "NO"},
+        {"target": 390, "type": "dip", "outcome": "NO"},
+        {"target": 375, "type": "dip", "outcome": "NO"},
+        {"target": 345, "type": "dip", "outcome": "NO"},
+        {"target": 308, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "elon-tweets-oct28-nov4",
+      "question": "Elon Musk # tweets October 28 - November 4, 2025?",
+      "category": "social",
+      "volume_usd": 50000,
+      "resolution_date": "2025-11-04",
+      "outcome": "200-219",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "0-159", "outcome": "NO", "final_price": 0.0},
+        {"label": "160-179", "outcome": "NO", "final_price": 0.0},
+        {"label": "180-199", "outcome": "NO", "final_price": 0.0},
+        {"label": "200-219", "outcome": "YES", "final_price": 1.0},
+        {"label": "220-239", "outcome": "NO", "final_price": 0.0},
+        {"label": "240+", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "elon-tweets-nov11-nov18",
+      "question": "Elon Musk # tweets November 11 - November 18, 2025?",
+      "category": "social",
+      "volume_usd": 45000,
+      "resolution_date": "2025-11-18",
+      "outcome": "260-279",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "0-179", "outcome": "NO", "final_price": 0.0},
+        {"label": "180-219", "outcome": "NO", "final_price": 0.0},
+        {"label": "220-259", "outcome": "NO", "final_price": 0.0},
+        {"label": "260-279", "outcome": "YES", "final_price": 1.0},
+        {"label": "280-299", "outcome": "NO", "final_price": 0.0},
+        {"label": "300+", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "elon-tweets-nov18-nov25",
+      "question": "Elon Musk # tweets November 18 - November 25, 2025?",
+      "category": "social",
+      "volume_usd": 42000,
+      "resolution_date": "2025-11-25",
+      "outcome": "200-219",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "0-159", "outcome": "NO", "final_price": 0.0},
+        {"label": "160-179", "outcome": "NO", "final_price": 0.0},
+        {"label": "180-199", "outcome": "NO", "final_price": 0.0},
+        {"label": "200-219", "outcome": "YES", "final_price": 1.0},
+        {"label": "220-239", "outcome": "NO", "final_price": 0.0},
+        {"label": "240+", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "government-shutdown-nov-2025",
+      "question": "Government shutdown ends in November 2025?",
+      "category": "politics",
+      "volume_usd": 8000000,
+      "resolution_date": "2025-11-30",
+      "outcome": "YES",
+      "notes": "43-day shutdown (longest in US history) ended in November 2025",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    }
+  ]
+}

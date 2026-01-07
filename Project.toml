@@ -1,0 +1,22 @@
+[project]
+name = "PolymarketOracle"
+uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+version = "0.1.0"
+authors = ["First Trust GenAI Team"]
+description = """
+Polymarket prediction system with conversational state rollback architecture.
+Inspired by Grace Hopper's insights on the cost of incorrect information
+and the value of distributed systems of computers.
+"""
+
+[deps]
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+
+[compat]
+julia = "1.9"
+HTTP = "1.0"
+JSON3 = "1.10"

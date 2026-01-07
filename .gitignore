@@ -1,0 +1,61 @@
+# Julia
+Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+deps/build.log
+docs/build/
+docs/site/
+
+# Julia package development
+/dev/
+LocalPreferences.toml
+
+# Compiled
+*.o
+*.a
+*.so
+*.dylib
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Environment
+.env
+.env.local
+*.env
+
+# Secrets/credentials
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Claude Code
+.claude/logs/
+.claude/cache/
+IMPLEMENTATION_PLAN.md
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# Data (keep structure, ignore large files)
+data/*.csv
+data/*.parquet
+!data/*.json
+
+# Logs
+*.log
+logs/

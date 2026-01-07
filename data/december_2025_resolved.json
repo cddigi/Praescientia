@@ -1,0 +1,141 @@
+{
+  "metadata": {
+    "source": "Polymarket",
+    "period": "December 2025",
+    "fetched_at": "2026-01-06",
+    "notes": "Resolved prediction markets for backtesting"
+  },
+  "markets": [
+    {
+      "id": "fed-decision-december-2025",
+      "question": "Fed decision in December 2025?",
+      "category": "economics",
+      "volume_usd": 393905949,
+      "resolution_date": "2025-12-10",
+      "outcome": "25 bps decrease",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "50+ bps decrease", "outcome": "NO", "final_price": 0.0},
+        {"label": "50 bps decrease", "outcome": "NO", "final_price": 0.0},
+        {"label": "25 bps decrease", "outcome": "YES", "final_price": 1.0},
+        {"label": "No change", "outcome": "NO", "final_price": 0.0},
+        {"label": "25 bps increase", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "fed-rate-cuts-2025",
+      "question": "How many Fed rate cuts in 2025?",
+      "category": "economics",
+      "volume_usd": 31400000,
+      "resolution_date": "2025-12-31",
+      "outcome": "3 (75 bps)",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "0", "outcome": "NO", "final_price": 0.0},
+        {"label": "1 (25 bps)", "outcome": "NO", "final_price": 0.0},
+        {"label": "2 (50 bps)", "outcome": "NO", "final_price": 0.0},
+        {"label": "3 (75 bps)", "outcome": "YES", "final_price": 1.0},
+        {"label": "4 (100 bps)", "outcome": "NO", "final_price": 0.0},
+        {"label": "5+ (125+ bps)", "outcome": "NO", "final_price": 0.0}
+      ]
+    },
+    {
+      "id": "elon-musk-tweets-december-2025",
+      "question": "Elon Musk # tweets in December 2025?",
+      "category": "social",
+      "volume_usd": 156609,
+      "resolution_date": "2026-01-01",
+      "outcome": "1400+",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "0-299", "outcome": "NO", "final_price": 0.0},
+        {"label": "300-499", "outcome": "NO", "final_price": 0.0},
+        {"label": "500-699", "outcome": "NO", "final_price": 0.0},
+        {"label": "700-899", "outcome": "NO", "final_price": 0.0},
+        {"label": "900-1099", "outcome": "NO", "final_price": 0.0},
+        {"label": "1100-1399", "outcome": "NO", "final_price": 0.0},
+        {"label": "1400+", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "bitcoin-price-targets-2025",
+      "question": "Bitcoin price targets in 2025",
+      "category": "crypto",
+      "volume_usd": 50000000,
+      "resolution_date": "2025-12-31",
+      "outcome": "BTC peaked ~$125k, ended ~$88k",
+      "targets": [
+        {"target": 80000, "type": "reach", "outcome": "YES"},
+        {"target": 90000, "type": "reach", "outcome": "YES"},
+        {"target": 100000, "type": "reach", "outcome": "YES"},
+        {"target": 110000, "type": "reach", "outcome": "YES"},
+        {"target": 125000, "type": "reach", "outcome": "YES"},
+        {"target": 130000, "type": "reach", "outcome": "NO"},
+        {"target": 140000, "type": "reach", "outcome": "NO"},
+        {"target": 150000, "type": "reach", "outcome": "NO"},
+        {"target": 200000, "type": "reach", "outcome": "NO"},
+        {"target": 250000, "type": "reach", "outcome": "NO"},
+        {"target": 1000000, "type": "reach", "outcome": "NO"},
+        {"target": 100000, "type": "dip", "outcome": "YES"},
+        {"target": 90000, "type": "dip", "outcome": "YES"},
+        {"target": 80000, "type": "dip", "outcome": "YES"},
+        {"target": 75000, "type": "dip", "outcome": "NO"},
+        {"target": 70000, "type": "dip", "outcome": "NO"},
+        {"target": 50000, "type": "dip", "outcome": "NO"}
+      ]
+    },
+    {
+      "id": "microstrategy-sells-btc-2025",
+      "question": "MicroStrategy sells any Bitcoin in 2025?",
+      "category": "crypto",
+      "volume_usd": 5000000,
+      "resolution_date": "2026-01-05",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "macron-out-2025",
+      "question": "Macron out in 2025?",
+      "category": "politics",
+      "volume_usd": 3000000,
+      "resolution_date": "2026-01-01",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "kraken-ipo-2025",
+      "question": "Kraken IPO in 2025?",
+      "category": "crypto",
+      "volume_usd": 2000000,
+      "resolution_date": "2026-01-01",
+      "outcome": "NO",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "NO", "final_price": 0.0},
+        {"label": "No", "outcome": "YES", "final_price": 1.0}
+      ]
+    },
+    {
+      "id": "polymarket-us-live-2025",
+      "question": "Will Polymarket US go live in 2025?",
+      "category": "crypto",
+      "volume_usd": 8000000,
+      "resolution_date": "2025-12-05",
+      "outcome": "YES",
+      "winning_price": 1.0,
+      "notes": "Controversial - resolved YES despite being waitlist-only. UMA token holders voted.",
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ]
+    }
+  ]
+}
