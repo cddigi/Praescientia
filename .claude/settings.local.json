@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__gitbutler__gitbutler_update_branches",
+      "WebFetch(domain:gamma-api.polymarket.com)",
+      "Bash(curl:*)",
+      "Bash(python3 -c \" import json, sys data = json.load\\(sys.stdin\\) for m in data[:20]: end = m.get\\(''endDate'', ''N/A''\\) q = m.get\\(''question'', ''N/A''\\)[:60] print\\(f''{end[:10]} | {q}''\\) \")",
+      "Bash(python3:*)",
+      "WebFetch(domain:polymarket.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.polymarket.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(julia --project=. -e:*)",
+      "Bash(julia --project=. backtest.jl:*)",
+      "WebFetch(domain:unlicense.org)",
+      "Bash(git rev-parse:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(julia --project=. check_portfolios.jl:*)"
+      "Bash(julia:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git pull:*)",
+      "Bash(/usr/local/bin/julia:*)"
+    ]
+  }
+}
