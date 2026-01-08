@@ -205,10 +205,12 @@ function get_portfolio_for_dashboard(portfolio_id::AbstractString)
         ))
     end
 
-    # Calculate starting value from initial positions
-    starting = sum(p["entry"] * (p["cost"] / max(p["entry"], 0.001)) for p in positions; init=0.0)
-    if starting == 0 && haskey(def, "positions")
-        starting = sum(p["shares"] * p["price"] for p in def["positions"])
+    # Calculate starting value from default portfolio definition (original investment)
+    # This should not change when positions are sold
+    starting = if haskey(def, "positions")
+        sum(p["shares"] * p["price"] for p in def["positions"])
+    else
+        sum(p["entry"] * (p["cost"] / max(p["entry"], 0.001)) for p in positions; init=0.0)
     end
 
     return Dict(

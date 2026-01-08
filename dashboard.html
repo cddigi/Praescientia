@@ -1566,12 +1566,16 @@
             const weeklyTbody = document.getElementById('weekly-positions');
             portfolios.weekly.positions.forEach(pos => {
                 const row = document.createElement('tr');
+                const isClosed = pos.action === 'closed';
                 const plClass = (pos.pl || 0) >= 0 ? 'positive' : 'negative';
                 const badgeClass = pos.position === 'YES' ? 'badge-yes' : 'badge-no';
                 const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
-                const currentValue = pos.current != null ? `$${pos.current.toFixed(3)}` : '-';
+                const currentValue = isClosed && pos.exit != null
+                    ? `$${pos.exit.toFixed(3)} (exit)`
+                    : (pos.current != null ? `$${pos.current.toFixed(3)}` : '-');
+                if (isClosed) row.style.opacity = '0.6';
                 row.innerHTML = `
-                    <td>${pos.market}</td>
+                    <td>${pos.market}${isClosed ? ' <span style="color:#888">(CLOSED)</span>' : ''}</td>
                     <td><span class="badge ${badgeClass}">${pos.position}</span></td>
                     <td>${entryValue}</td>
                     <td>${currentValue}</td>
@@ -1585,12 +1589,16 @@
             const contrarianTbody = document.getElementById('contrarian-positions');
             portfolios.contrarian.positions.forEach(pos => {
                 const row = document.createElement('tr');
+                const isClosed = pos.action === 'closed';
                 const pl = pos.pl || 0;
                 const plClass = pl >= 0 ? 'positive' : 'negative';
                 const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
-                const currentValue = pos.current != null ? `$${pos.current.toFixed(3)}` : '-';
+                const currentValue = isClosed && pos.exit != null
+                    ? `$${pos.exit.toFixed(3)} (exit)`
+                    : (pos.current != null ? `$${pos.current.toFixed(3)}` : '-');
+                if (isClosed) row.style.opacity = '0.6';
                 row.innerHTML = `
-                    <td>${pos.market}</td>
+                    <td>${pos.market}${isClosed ? ' <span style="color:#888">(CLOSED)</span>' : ''}</td>
                     <td><span class="badge badge-yes">${pos.position}</span></td>
                     <td>${entryValue}</td>
                     <td>${currentValue}</td>
