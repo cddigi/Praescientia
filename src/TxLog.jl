@@ -71,11 +71,11 @@ function hash_transaction(tx::Dict)
 end
 
 """
-    get_log_path(portfolio_id::String) -> String
+    get_log_path(portfolio_id::AbstractString) -> String
 
 Get the log file path for a portfolio.
 """
-function get_log_path(portfolio_id::String)
+function get_log_path(portfolio_id::AbstractString)
     return joinpath(PORTFOLIOS_DIR, "$(portfolio_id).jsonl")
 end
 
@@ -130,11 +130,11 @@ function read_transactions(file_path::String)
 end
 
 """
-    append_transaction(portfolio_id::String, tx::Dict) -> Dict
+    append_transaction(portfolio_id::AbstractString, tx::Dict) -> Dict
 
 Append a transaction to the portfolio log, handling rotation if needed.
 """
-function append_transaction(portfolio_id::String, tx::Dict)
+function append_transaction(portfolio_id::AbstractString, tx::Dict)
     ensure_directories()
     log_path = get_log_path(portfolio_id)
 
@@ -172,11 +172,11 @@ function append_transaction(portfolio_id::String, tx::Dict)
 end
 
 """
-    rotate_log(portfolio_id::String) -> Union{String, Nothing}
+    rotate_log(portfolio_id::AbstractString) -> Union{String, Nothing}
 
 Rotate log file to archive, creating a checkpoint in the new log.
 """
-function rotate_log(portfolio_id::String)
+function rotate_log(portfolio_id::AbstractString)
     ensure_directories()
     log_path = get_log_path(portfolio_id)
 
@@ -208,11 +208,11 @@ function rotate_log(portfolio_id::String)
 end
 
 """
-    calculate_state(portfolio_id::String) -> Dict
+    calculate_state(portfolio_id::AbstractString) -> Dict
 
 Calculate current portfolio state from transaction log.
 """
-function calculate_state(portfolio_id::String)
+function calculate_state(portfolio_id::AbstractString)
     log_path = get_log_path(portfolio_id)
     transactions = read_transactions(log_path)
 
@@ -372,11 +372,11 @@ function calculate_state(portfolio_id::String)
 end
 
 """
-    init_portfolio(portfolio_id::String, metadata::Dict) -> Dict
+    init_portfolio(portfolio_id::AbstractString, metadata::Dict) -> Dict
 
 Initialize a new portfolio with GENESIS transaction.
 """
-function init_portfolio(portfolio_id::String, metadata::Dict)
+function init_portfolio(portfolio_id::AbstractString, metadata::Dict)
     ensure_directories()
     log_path = get_log_path(portfolio_id)
 
@@ -401,7 +401,7 @@ end
 
 Record a BUY transaction.
 """
-function record_buy(portfolio_id::String;
+function record_buy(portfolio_id::AbstractString;
                    positionId::String,
                    market::String,
                    position::String,
@@ -428,7 +428,7 @@ end
 
 Record a SELL transaction.
 """
-function record_sell(portfolio_id::String;
+function record_sell(portfolio_id::AbstractString;
                     positionId::String,
                     shares::Number,
                     price::Number,
@@ -447,7 +447,7 @@ end
 
 Record a FLIP transaction.
 """
-function record_flip(portfolio_id::String;
+function record_flip(portfolio_id::AbstractString;
                     positionId::String,
                     price::Number,
                     reason::String="Position flipped")
@@ -464,7 +464,7 @@ end
 
 Record a RESOLVE transaction.
 """
-function record_resolve(portfolio_id::String;
+function record_resolve(portfolio_id::AbstractString;
                        positionId::String,
                        outcome::Bool,
                        reason::String="")
@@ -482,7 +482,7 @@ end
 
 Record an ADJUST transaction for price/confidence updates.
 """
-function record_adjust(portfolio_id::String;
+function record_adjust(portfolio_id::AbstractString;
                       positionId::String,
                       current::Union{Number, Nothing}=nothing,
                       confidence::Union{Number, Nothing}=nothing,
@@ -510,11 +510,11 @@ function record_adjust(portfolio_id::String;
 end
 
 """
-    verify_chain(portfolio_id::String) -> Dict
+    verify_chain(portfolio_id::AbstractString) -> Dict
 
 Verify chain integrity by checking hashes.
 """
-function verify_chain(portfolio_id::String)
+function verify_chain(portfolio_id::AbstractString)
     log_path = get_log_path(portfolio_id)
     transactions = read_transactions(log_path)
 
@@ -548,11 +548,11 @@ function verify_chain(portfolio_id::String)
 end
 
 """
-    audit_checkpoint(portfolio_id::String, archive_path::String) -> Dict
+    audit_checkpoint(portfolio_id::AbstractString, archive_path::String) -> Dict
 
 Verify checkpoint matches calculated state from archive.
 """
-function audit_checkpoint(portfolio_id::String, archive_path::String)
+function audit_checkpoint(portfolio_id::AbstractString, archive_path::String)
     # Calculate state from archive
     archive_txs = read_transactions(archive_path)
 
@@ -634,21 +634,21 @@ end
 """
     list_portfolios() -> Vector{String}
 
-List all portfolio IDs.
+List all portfolio IDs (excludes archive directory).
 """
 function list_portfolios()
     ensure_directories()
     files = readdir(PORTFOLIOS_DIR)
     return [replace(f, ".jsonl" => "") for f in files
-            if endswith(f, ".jsonl") && !contains(f, "_")]
+            if endswith(f, ".jsonl")]
 end
 
 """
-    list_archives(portfolio_id::String) -> Vector{String}
+    list_archives(portfolio_id::AbstractString) -> Vector{String}
 
 List archived logs for a portfolio.
 """
-function list_archives(portfolio_id::String)
+function list_archives(portfolio_id::AbstractString)
     ensure_directories()
     files = readdir(ARCHIVE_DIR)
     return sort([f for f in files
@@ -656,11 +656,11 @@ function list_archives(portfolio_id::String)
 end
 
 """
-    get_log_stats(portfolio_id::String) -> Dict
+    get_log_stats(portfolio_id::AbstractString) -> Dict
 
 Get transaction log statistics.
 """
-function get_log_stats(portfolio_id::String)
+function get_log_stats(portfolio_id::AbstractString)
     log_path = get_log_path(portfolio_id)
     size = get_file_size(log_path)
     transactions = read_transactions(log_path)

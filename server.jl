@@ -147,7 +147,7 @@ end
 
 Initialize a portfolio with default positions.
 """
-function initialize_portfolio(portfolio_id::String)
+function initialize_portfolio(portfolio_id::AbstractString)
     def = get(DEFAULT_PORTFOLIOS, portfolio_id, nothing)
     if def === nothing
         error("Unknown portfolio: $portfolio_id")
@@ -183,7 +183,7 @@ end
 
 Get portfolio state in dashboard-compatible format.
 """
-function get_portfolio_for_dashboard(portfolio_id::String)
+function get_portfolio_for_dashboard(portfolio_id::AbstractString)
     state = TxLog.calculate_state(portfolio_id)
     def = get(DEFAULT_PORTFOLIOS, portfolio_id, Dict())
 
@@ -279,7 +279,7 @@ end
 
 Handle API routes.
 """
-function handle_api(req::HTTP.Request, method::String, path::String)
+function handle_api(req::HTTP.Request, method::AbstractString, path::AbstractString)
     # Parse path segments
     segments = filter(!isempty, split(path, "/"))
 
