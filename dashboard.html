@@ -1949,19 +1949,41 @@
                 showToast(`${parts.join(', ')} position(s)`, 'success');
             }
 
-            // Clear selection and refresh UI
+            // Clear selection and refresh all UI
             selectedPositions.clear();
-            updateSelectionUI();
-            createRebalanceTable();
+            refreshAllUI();
 
-            // Refresh position tables
+            closeModal();
+            pendingAction = null;
+        }
+
+        function refreshAllUI() {
+            // Update selection state
+            updateSelectionUI();
+
+            // Clear and recreate position tables
             document.getElementById('daily-positions').innerHTML = '';
             document.getElementById('weekly-positions').innerHTML = '';
             document.getElementById('contrarian-positions').innerHTML = '';
             createPositionsTables();
 
-            closeModal();
-            pendingAction = null;
+            // Recreate action table
+            createRebalanceTable();
+
+            // Clear and recreate all charts
+            document.getElementById('line-chart').innerHTML = '';
+            document.getElementById('portfolio-bar-chart').innerHTML = '';
+            document.getElementById('position-bar-chart').innerHTML = '';
+            document.getElementById('scatter-chart').innerHTML = '';
+            createLineChart();
+            createPortfolioBarChart();
+            createPositionBarChart();
+            createScatterChart();
+
+            // Update timestamp
+            lastUpdated = new Date();
+            document.getElementById('last-updated').textContent =
+                `Last updated: ${lastUpdated.toLocaleString()}` + (useApi ? ' (API)' : ' (localStorage)');
         }
 
         function closeModal(event) {
