@@ -127,6 +127,7 @@ Unrealized P&L = (Current Odds × Shares) - Cost
 praescientia/
 ├── src/
 │   ├── Praescientia.jl      # Core module (state chains, predictions)
+│   ├── TxLog.jl             # JSONL transaction log (blockchain-style)
 │   └── PolymarketAuth.jl    # API authentication
 ├── data/
 │   ├── october_2025_resolved.json
@@ -135,6 +136,8 @@ praescientia/
 │   ├── january_2026_live_predictions.json
 │   └── contrarian_2026_predictions.json
 ├── portfolios/
+│   ├── *.jsonl              # Active transaction logs (per portfolio)
+│   ├── archive/             # Archived logs (>1MB rotated)
 │   ├── week1_jan6-12_2026.md
 │   ├── daily_jan7_2026.md
 │   ├── contrarian_2026.md
@@ -142,10 +145,11 @@ praescientia/
 ├── scripts/
 │   ├── but-cleanup.sh       # GitButler workspace cleanup
 │   └── but-delete-branch.sh # GitButler branch deletion helper
+├── server.jl                # Julia HTTP server (replaces Node.js)
 ├── demo.jl                  # Demonstration script
 ├── backtest.jl              # Backtesting (oct/nov/dec 2025)
 ├── check_portfolios.jl      # Portfolio status checker with live odds
-├── dashboard.html           # D3.js portfolio visualization
+├── dashboard.html           # D3.js portfolio visualization (AJAX to Julia)
 ├── Project.toml
 ├── README.md
 ├── UNLICENSE
@@ -180,11 +184,17 @@ praescientia/
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
+| `server.jl` | HTTP API server for dashboard | `julia --project=. server.jl [--port=3000]` |
 | `check_portfolios.jl` | Check wager status & outcomes | `julia --project=. check_portfolios.jl [daily\|weekly\|contrarian]` |
 | `backtest.jl` | Backtest against historical data | `julia --project=. backtest.jl [month]` |
 | `demo.jl` | Demonstrate core functionality | `julia --project=. demo.jl` |
 | `scripts/but-cleanup.sh` | GitButler workspace cleanup | `./scripts/but-cleanup.sh [--all]` |
 | `scripts/but-delete-branch.sh` | Delete GitButler branches | `./scripts/but-delete-branch.sh <name>` |
+
+**Dashboard Server:**
+- Run `julia --project=. server.jl` to start the API server
+- Open http://localhost:3000 in browser for dashboard
+- AJAX calls go to Julia endpoints (no Node.js dependency)
 
 **When to create a script:**
 - Any task that fetches external data (prices, API calls)
