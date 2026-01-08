@@ -13,7 +13,7 @@ Usage:
 port = 3000
 for arg in ARGS
     if startswith(arg, "--port=")
-        port = parse(Int, split(arg, "=")[2])
+        global port = parse(Int, split(arg, "=")[2])
     end
 end
 
