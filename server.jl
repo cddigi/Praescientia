@@ -113,7 +113,7 @@ end
 
 Read and serve a static file.
 """
-function read_static_file(path::String)
+function read_static_file(path::AbstractString)
     full_path = joinpath(SERVER_ROOT, path)
 
     if !isfile(full_path)
