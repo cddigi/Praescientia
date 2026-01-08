@@ -1,6 +1,6 @@
 # Praescientia — Session Context
 
-> **Last Updated:** January 7, 2026
+> **Last Updated:** January 8, 2026
 > **Status:** Active trading simulation
 
 ---
@@ -31,17 +31,19 @@
 | YES | BTC hits $96k | $0.50 | $80.00 |
 | NO | SOL hits $150 | $0.71 | $79.52 |
 
-### 2. Daily Portfolio — Jan 7, 2026
-**File:** `portfolios/daily_jan7_2026.md`
-**Budget:** $49.59
-**Resolution:** January 7, 2026 @ 5 PM ET
+### 2. Daily Portfolio — Jan 9, 2026
+**File:** `portfolios/daily_jan9_2026.md`
+**Budget:** $49.44
+**Resolution:** January 9, 2026 @ noon ET (crypto) / close (SPX)
 
 | Position | Market | Entry | Cost |
 |----------|--------|-------|------|
-| UP | BTC Up/Down Jan 7 | $0.575 | $14.95 |
-| UP | ETH Up/Down Jan 7 | $0.62 | $14.88 |
-| DOWN | SOL Up/Down Jan 7 | $0.38 | $9.88 |
-| DOWN | SPX Up/Down Jan 7 | $0.395 | $9.88 |
+| UP | BTC Up/Down Jan 9 | $0.59 | $14.75 |
+| UP | ETH Up/Down Jan 9 | $0.52 | $15.08 |
+| DOWN | SOL Up/Down Jan 9 | $0.595 | $14.88 |
+| DOWN | SPX Up/Down Jan 9 | $0.43 | $4.73 |
+
+**Previous:** Jan 7 closed with +$1.46 (+2.9% ROI), Jan 8 BTC resolved DOWN
 
 ### 3. Contrarian Portfolio — 2026
 **File:** `portfolios/contrarian_2026.md`
@@ -54,7 +56,7 @@
 | YES | Fed Rate Hike 2026 | $0.115 | $20.13 |
 | YES | Fed Emergency Cut 2026 | $0.130 | $20.02 |
 
-**Total Simulated Capital:** $648.84
+**Total Simulated Capital:** $649.69 (Weekly: $499.17 + Daily: $49.44 + Contrarian: $100.08 + Cash: $1.00)
 
 ---
 
@@ -112,7 +114,7 @@ Unrealized P&L = (Current Odds × Shares) - Cost
 
 | Date | Event | Portfolio Impact |
 |------|-------|------------------|
-| **Jan 7, 5 PM ET** | Daily markets resolve | Check daily_jan7 results |
+| **Jan 9, noon ET** | Daily markets resolve | Check daily_jan9 results |
 | **Jan 12** | Weekly markets resolve | Check week1 results |
 | Jan 28-29 | FOMC Meeting | Fed decision |
 | Jan 30 | Q4 2025 GDP | Recession signal |
