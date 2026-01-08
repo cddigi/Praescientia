@@ -1061,12 +1061,13 @@
                     if (result.success) {
                         portfolios = result.data;
                         useApi = true;
-                        console.log('Loaded portfolio data from API');
+                        console.log('Loaded portfolio data from API:', portfolios);
+                        console.log('Weekly positions:', portfolios.weekly?.positions);
                         return true;
                     }
                 }
             } catch (error) {
-                console.log('API not available, using localStorage fallback');
+                console.log('API not available, using localStorage fallback', error);
             }
             return false;
         }
@@ -1538,6 +1539,10 @@
         // ============================================================
 
         function createPositionsTables() {
+            console.log('createPositionsTables called');
+            console.log('Daily positions:', portfolios.daily?.positions);
+            console.log('Weekly positions:', portfolios.weekly?.positions);
+
             // Daily
             const dailyTbody = document.getElementById('daily-positions');
             portfolios.daily.positions.forEach(pos => {
@@ -1958,6 +1963,9 @@
         }
 
         function refreshAllUI() {
+            console.log('refreshAllUI called, portfolios:', portfolios);
+            console.log('Weekly positions count:', portfolios.weekly?.positions?.length);
+
             // Update selection state
             updateSelectionUI();
 
