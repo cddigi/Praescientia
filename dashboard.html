@@ -1371,8 +1371,12 @@
                 .range([0, width])
                 .padding(0.2);
 
+            const minPL = d3.min(data, d => d.pl) || 0;
+            const maxPL = d3.max(data, d => d.pl) || 0;
+            const yMin = minPL === 0 && maxPL === 0 ? -1 : minPL * 1.2;
+            const yMax = minPL === 0 && maxPL === 0 ? 1 : maxPL * 1.2;
             const y = d3.scaleLinear()
-                .domain([d3.min(data, d => d.pl) * 1.2, d3.max(data, d => d.pl) * 1.2])
+                .domain([yMin, yMax])
                 .range([height, 0]);
 
             // Zero line
@@ -1538,15 +1542,17 @@
             const dailyTbody = document.getElementById('daily-positions');
             portfolios.daily.positions.forEach(pos => {
                 const row = document.createElement('tr');
-                const plClass = pos.pl >= 0 ? 'positive' : 'negative';
+                const plClass = (pos.pl || 0) >= 0 ? 'positive' : 'negative';
                 const badgeClass = pos.position === 'UP' ? 'badge-up' : 'badge-down';
+                const exitValue = pos.exit != null ? `$${pos.exit.toFixed(3)}` : '-';
+                const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
                 row.innerHTML = `
                     <td>${pos.market}</td>
                     <td><span class="badge ${badgeClass}">${pos.position}</span></td>
-                    <td>$${pos.entry.toFixed(3)}</td>
-                    <td>$${pos.exit.toFixed(3)}</td>
-                    <td>${formatCurrencyPlain(pos.cost)}</td>
-                    <td class="${plClass}">${formatCurrency(pos.pl)}</td>
+                    <td>${entryValue}</td>
+                    <td>${exitValue}</td>
+                    <td>${formatCurrencyPlain(pos.cost || 0)}</td>
+                    <td class="${plClass}">${formatCurrency(pos.pl || 0)}</td>
                 `;
                 dailyTbody.appendChild(row);
             });
@@ -1555,15 +1561,17 @@
             const weeklyTbody = document.getElementById('weekly-positions');
             portfolios.weekly.positions.forEach(pos => {
                 const row = document.createElement('tr');
-                const plClass = pos.pl >= 0 ? 'positive' : 'negative';
+                const plClass = (pos.pl || 0) >= 0 ? 'positive' : 'negative';
                 const badgeClass = pos.position === 'YES' ? 'badge-yes' : 'badge-no';
+                const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
+                const currentValue = pos.current != null ? `$${pos.current.toFixed(3)}` : '-';
                 row.innerHTML = `
                     <td>${pos.market}</td>
                     <td><span class="badge ${badgeClass}">${pos.position}</span></td>
-                    <td>$${pos.entry.toFixed(3)}</td>
-                    <td>$${pos.current.toFixed(3)}</td>
-                    <td>${formatCurrencyPlain(pos.cost)}</td>
-                    <td class="${plClass}">${formatCurrency(pos.pl)}</td>
+                    <td>${entryValue}</td>
+                    <td>${currentValue}</td>
+                    <td>${formatCurrencyPlain(pos.cost || 0)}</td>
+                    <td class="${plClass}">${formatCurrency(pos.pl || 0)}</td>
                 `;
                 weeklyTbody.appendChild(row);
             });
@@ -1572,14 +1580,17 @@
             const contrarianTbody = document.getElementById('contrarian-positions');
             portfolios.contrarian.positions.forEach(pos => {
                 const row = document.createElement('tr');
-                const plClass = pos.pl >= 0 ? 'positive' : (pos.pl < 0 ? 'negative' : 'neutral');
+                const pl = pos.pl || 0;
+                const plClass = pl >= 0 ? 'positive' : 'negative';
+                const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
+                const currentValue = pos.current != null ? `$${pos.current.toFixed(3)}` : '-';
                 row.innerHTML = `
                     <td>${pos.market}</td>
                     <td><span class="badge badge-yes">${pos.position}</span></td>
-                    <td>$${pos.entry.toFixed(3)}</td>
-                    <td>$${pos.current.toFixed(3)}</td>
-                    <td>${formatCurrencyPlain(pos.cost)}</td>
-                    <td class="${plClass}">${formatCurrency(pos.pl)}</td>
+                    <td>${entryValue}</td>
+                    <td>${currentValue}</td>
+                    <td>${formatCurrencyPlain(pos.cost || 0)}</td>
+                    <td class="${plClass}">${formatCurrency(pl)}</td>
                 `;
                 contrarianTbody.appendChild(row);
             });
