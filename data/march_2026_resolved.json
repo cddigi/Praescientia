@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "source": "Polymarket",
+    "period": "March 2026",
+    "fetched_at": "2026-03-30",
+    "notes": "Resolved and active prediction markets from March 2026. US-Iran escalation dominates. Khamenei confirmed dead. Fed holds rates. S&P 500 lowest close of 2026."
+  },
+  "markets": [
+    {
+      "id": "fed-decision-march-2026",
+      "question": "Fed decision in March 2026?",
+      "category": "economics",
+      "volume_usd": 200000000,
+      "resolution_date": "2026-03-18",
+      "outcome": "No change (held at 3.50%-3.75%)",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "25 bps decrease", "outcome": "NO", "final_price": 0.0},
+        {"label": "No change", "outcome": "YES", "final_price": 1.0},
+        {"label": "25+ bps increase", "outcome": "NO", "final_price": 0.0}
+      ],
+      "notes": "11-1 vote. Miran dissented. Dot plot projects 1 cut in 2026."
+    },
+    {
+      "id": "khamenei-out-march-2026",
+      "question": "Khamenei out as Supreme Leader of Iran by March 31?",
+      "category": "geopolitics",
+      "volume_usd": 45000000,
+      "resolution_date": "2026-03-29",
+      "outcome": "Yes - Iranian state TV confirmed death",
+      "winning_price": 1.0,
+      "options": [
+        {"label": "Yes", "outcome": "YES", "final_price": 1.0},
+        {"label": "No", "outcome": "NO", "final_price": 0.0}
+      ],
+      "notes": "One of most-traded geopolitical markets. Resolved after death confirmation."
+    },
+    {
+      "id": "us-military-action-iran",
+      "question": "US military action against Iran before July?",
+      "category": "geopolitics",
+      "volume_usd": 529000000,
+      "resolution_date": "2026-02-28",
+      "outcome": "Yes - strikes began Feb 28, continued through March",
+      "notes": "Largest Polymarket geopolitical market. Trump ultimatum for ceasefire, Strait of Hormuz closure threats, Pentagon prep for ground operations."
+    },
+    {
+      "id": "sp500-ath-march-2026",
+      "question": "S&P 500 all time high by March 31, 2026?",
+      "category": "stocks",
+      "volume_usd": 3000000,
+      "resolution_date": "2026-03-31",
+      "outcome": "Pending - S&P 500 hit lowest close of 2026 in early March",
+      "notes": "Market under pressure from Iran tensions, tariff uncertainty, weakening employment data."
+    },
+    {
+      "id": "february-cpi-2026",
+      "question": "February 2026 CPI",
+      "category": "economics",
+      "resolution_date": "2026-03-12",
+      "outcome": "2.4% year-over-year (steady)",
+      "notes": "Inflation remained sticky. Fed March dot plot raised 2026 inflation projection."
+    }
+  ],
+  "active_markets_snapshot": {
+    "date": "2026-03-30",
+    "us_recession_2026": {
+      "yes_price": 0.38,
+      "no_price": 0.62,
+      "volume_usd": 922899,
+      "notes": "Up from 25.5% in Jan. Driven by: -92k nonfarm payrolls, Q4 GDP miss (1.4%), unemployment at 4.4%."
+    },
+    "fed_rate_hike_2026": {
+      "yes_price": 0.18,
+      "no_price": 0.82,
+      "volume_usd": 739334,
+      "notes": "Up from 11.5% in Jan. Rising oil prices from Iran tensions and sticky inflation."
+    },
+    "fed_emergency_cut_2027": {
+      "yes_price": 0.19,
+      "no_price": 0.81,
+      "volume_usd": 73662,
+      "notes": "Up from 13% in Jan. Iran crisis and employment weakness increase tail risk."
+    }
+  },
+  "price_summary": {
+    "date": "2026-03-30",
+    "btc": {
+      "price": 67823,
+      "month_change_pct": 4.3,
+      "from_jan_6_pct": -25.5,
+      "notes": "Recovery from Feb lows. Still well below Jan highs."
+    },
+    "eth": {
+      "price": 2071,
+      "month_change_pct": -5.9,
+      "from_jan_6_pct": -37.2,
+      "notes": "Continued weakness. Vitalik selling pressure noted."
+    },
+    "sol": {
+      "price": 82,
+      "month_change_pct": -8.9,
+      "from_jan_6_pct": -41.0,
+      "notes": "Underperforming BTC and ETH on relative basis."
+    }
+  }
+}

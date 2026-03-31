@@ -1,7 +1,7 @@
 # Praescientia — Session Context
 
-> **Last Updated:** January 8, 2026
-> **Status:** Active trading simulation
+> **Last Updated:** March 30, 2026
+> **Status:** Active trading simulation — contrarian portfolio only
 
 ---
 
@@ -15,66 +15,75 @@
 
 ---
 
-## Active Portfolios (Simulated)
+## Portfolio Results Summary
 
-### 1. Weekly Portfolio — Jan 6-12, 2026
-**File:** `portfolios/week1_jan6-12_2026.md`
-**Budget:** $499.17
-**Resolution:** January 12, 2026
+### 1. Weekly Portfolio — Jan 6-12, 2026 (RESOLVED)
+**File:** `portfolios/week1_jan6-12_2026.md` | **Data:** `data/january_2026_live_predictions.json`
+**Budget:** $499.17 | **Status:** RESOLVED Jan 12, 2026
 
-| Position | Market | Entry | Cost |
-|----------|--------|-------|------|
-| NO | BTC hits $100k | $0.87 | $100.05 |
-| NO | ETH dips to $3k | $0.84 | $79.80 |
-| NO | BTC dips to $88k | $0.78 | $70.20 |
-| YES | ETH hits $3,400 | $0.56 | $89.60 |
-| YES | BTC hits $96k | $0.50 | $80.00 |
-| NO | SOL hits $150 | $0.71 | $79.52 |
+| Position | Market | Entry | Outcome | P&L |
+|----------|--------|-------|---------|-----|
+| NO | BTC hits $100k | $0.87 | WON | +$14.95 |
+| NO | ETH dips to $3k | $0.84 | WON | +$15.20 |
+| NO | BTC dips to $88k | $0.78 | SOLD | $0.00 |
+| NO | ETH hits $3.4k (flipped) | $0.996 | WON | +$0.36 |
+| NO | BTC hits $96k (flipped) | $0.996 | WON | +$0.32 |
+| NO | SOL hits $150 | $0.71 | SOLD | $0.00 |
 
-### 2. Daily Portfolio — Jan 9, 2026
+**Result:** 4/4 remaining positions WON at resolution (+$30.83). Jan 7 rebalance cost -$168.32. **Net: ~-$137**
+**Lesson:** Rebalance was directionally correct but expensive. Cut losing YES positions earlier.
+
+### 2. Daily Portfolio — Jan 9, 2026 (RESOLVED)
 **File:** `portfolios/daily_jan9_2026.md`
-**Budget:** $49.44
-**Resolution:** January 9, 2026 @ noon ET (crypto) / close (SPX)
+**Budget:** $49.44 | **Status:** RESOLVED Jan 9, 2026
 
-| Position | Market | Entry | Cost |
-|----------|--------|-------|------|
-| UP | BTC Up/Down Jan 9 | $0.59 | $14.75 |
-| UP | ETH Up/Down Jan 9 | $0.52 | $15.08 |
-| DOWN | SOL Up/Down Jan 9 | $0.595 | $14.88 |
-| DOWN | SPX Up/Down Jan 9 | $0.43 | $4.73 |
+| Position | Market | Outcome | P&L |
+|----------|--------|---------|-----|
+| UP | BTC Up/Down Jan 9 | LOST (BTC DOWN) | -$14.75 |
+| UP | ETH Up/Down Jan 9 | LOST (ETH DOWN) | -$15.08 |
+| DOWN | SOL Up/Down Jan 9 | LOST (SOL UP) | -$14.88 |
+| DOWN | SPX Up/Down Jan 9 | LOST (SPX UP +0.6%) | -$4.73 |
 
-**Previous:** Jan 7 closed with +$1.46 (+2.9% ROI), Jan 8 BTC resolved DOWN
+**Result:** 0/4. Total loss -$49.44. Mean reversion thesis failed; SPX hit new ATH.
 
-### 3. Contrarian Portfolio — 2026
-**File:** `portfolios/contrarian_2026.md`
-**Budget:** $100.08
-**Resolution:** Throughout 2026
+### 3. Contrarian Portfolio — 2026 (ACTIVE)
+**File:** `portfolios/contrarian_2026.md` | **Data:** `data/contrarian_2026_predictions.json`
+**Budget:** $100.08 | **Status:** ACTIVE — all positions unrealized gains
 
-| Position | Market | Entry | Cost |
-|----------|--------|-------|------|
-| YES | US Recession 2026 | $0.255 | $59.93 |
-| YES | Fed Rate Hike 2026 | $0.115 | $20.13 |
-| YES | Fed Emergency Cut 2026 | $0.130 | $20.02 |
+| Position | Market | Entry | Current (Mar 30) | Unrealized P&L | Return |
+|----------|--------|-------|-------------------|----------------|--------|
+| YES | US Recession 2026 | $0.255 | $0.38 | +$29.37 | +49.0% |
+| YES | Fed Rate Hike 2026 | $0.115 | $0.18 | +$11.37 | +56.5% |
+| YES | Fed Emergency Cut | $0.130 | $0.19 | +$9.24 | +46.2% |
 
-**Total Simulated Capital:** $649.69 (Weekly: $499.17 + Daily: $49.44 + Contrarian: $100.08 + Cash: $1.00)
+**Total Unrealized P&L: +$49.98 (+49.9% ROI)**
+
+**Drivers:** Q4 GDP miss (1.4%), nonfarm payrolls -92k, unemployment 4.4%, US-Iran strikes, sticky CPI 2.4%, S&P 500 lowest close of 2026.
+
+### Simulated Capital (as of March 30, 2026)
+- Weekly: RESOLVED (~-$137 net)
+- Daily Jan 7: +$1.46
+- Daily Jan 9: -$49.44
+- Contrarian: $100.08 invested, current value $150.06 (unrealized)
+- **Net realized P&L: ~-$185** | **Unrealized: +$49.98** | **Combined: ~-$135**
 
 ---
 
-## The Seneca Strategy
+## The Seneca Strategy — Vindicated
 
 **File:** `portfolios/seneca_strategy.md`
 
-Core philosophy for contrarian betting:
-- Bet against unanimous consensus
-- Use "Grandmother Test" — if common sense sees the risk, bet on it
-- Prepare for tail risks the crowd ignores (premeditatio malorum)
-- Asymmetric payouts: risk $1 to make $4-10
+The contrarian thesis is playing out. Every mispricing we identified in January is materializing:
+- Wall Street unanimity on 2026 rally → S&P 500 hit lowest close of 2026 in March
+- CAPE ratio bubble → Market under pressure from geopolitics and employment weakness
+- Inflation "solved" narrative → CPI sticky at 2.4%, Fed raised inflation projections
+- Soft landing consensus → Q4 GDP 1.4% (vs 2.8% expected), nonfarm -92k jobs
 
-**Current Mispricings Identified:**
-- Wall Street unanimity on 2026 rally (0/21 predict decline)
-- CAPE ratio at 40 (only second time ever, first was dot-com)
-- Inflation "solved" narrative (1970s had 3 waves)
-- Soft landing consensus despite Sahm Rule triggering
+**Key developments since January:**
+- US strikes Iran (Feb 28) — oil prices spike, geopolitical risk premium returns
+- Khamenei confirmed dead (late March) — unprecedented Middle East instability
+- Kevin Warsh nominated as Fed Chair (Jan 30) — monetary policy uncertainty
+- BTC crashed from ~$91k to ~$68k (-25%) — risk-off sentiment spreading
 
 ---
 
@@ -110,16 +119,34 @@ Unrealized P&L = (Current Odds × Shares) - Cost
 
 ---
 
-## Key Dates
+## Key Dates (Upcoming)
 
 | Date | Event | Portfolio Impact |
 |------|-------|------------------|
-| **Jan 9, noon ET** | Daily markets resolve | Check daily_jan9 results |
-| **Jan 12** | Weekly markets resolve | Check week1 results |
-| Jan 28-29 | FOMC Meeting | Fed decision |
-| Jan 30 | Q4 2025 GDP | Recession signal |
-| Jan 31 | Gov't funding deadline | Shutdown risk |
-| Feb 12 | January CPI | Inflation signal |
+| Apr 30 | Q1 2026 GDP Advance | Major recession signal. If negative, recession odds spike. |
+| May 6-7 | FOMC Meeting | Rate decision — watch for emergency cut signals |
+| Jun 17-18 | FOMC Meeting | Next rate decision |
+| Jul 30 | Q2 2026 GDP | Second quarter — two negatives = recession |
+| Nov 3 | Midterm Elections | Political uncertainty |
+| Dec 9 | Final FOMC 2026 | Rate hike market resolves |
+| Dec 31 | Emergency Cut deadline | Fed emergency cut market resolves |
+| Jan 31, 2027 | Recession resolution | US Recession 2026 market resolves |
+
+## Key Dates (Past — Resolved)
+
+| Date | Event | Result |
+|------|-------|--------|
+| Jan 9 | Daily markets resolved | 0/4 — total loss |
+| Jan 12 | Weekly markets resolved | 4/4 won, but rebalance loss dominated |
+| Jan 28 | FOMC Meeting | No change (held 3.50-3.75%) |
+| Jan 30 | Kevin Warsh nominated | Fed Chair transition announced |
+| Jan 31 | Govt shutdown | Partial shutdown began (4 days) |
+| Feb 13 | DHS funding lapsed | Extended partial shutdown |
+| Feb 20 | Q4 2025 GDP | 1.4% (well below 2.8% forecast) |
+| Feb 28 | US strikes Iran | $529M traded on Polymarket |
+| Mar 6 | Feb nonfarm payrolls | -92,000 jobs (huge miss) |
+| Mar 18 | FOMC Meeting | No change (11-1 vote, Miran dissented) |
+| Late Mar | Khamenei death confirmed | $45M Polymarket volume |
 
 ---
 
@@ -135,16 +162,23 @@ praescientia/
 │   ├── october_2025_resolved.json
 │   ├── november_2025_resolved.json
 │   ├── december_2025_resolved.json
-│   ├── january_2026_live_predictions.json
-│   └── contrarian_2026_predictions.json
+│   ├── january_2026_resolved.json     # NEW: Jan 2026 resolved markets
+│   ├── february_2026_resolved.json    # NEW: Feb 2026 resolved markets
+│   ├── march_2026_resolved.json       # NEW: Mar 2026 resolved/active markets
+│   ├── january_2026_live_predictions.json  # Updated: outcomes resolved
+│   └── contrarian_2026_predictions.json    # Updated: current odds + tracking
 ├── portfolios/
-│   ├── *.jsonl              # Active transaction logs (per portfolio)
+│   ├── weekly.jsonl         # RESOLVED: 4 RESOLVE txs added
+│   ├── daily.jsonl          # RESOLVED: 4 RESOLVE txs added
+│   ├── contrarian.jsonl     # ACTIVE: 3 ADJUST txs added (Mar 30 odds)
 │   ├── archive/             # Archived logs (>1MB rotated)
 │   ├── week1_jan6-12_2026.md
 │   ├── daily_jan7_2026.md
+│   ├── daily_jan9_2026.md
 │   ├── contrarian_2026.md
 │   └── seneca_strategy.md
 ├── scripts/
+│   ├── poll_resolved_markets.jl  # NEW: Fetch resolved market data
 │   ├── but-cleanup.sh       # GitButler workspace cleanup
 │   └── but-delete-branch.sh # GitButler branch deletion helper
 ├── server.jl                # Julia HTTP server (replaces Node.js)
@@ -188,6 +222,7 @@ praescientia/
 |--------|---------|-------|
 | `server.jl` | HTTP API server for dashboard | `julia --project=. server.jl [--port=3000]` |
 | `check_portfolios.jl` | Check wager status & outcomes | `julia --project=. check_portfolios.jl [daily\|weekly\|contrarian]` |
+| `scripts/poll_resolved_markets.jl` | Poll resolved market data + prices | `julia --project=. scripts/poll_resolved_markets.jl [month year\|--all]` |
 | `backtest.jl` | Backtest against historical data | `julia --project=. backtest.jl [month]` |
 | `demo.jl` | Demonstrate core functionality | `julia --project=. demo.jl` |
 | `scripts/but-cleanup.sh` | GitButler workspace cleanup | `./scripts/but-cleanup.sh [--all]` |
@@ -208,10 +243,12 @@ praescientia/
 
 ## Next Actions
 
-1. **Jan 7 evening:** Run `julia --project=. check_portfolios.jl` to check daily results
-2. **Jan 12:** Run portfolio check for weekly results
-3. **Ongoing:** Monitor contrarian positions for entry/exit opportunities
-4. **If profitable:** Consider transitioning from simulation to real wagers
+1. **Consider taking profits on contrarian:** All 3 positions up 46-57%. Recession position approaching 50% sell threshold.
+2. **Monitor Q1 2026 GDP (Apr 30):** If negative, recession odds could spike to 50%+ — potential exit point.
+3. **Watch FOMC May meeting:** If language shifts hawkish, rate hike odds could jump.
+4. **Run `julia --project=. scripts/poll_resolved_markets.jl --all`** periodically to keep data current.
+5. **Run `julia --project=. check_portfolios.jl contrarian`** to check live contrarian odds.
+6. **Consider new daily/weekly portfolios** if opportunity arises.
 
 ---
 

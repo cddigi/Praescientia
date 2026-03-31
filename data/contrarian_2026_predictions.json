@@ -75,27 +75,81 @@
     "rate_hike_emergency_cut": -0.90
   },
   "scenarios": [
-    {"name": "Soft Landing", "probability": 0.50, "pnl": -100.08},
+    {"name": "Soft Landing", "probability": 0.40, "pnl": -100.08},
     {"name": "Recession + Emergency Cut", "probability": 0.25, "pnl": 288.97},
-    {"name": "Recession, No Emergency", "probability": 0.10, "pnl": 175.07},
+    {"name": "Recession, No Emergency", "probability": 0.15, "pnl": 175.07},
     {"name": "No Recession + Rate Hike", "probability": 0.10, "pnl": 154.87},
-    {"name": "Stagflation", "probability": 0.05, "pnl": 329.94}
+    {"name": "Stagflation", "probability": 0.10, "pnl": 329.94}
   ],
   "key_dates": [
-    {"date": "2026-01-28", "event": "FOMC Meeting"},
-    {"date": "2026-01-30", "event": "Q4 2025 GDP Advance"},
-    {"date": "2026-03-18", "event": "FOMC Meeting"},
+    {"date": "2026-01-28", "event": "FOMC Meeting", "result": "No change. Held at 3.50-3.75%."},
+    {"date": "2026-01-30", "event": "Q4 2025 GDP Advance", "result": "Delayed to Feb 20 due to Oct-Nov shutdown."},
+    {"date": "2026-02-20", "event": "Q4 2025 GDP Released", "result": "1.4% annualized (well below 2.8% forecast). Recession risk up."},
+    {"date": "2026-02-28", "event": "US Strikes Iran", "result": "Major geopolitical escalation. Oil prices spike."},
+    {"date": "2026-03-18", "event": "FOMC Meeting", "result": "No change. 11-1 vote. Dot plot: 1 cut in 2026."},
     {"date": "2026-04-30", "event": "Q1 2026 GDP"},
     {"date": "2026-05-06", "event": "FOMC Meeting"},
     {"date": "2026-07-30", "event": "Q2 2026 GDP"},
     {"date": "2026-11-03", "event": "Midterm Elections"},
     {"date": "2026-12-09", "event": "Final FOMC 2026"}
   ],
+  "odds_tracking": [
+    {
+      "date": "2026-01-06",
+      "recession_yes": 0.255,
+      "rate_hike_yes": 0.115,
+      "emergency_cut_yes": 0.130,
+      "notes": "Entry prices"
+    },
+    {
+      "date": "2026-03-30",
+      "recession_yes": 0.38,
+      "rate_hike_yes": 0.18,
+      "emergency_cut_yes": 0.19,
+      "notes": "All positions UP. Driven by: Q4 GDP miss (1.4%), -92k nonfarm payrolls, unemployment 4.4%, Iran crisis, sticky CPI 2.4%."
+    }
+  ],
+  "unrealized_pnl": {
+    "date": "2026-03-30",
+    "c1_recession": {
+      "current_odds": 0.38,
+      "entry_odds": 0.255,
+      "shares": 235,
+      "cost": 59.93,
+      "current_value": 89.30,
+      "unrealized_pnl": 29.37,
+      "return_pct": 49.0
+    },
+    "c2_rate_hike": {
+      "current_odds": 0.18,
+      "entry_odds": 0.115,
+      "shares": 175,
+      "cost": 20.13,
+      "current_value": 31.50,
+      "unrealized_pnl": 11.37,
+      "return_pct": 56.5
+    },
+    "c3_emergency_cut": {
+      "current_odds": 0.19,
+      "entry_odds": 0.130,
+      "shares": 154,
+      "cost": 20.02,
+      "current_value": 29.26,
+      "unrealized_pnl": 9.24,
+      "return_pct": 46.2
+    },
+    "total_cost": 100.08,
+    "total_current_value": 150.06,
+    "total_unrealized_pnl": 49.98,
+    "total_return_pct": 49.9
+  },
   "grace_hopper_calculus": {
     "total_at_risk": 100.08,
     "worst_case_loss": -100.08,
     "best_case_profit": 463.92,
-    "expected_value": 48.52,
-    "risk_reward_ratio": 4.64
+    "current_unrealized_pnl": 49.98,
+    "current_roi_pct": 49.9,
+    "risk_reward_ratio": 4.64,
+    "lesson": "Seneca strategy working. All three contrarian positions have appreciated 46-57% as macro risks materialized: GDP slowdown, employment weakness, Iran crisis, sticky inflation."
   }
 }
