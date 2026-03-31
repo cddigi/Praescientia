@@ -123,6 +123,23 @@
       "sol_price": 139,
       "portfolio_value": 499.17,
       "notes": "Initial positions opened"
+    },
+    {
+      "date": "2026-01-07",
+      "btc_price": 90680,
+      "eth_price": 3130,
+      "sol_price": 135,
+      "portfolio_value": 330.85,
+      "notes": "Flipped YES to NO, realized -$168.32"
+    },
+    {
+      "date": "2026-01-08",
+      "btc_price": 90468,
+      "eth_price": 3125,
+      "sol_price": 137,
+      "portfolio_value": 333.53,
+      "unrealized_pnl": 2.68,
+      "notes": "Unrealized +$2.68. WARNING: ETH $3k dip risk increased to 31%"
     }
   ],
   "grace_hopper_calculus": {

@@ -33,43 +33,245 @@ using .TxLog
 const DEFAULT_PORT = 3000
 const SERVER_ROOT = @__DIR__
 
-# Default portfolio definitions (for initialization)
-const DEFAULT_PORTFOLIOS = Dict(
-    "daily" => Dict(
-        "name" => "Daily (Jan 7)",
-        "color" => "#4dabf7",
-        "status" => "closed",
-        "positions" => [
-            Dict("id" => "d1", "market" => "BTC Up/Down Jan 7", "position" => "UP", "shares" => 26, "price" => 0.575, "confidence" => 0, "action" => "closed", "reason" => "Market resolved"),
-            Dict("id" => "d2", "market" => "ETH Up/Down Jan 7", "position" => "UP", "shares" => 24, "price" => 0.62, "confidence" => 0, "action" => "closed", "reason" => "Market resolved"),
-            Dict("id" => "d3", "market" => "SOL Up/Down Jan 7", "position" => "DOWN", "shares" => 26, "price" => 0.38, "confidence" => 0, "action" => "closed", "reason" => "Market resolved"),
-            Dict("id" => "d4", "market" => "SPX Up/Down Jan 7", "position" => "DOWN", "shares" => 25, "price" => 0.395, "confidence" => 0, "action" => "closed", "reason" => "Market resolved"),
-        ]
-    ),
-    "weekly" => Dict(
-        "name" => "Weekly (Jan 6-12)",
-        "color" => "#da77f2",
-        "status" => "active",
-        "positions" => [
-            Dict("id" => "w1", "market" => "BTC hits \$100k", "position" => "NO", "shares" => 115, "price" => 0.87, "confidence" => 85, "action" => "hold", "reason" => "High confidence, near max profit"),
-            Dict("id" => "w2", "market" => "ETH dips to \$3k", "position" => "NO", "shares" => 95, "price" => 0.84, "confidence" => 80, "action" => "hold", "reason" => "Strong support above \$3k"),
-            Dict("id" => "w3", "market" => "BTC dips to \$88k", "position" => "NO", "shares" => 90, "price" => 0.78, "confidence" => 65, "action" => "sell", "reason" => "BTC weakness - consider taking profit"),
-            Dict("id" => "w4", "market" => "ETH hits \$3.4k", "position" => "NO", "shares" => 89, "price" => 0.996, "confidence" => 90, "action" => "hold", "reason" => "Already flipped, ride to resolution"),
-            Dict("id" => "w5", "market" => "BTC hits \$96k", "position" => "NO", "shares" => 80, "price" => 0.996, "confidence" => 85, "action" => "hold", "reason" => "Already flipped, ride to resolution"),
-            Dict("id" => "w6", "market" => "SOL hits \$150", "position" => "NO", "shares" => 112, "price" => 0.71, "confidence" => 75, "action" => "sell", "reason" => "SOL recovering - lock in gains"),
-        ]
-    ),
-    "contrarian" => Dict(
-        "name" => "Contrarian (2026)",
-        "color" => "#ff922b",
-        "status" => "pending",
-        "positions" => [
-            Dict("id" => "c1", "market" => "US Recession 2026", "position" => "YES", "shares" => 235, "price" => 0.255, "confidence" => 70, "action" => "buy", "reason" => "Sahm Rule triggered - add to position"),
-            Dict("id" => "c2", "market" => "Fed Rate Hike 2026", "position" => "YES", "shares" => 175, "price" => 0.115, "confidence" => 55, "action" => "hold", "reason" => "Wait for inflation data"),
-            Dict("id" => "c3", "market" => "Fed Emergency Cut", "position" => "YES", "shares" => 154, "price" => 0.130, "confidence" => 60, "action" => "hold", "reason" => "Tail risk position - hold"),
-        ]
-    )
+# Portfolio colors for different types
+const PORTFOLIO_COLORS = Dict(
+    "daily" => "#4dabf7",
+    "weekly" => "#da77f2",
+    "contrarian" => "#ff922b",
+    "default" => "#69db7c"
 )
+
+"""
+    discover_portfolios() -> Dict{String, Dict}
+
+Discover all portfolios from:
+- portfolios/*.jsonl (transaction logs)
+- portfolios/*.md (markdown files)
+- data/*.json (JSON data files)
+"""
+function discover_portfolios()
+    portfolios = Dict{String, Dict}()
+
+    # 1. Discover from JSONL transaction logs
+    for f in readdir(TxLog.PORTFOLIOS_DIR)
+        if endswith(f, ".jsonl")
+            portfolio_id = replace(f, ".jsonl" => "")
+            portfolios[portfolio_id] = Dict(
+                "source" => "jsonl",
+                "path" => joinpath(TxLog.PORTFOLIOS_DIR, f)
+            )
+        end
+    end
+
+    # 2. Discover from markdown files
+    for f in readdir(TxLog.PORTFOLIOS_DIR)
+        if endswith(f, ".md") && !startswith(f, "seneca")  # Skip strategy docs
+            # Extract portfolio ID from filename (e.g., "daily_jan9_2026.md" -> "daily_jan9")
+            portfolio_id = replace(f, ".md" => "")
+            # Simplify: remove date suffix for grouping if desired, or keep full name
+            if !haskey(portfolios, portfolio_id)
+                portfolios[portfolio_id] = Dict(
+                    "source" => "markdown",
+                    "path" => joinpath(TxLog.PORTFOLIOS_DIR, f)
+                )
+            end
+        end
+    end
+
+    # 3. Discover from data/*.json files
+    data_dir = joinpath(SERVER_ROOT, "data")
+    if isdir(data_dir)
+        for f in readdir(data_dir)
+            if endswith(f, ".json") && contains(f, "predictions")
+                portfolio_id = replace(f, ".json" => "")
+                if !haskey(portfolios, portfolio_id)
+                    portfolios[portfolio_id] = Dict(
+                        "source" => "json",
+                        "path" => joinpath(data_dir, f)
+                    )
+                end
+            end
+        end
+    end
+
+    return portfolios
+end
+
+"""
+    parse_markdown_portfolio(path::String) -> Dict
+
+Parse a markdown portfolio file for display data.
+"""
+function parse_markdown_portfolio(path::String)
+    content = read(path, String)
+    lines = split(content, '\n')
+
+    result = Dict{String, Any}(
+        "name" => "",
+        "status" => "active",
+        "color" => PORTFOLIO_COLORS["default"],
+        "positions" => [],
+        "starting" => 0.0,
+        "realized" => 0.0,
+        "unrealized" => 0.0,
+        "timeline" => []
+    )
+
+    # Extract title from first H1
+    for line in lines
+        if startswith(line, "# ")
+            result["name"] = strip(replace(line, "# " => ""))
+            break
+        end
+    end
+
+    # Determine color based on filename
+    filename = lowercase(basename(path))
+    if contains(filename, "daily")
+        result["color"] = PORTFOLIO_COLORS["daily"]
+    elseif contains(filename, "week")
+        result["color"] = PORTFOLIO_COLORS["weekly"]
+    elseif contains(filename, "contrarian")
+        result["color"] = PORTFOLIO_COLORS["contrarian"]
+    end
+
+    # Extract status
+    for line in lines
+        lower_line = lowercase(line)
+        if contains(lower_line, "status:")
+            if contains(lower_line, "closed")
+                result["status"] = "closed"
+            elseif contains(lower_line, "active")
+                result["status"] = "active"
+            elseif contains(lower_line, "pending")
+                result["status"] = "pending"
+            end
+            break
+        end
+    end
+
+    # Parse positions table
+    in_positions_table = false
+    header_found = false
+    for line in lines
+        stripped = strip(line)
+
+        # Detect position table headers
+        if contains(stripped, "| #") && contains(stripped, "Market") && contains(stripped, "Position")
+            in_positions_table = true
+            header_found = false
+            continue
+        end
+
+        # Skip header separator line
+        if in_positions_table && !header_found && startswith(stripped, "|") && contains(stripped, ":-")
+            header_found = true
+            continue
+        end
+
+        # Parse position rows
+        if in_positions_table && header_found && startswith(stripped, "|") && !contains(stripped, ":-")
+            cells = [strip(c) for c in split(stripped, "|") if !isempty(strip(c))]
+            if length(cells) >= 6
+                try
+                    pos_num = tryparse(Int, replace(cells[1], r"[^0-9]" => ""))
+                    market = cells[2]
+                    position = replace(cells[3], r"\*+" => "")
+                    entry_str = replace(cells[4], r"[^\d.]" => "")
+                    entry = tryparse(Float64, entry_str)
+                    shares_str = replace(cells[5], r"[^\d.]" => "")
+                    shares = tryparse(Float64, shares_str)
+                    cost_str = replace(cells[6], r"[^\d.]" => "")
+                    cost = tryparse(Float64, cost_str)
+
+                    if entry !== nothing && shares !== nothing && cost !== nothing
+                        push!(result["positions"], Dict(
+                            "id" => "p$(pos_num !== nothing ? pos_num : length(result["positions"]) + 1)",
+                            "market" => market,
+                            "position" => position,
+                            "entry" => entry,
+                            "current" => entry,  # Default to entry
+                            "shares" => shares,
+                            "cost" => cost,
+                            "pl" => 0.0,
+                            "confidence" => 50,
+                            "action" => "hold",
+                            "reason" => ""
+                        ))
+                    end
+                catch e
+                    @debug "Failed to parse position row" line exception=e
+                end
+            end
+        end
+
+        # End of table detection
+        if in_positions_table && header_found && !startswith(stripped, "|") && !isempty(stripped)
+            in_positions_table = false
+        end
+    end
+
+    # Calculate starting value
+    result["starting"] = sum(p["cost"] for p in result["positions"]; init=0.0)
+
+    return result
+end
+
+"""
+    parse_json_portfolio(path::String) -> Dict
+
+Parse a JSON data file for portfolio data.
+"""
+function parse_json_portfolio(path::String)
+    content = read(path, String)
+    data = JSON3.read(content, Dict)
+
+    metadata = get(data, "metadata", Dict())
+    positions_data = get(data, "positions", [])
+
+    result = Dict{String, Any}(
+        "name" => get(metadata, "portfolio_name", basename(path)),
+        "status" => lowercase(get(metadata, "status", "active")),
+        "color" => PORTFOLIO_COLORS["weekly"],  # Default
+        "positions" => [],
+        "starting" => 0.0,
+        "realized" => 0.0,
+        "unrealized" => 0.0,
+        "timeline" => []
+    )
+
+    # Parse positions
+    for pos in positions_data
+        push!(result["positions"], Dict(
+            "id" => get(pos, "id", ""),
+            "market" => get(pos, "market", ""),
+            "position" => get(pos, "position", ""),
+            "entry" => get(pos, "entry_price", 0.0),
+            "current" => get(pos, "entry_price", 0.0),
+            "shares" => get(pos, "shares", 0),
+            "cost" => get(pos, "cost", 0.0),
+            "pl" => get(pos, "pnl", 0.0),
+            "confidence" => round(Int, get(pos, "confidence", 0.5) * 100),
+            "action" => "hold",
+            "reason" => get(pos, "reasoning", "")
+        ))
+    end
+
+    # Get summary data
+    summary = get(data, "summary", Dict())
+    result["starting"] = get(summary, "total_invested", sum(p["cost"] for p in result["positions"]; init=0.0))
+
+    # Parse timeline from daily_tracking
+    tracking = get(data, "daily_tracking", [])
+    for entry in tracking
+        push!(result["timeline"], Dict(
+            "date" => get(entry, "date", ""),
+            "value" => get(entry, "portfolio_value", result["starting"])
+        ))
+    end
+
+    return result
+end
 
 # =============================================================================
 # Helper Functions
@@ -181,22 +383,24 @@ end
 """
     get_portfolio_for_dashboard(portfolio_id) -> Dict
 
-Get portfolio state in dashboard-compatible format.
+Get portfolio state in dashboard-compatible format (from JSONL transaction log).
 """
 function get_portfolio_for_dashboard(portfolio_id::AbstractString)
     state = TxLog.calculate_state(portfolio_id)
-    def = get(DEFAULT_PORTFOLIOS, portfolio_id, Dict())
 
     # Convert positions to dashboard format
     positions = []
+    total_cost = 0.0
     for (_, pos) in state["positions"]
+        cost = get(pos, "totalCost", 0.0)
+        total_cost += cost
         push!(positions, Dict(
             "id" => get(pos, "id", ""),
             "market" => get(pos, "market", ""),
             "position" => get(pos, "position", ""),
             "entry" => get(pos, "avgEntry", 0.0),
             "current" => get(pos, "current", 0.0),
-            "cost" => get(pos, "totalCost", 0.0),
+            "cost" => cost,
             "pl" => get(pos, "pl", 0.0),
             "confidence" => get(pos, "confidence", 50),
             "action" => get(pos, "action", "hold"),
@@ -205,17 +409,23 @@ function get_portfolio_for_dashboard(portfolio_id::AbstractString)
         ))
     end
 
-    # Calculate starting value from default portfolio definition (original investment)
-    # This should not change when positions are sold
-    starting = if haskey(def, "positions")
-        sum(p["shares"] * p["price"] for p in def["positions"])
+    # Calculate starting value from positions
+    starting = total_cost > 0 ? total_cost : sum(p["cost"] for p in positions; init=0.0)
+
+    # Determine color based on portfolio ID
+    color = if contains(portfolio_id, "daily")
+        PORTFOLIO_COLORS["daily"]
+    elseif contains(portfolio_id, "week")
+        PORTFOLIO_COLORS["weekly"]
+    elseif contains(portfolio_id, "contrarian")
+        PORTFOLIO_COLORS["contrarian"]
     else
-        sum(p["entry"] * (p["cost"] / max(p["entry"], 0.001)) for p in positions; init=0.0)
+        get(state, "color", PORTFOLIO_COLORS["default"])
     end
 
     return Dict(
-        "name" => get(state, "name", get(def, "name", "")),
-        "color" => get(state, "color", get(def, "color", "")),
+        "name" => get(state, "name", portfolio_id),
+        "color" => color,
         "starting" => starting,
         "realized" => state["realized"],
         "unrealized" => state["unrealized"],
@@ -285,21 +495,26 @@ function handle_api(req::HTTP.Request, method::AbstractString, path::AbstractStr
     # Parse path segments
     segments = filter(!isempty, split(path, "/"))
 
-    # GET /api/portfolios - Get all portfolio states
+    # GET /api/portfolios - Get all portfolio states (dynamic discovery)
     if method == "GET" && path == "/api/portfolios"
-        portfolio_ids = TxLog.list_portfolios()
-
-        # If no portfolios exist, initialize defaults
-        if isempty(portfolio_ids)
-            for id in keys(DEFAULT_PORTFOLIOS)
-                initialize_portfolio(id)
-            end
-            portfolio_ids = collect(keys(DEFAULT_PORTFOLIOS))
-        end
+        discovered = discover_portfolios()
 
         portfolios = Dict{String, Any}()
-        for id in portfolio_ids
-            portfolios[id] = get_portfolio_for_dashboard(id)
+        for (id, info) in discovered
+            try
+                source = get(info, "source", "")
+                filepath = get(info, "path", "")
+
+                if source == "jsonl"
+                    portfolios[id] = get_portfolio_for_dashboard(id)
+                elseif source == "markdown"
+                    portfolios[id] = parse_markdown_portfolio(filepath)
+                elseif source == "json"
+                    portfolios[id] = parse_json_portfolio(filepath)
+                end
+            catch e
+                @warn "Failed to load portfolio" id exception=e
+            end
         end
 
         return success_response(portfolios)

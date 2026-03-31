@@ -101,6 +101,8 @@
         .portfolio-card.daily::before { background: var(--accent-blue); }
         .portfolio-card.weekly::before { background: var(--accent-purple); }
         .portfolio-card.contrarian::before { background: var(--accent-orange); }
+        .portfolio-card.default::before { background: var(--accent-green); }
+        .portfolio-card::before { background: var(--card-color, var(--accent-green)); }
 
         .portfolio-card .card-header {
             display: flex;
@@ -755,91 +757,10 @@
             </table>
         </div>
 
-        <!-- Portfolio Cards -->
+        <!-- Portfolio Cards (dynamically rendered) -->
         <div class="section-header">Portfolio Breakdown</div>
-        <div class="portfolio-grid">
-            <!-- Daily Portfolio -->
-            <div class="portfolio-card daily">
-                <div class="card-header">
-                    <span class="card-title">Daily (Jan 7)</span>
-                    <span class="card-status status-closed">Closed</span>
-                </div>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-label">Starting</div>
-                        <div class="metric-value neutral">$49.59</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Realized P/L</div>
-                        <div class="metric-value positive">+$1.46</div>
-                        <div class="metric-pct positive">+2.94%</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Final Balance</div>
-                        <div class="metric-value positive">$51.05</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Positions</div>
-                        <div class="metric-value neutral">0 / 4</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Weekly Portfolio -->
-            <div class="portfolio-card weekly">
-                <div class="card-header">
-                    <span class="card-title">Weekly (Jan 6-12)</span>
-                    <span class="card-status status-active">Active</span>
-                </div>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-label">Starting</div>
-                        <div class="metric-value neutral">$499.17</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Realized P/L</div>
-                        <div class="metric-value negative">-$168.32</div>
-                        <div class="metric-pct negative">-33.72%</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Unrealized P/L</div>
-                        <div class="metric-value positive">+$81.67</div>
-                        <div class="metric-pct positive">+16.36%</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Positions</div>
-                        <div class="metric-value neutral">6 / 6</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Contrarian Portfolio -->
-            <div class="portfolio-card contrarian">
-                <div class="card-header">
-                    <span class="card-title">Contrarian (2026)</span>
-                    <span class="card-status status-pending">Pending</span>
-                </div>
-                <div class="metrics">
-                    <div class="metric">
-                        <div class="metric-label">Starting</div>
-                        <div class="metric-value neutral">$100.08</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Realized P/L</div>
-                        <div class="metric-value neutral">$0.00</div>
-                        <div class="metric-pct neutral">0.00%</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Unrealized P/L</div>
-                        <div class="metric-value neutral">$0.00</div>
-                        <div class="metric-pct neutral">0.00%</div>
-                    </div>
-                    <div class="metric">
-                        <div class="metric-label">Positions</div>
-                        <div class="metric-value neutral">3 / 3</div>
-                    </div>
-                </div>
-            </div>
+        <div class="portfolio-grid" id="portfolio-cards-container">
+            <!-- Cards rendered dynamically by JavaScript -->
         </div>
 
         <!-- Charts -->
@@ -879,71 +800,11 @@
             </div>
         </div>
 
-        <!-- Positions by Portfolio -->
+        <!-- Positions by Portfolio (dynamically rendered) -->
         <div class="chart-container">
             <div class="chart-title">Position Details</div>
-
-            <!-- Daily Positions -->
-            <div class="portfolio-section">
-                <div class="portfolio-section-header">
-                    <span class="dot" style="background: var(--accent-blue)"></span>
-                    <h3>Daily Portfolio (Jan 7) — CLOSED</h3>
-                </div>
-                <table class="positions-table">
-                    <thead>
-                        <tr>
-                            <th>Market</th>
-                            <th>Position</th>
-                            <th>Entry</th>
-                            <th>Exit</th>
-                            <th>Cost</th>
-                            <th>P/L</th>
-                        </tr>
-                    </thead>
-                    <tbody id="daily-positions"></tbody>
-                </table>
-            </div>
-
-            <!-- Weekly Positions -->
-            <div class="portfolio-section">
-                <div class="portfolio-section-header">
-                    <span class="dot" style="background: var(--accent-purple)"></span>
-                    <h3>Weekly Portfolio (Jan 6-12) — ACTIVE</h3>
-                </div>
-                <table class="positions-table">
-                    <thead>
-                        <tr>
-                            <th>Market</th>
-                            <th>Position</th>
-                            <th>Entry</th>
-                            <th>Current</th>
-                            <th>Cost</th>
-                            <th>Unrealized P/L</th>
-                        </tr>
-                    </thead>
-                    <tbody id="weekly-positions"></tbody>
-                </table>
-            </div>
-
-            <!-- Contrarian Positions -->
-            <div class="portfolio-section">
-                <div class="portfolio-section-header">
-                    <span class="dot" style="background: var(--accent-orange)"></span>
-                    <h3>Contrarian Portfolio (2026) — PENDING</h3>
-                </div>
-                <table class="positions-table">
-                    <thead>
-                        <tr>
-                            <th>Market</th>
-                            <th>Position</th>
-                            <th>Entry</th>
-                            <th>Current</th>
-                            <th>Cost</th>
-                            <th>Unrealized P/L</th>
-                        </tr>
-                    </thead>
-                    <tbody id="contrarian-positions"></tbody>
-                </table>
+            <div id="positions-container">
+                <!-- Position tables rendered dynamically by JavaScript -->
             </div>
         </div>
 
@@ -984,64 +845,8 @@
         let selectedPositions = new Set();
         let pendingAction = null;
 
-        // Load portfolios from localStorage or use defaults
-        const defaultPortfolios = {
-            daily: {
-                name: 'Daily (Jan 7)',
-                color: '#4dabf7',
-                starting: 49.59,
-                realized: 1.46,
-                unrealized: 0,
-                status: 'closed',
-                positions: [
-                    { id: 'd1', market: 'BTC Up/Down Jan 7', position: 'UP', entry: 0.575, exit: 0.004, current: 0.004, cost: 14.95, pl: -14.85, confidence: 0, action: 'closed', reason: 'Market resolved' },
-                    { id: 'd2', market: 'ETH Up/Down Jan 7', position: 'UP', entry: 0.62, exit: 0.004, current: 0.004, cost: 14.88, pl: -14.78, confidence: 0, action: 'closed', reason: 'Market resolved' },
-                    { id: 'd3', market: 'SOL Up/Down Jan 7', position: 'DOWN', entry: 0.38, exit: 0.997, current: 0.997, cost: 9.88, pl: 16.04, confidence: 0, action: 'closed', reason: 'Market resolved' },
-                    { id: 'd4', market: 'SPX Up/Down Jan 7', position: 'DOWN', entry: 0.395, exit: 0.997, current: 0.997, cost: 9.88, pl: 15.05, confidence: 0, action: 'closed', reason: 'Market resolved' },
-                ],
-                timeline: [
-                    { date: '2026-01-06', value: 49.59 },
-                    { date: '2026-01-07', value: 51.05 },
-                ]
-            },
-            weekly: {
-                name: 'Weekly (Jan 6-12)',
-                color: '#da77f2',
-                starting: 499.17,
-                realized: -168.32,
-                unrealized: 81.67,
-                status: 'active',
-                positions: [
-                    { id: 'w1', market: 'BTC hits $100k', position: 'NO', entry: 0.87, current: 0.997, cost: 100.05, pl: 14.55, confidence: 85, action: 'hold', reason: 'High confidence, near max profit' },
-                    { id: 'w2', market: 'ETH dips to $3k', position: 'NO', entry: 0.84, current: 0.997, cost: 79.80, pl: 14.87, confidence: 80, action: 'hold', reason: 'Strong support above $3k' },
-                    { id: 'w3', market: 'BTC dips to $88k', position: 'NO', entry: 0.78, current: 0.85, cost: 70.20, pl: 6.30, confidence: 65, action: 'sell', reason: 'BTC weakness - consider taking profit' },
-                    { id: 'w4', market: 'ETH hits $3.4k', position: 'NO', entry: 0.996, current: 0.996, cost: 88.64, pl: 0.36, confidence: 90, action: 'hold', reason: 'Already flipped, ride to resolution' },
-                    { id: 'w5', market: 'BTC hits $96k', position: 'NO', entry: 0.996, current: 0.996, cost: 79.68, pl: 0.32, confidence: 85, action: 'hold', reason: 'Already flipped, ride to resolution' },
-                    { id: 'w6', market: 'SOL hits $150', position: 'NO', entry: 0.71, current: 0.92, cost: 79.52, pl: 23.52, confidence: 75, action: 'sell', reason: 'SOL recovering - lock in gains' },
-                ],
-                timeline: [
-                    { date: '2026-01-06', value: 499.17 },
-                    { date: '2026-01-07', value: 412.52 },
-                ]
-            },
-            contrarian: {
-                name: 'Contrarian (2026)',
-                color: '#ff922b',
-                starting: 100.08,
-                realized: 0,
-                unrealized: 0,
-                status: 'pending',
-                positions: [
-                    { id: 'c1', market: 'US Recession 2026', position: 'YES', entry: 0.255, current: 0.28, cost: 59.93, pl: 5.87, confidence: 70, action: 'buy', reason: 'Sahm Rule triggered - add to position' },
-                    { id: 'c2', market: 'Fed Rate Hike 2026', position: 'YES', entry: 0.115, current: 0.12, cost: 20.13, pl: 0.87, confidence: 55, action: 'hold', reason: 'Wait for inflation data' },
-                    { id: 'c3', market: 'Fed Emergency Cut', position: 'YES', entry: 0.130, current: 0.14, cost: 20.02, pl: 1.54, confidence: 60, action: 'hold', reason: 'Tail risk position - hold' },
-                ],
-                timeline: [
-                    { date: '2026-01-06', value: 100.08 },
-                    { date: '2026-01-07', value: 108.36 },
-                ]
-            }
-        };
+        // Portfolios loaded dynamically from API
+        const defaultPortfolios = {};
 
         // API base URL (empty for same-origin, or set to server URL)
         const API_BASE = '';
@@ -1535,78 +1340,176 @@
         }
 
         // ============================================================
-        // POSITIONS TABLES
+        // DYNAMIC PORTFOLIO RENDERING
         // ============================================================
 
+        function createPortfolioCards() {
+            const container = document.getElementById('portfolio-cards-container');
+            container.innerHTML = '';
+
+            Object.entries(portfolios).forEach(([key, p]) => {
+                const card = document.createElement('div');
+                const portfolioType = key.includes('daily') ? 'daily' :
+                                     key.includes('week') ? 'weekly' :
+                                     key.includes('contrarian') ? 'contrarian' : 'default';
+                card.className = `portfolio-card ${portfolioType}`;
+                card.style.setProperty('--card-color', p.color || '#69db7c');
+
+                const statusClass = `status-${p.status || 'active'}`;
+                const starting = p.starting || 0;
+                const realized = p.realized || 0;
+                const unrealized = p.unrealized || 0;
+                const realizedPct = starting > 0 ? (realized / starting * 100) : 0;
+                const unrealizedPct = starting > 0 ? (unrealized / starting * 100) : 0;
+                const totalPositions = (p.positions || []).length;
+                const openPositions = (p.positions || []).filter(pos => pos.action !== 'closed').length;
+
+                const realizedClass = getColorClass(realized);
+                const unrealizedClass = getColorClass(unrealized);
+
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="card-title">${p.name || key}</span>
+                        <span class="card-status ${statusClass}">${(p.status || 'active').charAt(0).toUpperCase() + (p.status || 'active').slice(1)}</span>
+                    </div>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-label">Starting</div>
+                            <div class="metric-value neutral">${formatCurrencyPlain(starting)}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Realized P/L</div>
+                            <div class="metric-value ${realizedClass}">${formatCurrency(realized)}</div>
+                            <div class="metric-pct ${realizedClass}">${formatPercent(realizedPct)}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Unrealized P/L</div>
+                            <div class="metric-value ${unrealizedClass}">${formatCurrency(unrealized)}</div>
+                            <div class="metric-pct ${unrealizedClass}">${formatPercent(unrealizedPct)}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Positions</div>
+                            <div class="metric-value neutral">${openPositions} / ${totalPositions}</div>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
         function createPositionsTables() {
-            console.log('createPositionsTables called');
-            console.log('Daily positions:', portfolios.daily?.positions);
-            console.log('Weekly positions:', portfolios.weekly?.positions);
+            const container = document.getElementById('positions-container');
+            container.innerHTML = '';
 
-            // Daily
-            const dailyTbody = document.getElementById('daily-positions');
-            portfolios.daily.positions.forEach(pos => {
-                const row = document.createElement('tr');
-                const plClass = (pos.pl || 0) >= 0 ? 'positive' : 'negative';
-                const badgeClass = pos.position === 'UP' ? 'badge-up' : 'badge-down';
-                const exitValue = pos.exit != null ? `$${pos.exit.toFixed(3)}` : '-';
-                const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
-                row.innerHTML = `
-                    <td>${pos.market}</td>
-                    <td><span class="badge ${badgeClass}">${pos.position}</span></td>
-                    <td>${entryValue}</td>
-                    <td>${exitValue}</td>
-                    <td>${formatCurrencyPlain(pos.cost || 0)}</td>
-                    <td class="${plClass}">${formatCurrency(pos.pl || 0)}</td>
+            Object.entries(portfolios).forEach(([key, p]) => {
+                if (!p.positions || p.positions.length === 0) return;
+
+                const section = document.createElement('div');
+                section.className = 'portfolio-section';
+
+                const statusLabel = (p.status || 'active').toUpperCase();
+                const isClosed = p.status === 'closed';
+
+                section.innerHTML = `
+                    <div class="portfolio-section-header">
+                        <span class="dot" style="background: ${p.color || '#69db7c'}"></span>
+                        <h3>${p.name || key} — ${statusLabel}</h3>
+                    </div>
+                    <table class="positions-table">
+                        <thead>
+                            <tr>
+                                <th>Market</th>
+                                <th>Position</th>
+                                <th>Entry</th>
+                                <th>${isClosed ? 'Exit' : 'Current'}</th>
+                                <th>Cost</th>
+                                <th>${isClosed ? 'P/L' : 'Unrealized P/L'}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-${key}"></tbody>
+                    </table>
                 `;
-                dailyTbody.appendChild(row);
+
+                container.appendChild(section);
+
+                // Populate rows
+                const tbody = document.getElementById(`positions-${key}`);
+                p.positions.forEach(pos => {
+                    const row = document.createElement('tr');
+                    const posIsClosed = pos.action === 'closed';
+                    const pl = pos.pl || 0;
+                    const plClass = pl >= 0 ? 'positive' : 'negative';
+
+                    // Determine badge class
+                    let badgeClass = 'badge-yes';
+                    if (pos.position === 'NO' || pos.position === 'DOWN') {
+                        badgeClass = pos.position === 'NO' ? 'badge-no' : 'badge-down';
+                    } else if (pos.position === 'UP') {
+                        badgeClass = 'badge-up';
+                    }
+
+                    const entryValue = pos.entry != null ? `$${Number(pos.entry).toFixed(3)}` : '-';
+                    const currentValue = posIsClosed && pos.exit != null
+                        ? `$${Number(pos.exit).toFixed(3)} (exit)`
+                        : (pos.current != null ? `$${Number(pos.current).toFixed(3)}` : '-');
+
+                    if (posIsClosed) row.style.opacity = '0.6';
+
+                    row.innerHTML = `
+                        <td>${pos.market}${posIsClosed ? ' <span style="color:#888">(CLOSED)</span>' : ''}</td>
+                        <td><span class="badge ${badgeClass}">${pos.position}</span></td>
+                        <td>${entryValue}</td>
+                        <td>${currentValue}</td>
+                        <td>${formatCurrencyPlain(pos.cost || 0)}</td>
+                        <td class="${plClass}">${formatCurrency(pl)}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            });
+        }
+
+        function updateAggregateSummary() {
+            let totalCapital = 0;
+            let totalRealized = 0;
+            let totalUnrealized = 0;
+            let portfolioCount = Object.keys(portfolios).length;
+
+            Object.values(portfolios).forEach(p => {
+                totalCapital += p.starting || 0;
+                totalRealized += p.realized || 0;
+                totalUnrealized += p.unrealized || 0;
             });
 
-            // Weekly
-            const weeklyTbody = document.getElementById('weekly-positions');
-            portfolios.weekly.positions.forEach(pos => {
-                const row = document.createElement('tr');
-                const isClosed = pos.action === 'closed';
-                const plClass = (pos.pl || 0) >= 0 ? 'positive' : 'negative';
-                const badgeClass = pos.position === 'YES' ? 'badge-yes' : 'badge-no';
-                const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
-                const currentValue = isClosed && pos.exit != null
-                    ? `$${pos.exit.toFixed(3)} (exit)`
-                    : (pos.current != null ? `$${pos.current.toFixed(3)}` : '-');
-                if (isClosed) row.style.opacity = '0.6';
-                row.innerHTML = `
-                    <td>${pos.market}${isClosed ? ' <span style="color:#888">(CLOSED)</span>' : ''}</td>
-                    <td><span class="badge ${badgeClass}">${pos.position}</span></td>
-                    <td>${entryValue}</td>
-                    <td>${currentValue}</td>
-                    <td>${formatCurrencyPlain(pos.cost || 0)}</td>
-                    <td class="${plClass}">${formatCurrency(pos.pl || 0)}</td>
-                `;
-                weeklyTbody.appendChild(row);
-            });
+            const totalNet = totalRealized + totalUnrealized;
+            const realizedPct = totalCapital > 0 ? (totalRealized / totalCapital * 100) : 0;
+            const unrealizedPct = totalCapital > 0 ? (totalUnrealized / totalCapital * 100) : 0;
+            const netPct = totalCapital > 0 ? (totalNet / totalCapital * 100) : 0;
 
-            // Contrarian
-            const contrarianTbody = document.getElementById('contrarian-positions');
-            portfolios.contrarian.positions.forEach(pos => {
-                const row = document.createElement('tr');
-                const isClosed = pos.action === 'closed';
-                const pl = pos.pl || 0;
-                const plClass = pl >= 0 ? 'positive' : 'negative';
-                const entryValue = pos.entry != null ? `$${pos.entry.toFixed(3)}` : '-';
-                const currentValue = isClosed && pos.exit != null
-                    ? `$${pos.exit.toFixed(3)} (exit)`
-                    : (pos.current != null ? `$${pos.current.toFixed(3)}` : '-');
-                if (isClosed) row.style.opacity = '0.6';
-                row.innerHTML = `
-                    <td>${pos.market}${isClosed ? ' <span style="color:#888">(CLOSED)</span>' : ''}</td>
-                    <td><span class="badge badge-yes">${pos.position}</span></td>
-                    <td>${entryValue}</td>
-                    <td>${currentValue}</td>
-                    <td>${formatCurrencyPlain(pos.cost || 0)}</td>
-                    <td class="${plClass}">${formatCurrency(pl)}</td>
-                `;
-                contrarianTbody.appendChild(row);
-            });
+            // Update DOM
+            document.querySelector('.aggregate-item:nth-child(1) .agg-value').textContent = formatCurrencyPlain(totalCapital);
+            document.querySelector('.aggregate-item:nth-child(1) .agg-pct').textContent = `${portfolioCount} Portfolios`;
+
+            const realizedEl = document.getElementById('total-realized');
+            const realizedPctEl = document.getElementById('total-realized-pct');
+            realizedEl.textContent = formatCurrency(totalRealized);
+            realizedEl.className = `agg-value ${getColorClass(totalRealized)}`;
+            realizedPctEl.textContent = formatPercent(realizedPct);
+            realizedPctEl.className = `agg-pct ${getColorClass(totalRealized)}`;
+
+            const unrealizedEl = document.getElementById('total-unrealized');
+            const unrealizedPctEl = document.getElementById('total-unrealized-pct');
+            unrealizedEl.textContent = formatCurrency(totalUnrealized);
+            unrealizedEl.className = `agg-value ${getColorClass(totalUnrealized)}`;
+            unrealizedPctEl.textContent = formatPercent(unrealizedPct);
+            unrealizedPctEl.className = `agg-pct ${getColorClass(totalUnrealized)}`;
+
+            const netEl = document.getElementById('total-net');
+            const netPctEl = document.getElementById('total-net-pct');
+            netEl.textContent = formatCurrency(totalNet);
+            netEl.className = `agg-value ${getColorClass(totalNet)}`;
+            netPctEl.textContent = formatPercent(netPct);
+            netPctEl.className = `agg-pct ${getColorClass(totalNet)}`;
         }
 
         // ============================================================
@@ -1972,15 +1875,18 @@
 
         function refreshAllUI() {
             console.log('refreshAllUI called, portfolios:', portfolios);
-            console.log('Weekly positions count:', portfolios.weekly?.positions?.length);
+            console.log('Portfolio count:', Object.keys(portfolios).length);
+
+            // Update aggregate summary
+            updateAggregateSummary();
 
             // Update selection state
             updateSelectionUI();
 
-            // Clear and recreate position tables
-            document.getElementById('daily-positions').innerHTML = '';
-            document.getElementById('weekly-positions').innerHTML = '';
-            document.getElementById('contrarian-positions').innerHTML = '';
+            // Recreate portfolio cards dynamically
+            createPortfolioCards();
+
+            // Recreate position tables dynamically
             createPositionsTables();
 
             // Recreate action table
@@ -2071,25 +1977,8 @@
                 document.getElementById('last-updated').textContent =
                     `Last updated: ${lastUpdated.toLocaleString()} (${useApi ? 'API' : 'localStorage'})`;
 
-                // Refresh UI
-                createRebalanceTable();
-
-                // Clear and recreate charts
-                document.getElementById('line-chart').innerHTML = '';
-                document.getElementById('portfolio-bar-chart').innerHTML = '';
-                document.getElementById('position-bar-chart').innerHTML = '';
-                document.getElementById('scatter-chart').innerHTML = '';
-
-                createLineChart();
-                createPortfolioBarChart();
-                createPositionBarChart();
-                createScatterChart();
-
-                // Recreate tables
-                document.getElementById('daily-positions').innerHTML = '';
-                document.getElementById('weekly-positions').innerHTML = '';
-                document.getElementById('contrarian-positions').innerHTML = '';
-                createPositionsTables();
+                // Refresh all UI components
+                refreshAllUI();
 
                 showToast('Data refreshed successfully', 'success');
 
@@ -2124,6 +2013,12 @@
             } else {
                 document.getElementById('last-updated').textContent += ' (localStorage)';
             }
+
+            // Update aggregate summary with loaded data
+            updateAggregateSummary();
+
+            // Create portfolio cards dynamically
+            createPortfolioCards();
 
             // Create all visualizations
             createLineChart();
