@@ -1,15 +1,18 @@
 # Praescientia — Session Context
 
-> **Last Updated:** March 30, 2026
-> **Status:** Active trading simulation — contrarian portfolio only
+> **Last Updated:** April 10, 2026
+> **Status:** Migrating to Kalshi — contrarian portfolio active on Polymarket
 
 ---
 
 ## Project Overview
 
-**Praescientia** (Latin: foreknowledge) is a Polymarket prediction system with state rollback architecture, inspired by Grace Hopper's insights on the cost of incorrect information.
+**Praescientia** (Latin: foreknowledge) is a prediction market trading system with state rollback architecture, inspired by Grace Hopper's insights on the cost of incorrect information.
 
 **Core Concept:** Discrete, hashed state checkpoints enable O(1) divergence identification instead of O(n) context reprocessing — narrowing the gap between human "obvious" pattern recognition and GenAI's brute-force approach.
+
+**Primary Platform:** Kalshi (as of April 10, 2026) — CFTC-regulated event contracts exchange
+**Legacy Platform:** Polymarket (contrarian portfolio still active)
 
 **GitHub:** https://github.com/cddigi/Praescientia
 
@@ -157,7 +160,8 @@ praescientia/
 ├── src/
 │   ├── Praescientia.jl      # Core module (state chains, predictions)
 │   ├── TxLog.jl             # JSONL transaction log (blockchain-style)
-│   └── PolymarketAuth.jl    # API authentication
+│   ├── KalshiAuth.jl        # Kalshi API auth (RSA-PSS signing, live/demo)
+│   └── PolymarketAuth.jl    # Polymarket API authentication (legacy)
 ├── data/
 │   ├── october_2025_resolved.json
 │   ├── november_2025_resolved.json
@@ -178,7 +182,18 @@ praescientia/
 │   ├── contrarian_2026.md
 │   └── seneca_strategy.md
 ├── scripts/
-│   ├── poll_resolved_markets.jl  # NEW: Fetch resolved market data
+│   ├── kalshi_exchange.jl   # Kalshi exchange status/announcements/schedule
+│   ├── kalshi_historical.jl # Kalshi historical data (cutoff, candles, fills, orders, trades)
+│   ├── kalshi_markets.jl    # Kalshi markets (list, get, trades, orderbook, candles)
+│   ├── kalshi_events.jl     # Kalshi events (list, multivariate, metadata, forecasts)
+│   ├── kalshi_orders.jl     # Kalshi orders (create, cancel, batch, amend, queue)
+│   ├── kalshi_order_groups.jl # Kalshi order groups (create, reset, trigger, limit)
+│   ├── kalshi_portfolio.jl  # Kalshi portfolio (balance, positions, settlements, fills)
+│   ├── kalshi_communications.jl # Kalshi RFQ & quotes workflow
+│   ├── kalshi_account.jl    # Kalshi API keys, limits, incentives, FCM
+│   ├── kalshi_search.jl     # Kalshi search (tags, filters, targets, series)
+│   ├── kalshi_live_data.jl  # Kalshi milestones & live data
+│   ├── poll_resolved_markets.jl  # Polymarket resolved market data
 │   ├── but-cleanup.sh       # GitButler workspace cleanup
 │   └── but-delete-branch.sh # GitButler branch deletion helper
 ├── server.jl                # Julia HTTP server (replaces Node.js)
@@ -228,6 +243,32 @@ praescientia/
 | `scripts/but-cleanup.sh` | GitButler workspace cleanup | `./scripts/but-cleanup.sh [--all]` |
 | `scripts/but-delete-branch.sh` | Delete GitButler branches | `./scripts/but-delete-branch.sh <name>` |
 
+### Kalshi API Scripts
+
+All Kalshi scripts support `--demo` (default) and `--live` flags, plus `--verbose` for debug output.
+Shared auth module: `src/KalshiAuth.jl` (RSA-PSS signing, endpoint switching).
+
+| Script | Section | Key Commands |
+|--------|---------|--------------|
+| `scripts/kalshi_exchange.jl` | Exchange | `status`, `announcements`, `schedule` |
+| `scripts/kalshi_historical.jl` | Historical | `cutoff`, `candlesticks TICKER`, `fills`, `orders`, `trades`, `markets` |
+| `scripts/kalshi_markets.jl` | Markets | `list`, `get TICKER`, `trades`, `orderbook TICKER`, `orderbooks T1,T2` |
+| `scripts/kalshi_events.jl` | Events | `list`, `get TICKER`, `metadata TICKER`, `candlesticks S E`, `forecast S E` |
+| `scripts/kalshi_orders.jl` | Orders | `list`, `create`, `cancel ID`, `amend ID`, `batch`, `queue_positions` |
+| `scripts/kalshi_order_groups.jl` | Order Groups | `list`, `create`, `delete ID`, `reset ID`, `trigger ID`, `set_limit ID` |
+| `scripts/kalshi_portfolio.jl` | Portfolio | `balance`, `positions`, `settlements`, `fills`, `subaccounts_balances` |
+| `scripts/kalshi_communications.jl` | RFQ/Quotes | `list_rfqs`, `create_rfq`, `list_quotes`, `accept_quote ID` |
+| `scripts/kalshi_account.jl` | Account | `list_keys`, `generate_key`, `limits`, `incentives` |
+| `scripts/kalshi_search.jl` | Search | `tags`, `sport_filters`, `targets`, `series TICKER` |
+| `scripts/kalshi_live_data.jl` | Live Data | `milestones`, `live ID`, `batch ID1,ID2`, `game_stats ID` |
+
+**Kalshi API Config:**
+- Demo: `https://demo-api.kalshi.co/trade-api/v2`
+- Live: `https://api.elections.kalshi.com/trade-api/v2`
+- Auth: RSA-PSS signing via `src/KalshiAuth.jl`
+- Demo key: `Claude-Demo.txt` (RSA private key at repo root)
+- Key ID: Set via `KALSHI_API_KEY_ID` env var or `load_config(api_key_id="...")`
+
 **Dashboard Server:**
 - Run `julia --project=. server.jl` to start the API server
 - Open http://localhost:3000 in browser for dashboard
@@ -243,12 +284,18 @@ praescientia/
 
 ## Next Actions
 
-1. **Consider taking profits on contrarian:** All 3 positions up 46-57%. Recession position approaching 50% sell threshold.
-2. **Monitor Q1 2026 GDP (Apr 30):** If negative, recession odds could spike to 50%+ — potential exit point.
-3. **Watch FOMC May meeting:** If language shifts hawkish, rate hike odds could jump.
-4. **Run `julia --project=. scripts/poll_resolved_markets.jl --all`** periodically to keep data current.
-5. **Run `julia --project=. check_portfolios.jl contrarian`** to check live contrarian odds.
-6. **Consider new daily/weekly portfolios** if opportunity arises.
+### Kalshi Migration (Priority)
+1. **Get Kalshi Demo API Key ID:** Log into demo.kalshi.co, find the API key ID for `Claude-Demo.txt` private key.
+2. **Test authenticated endpoints:** Run `julia --project=. scripts/kalshi_portfolio.jl balance` to verify auth works.
+3. **Explore Kalshi markets:** Run `julia --project=. scripts/kalshi_markets.jl list --status=open` to survey available markets.
+4. **Identify contrarian-style markets on Kalshi** for our Seneca Strategy.
+5. **Place first demo trades** to validate order workflow end-to-end.
+
+### Polymarket (Active Positions)
+6. **Consider taking profits on contrarian:** All 3 positions up 46-57%. Recession position approaching 50% sell threshold.
+7. **Monitor Q1 2026 GDP (Apr 30):** If negative, recession odds could spike to 50%+ — potential exit point.
+8. **Watch FOMC May meeting:** If language shifts hawkish, rate hike odds could jump.
+9. **Run `julia --project=. check_portfolios.jl contrarian`** to check live contrarian odds.
 
 ---
 
