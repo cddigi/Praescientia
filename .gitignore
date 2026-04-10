@@ -71,3 +71,5 @@ portfolios/archive/*.jsonl
 !portfolios/archive/.gitkeep
 data/portfolio_state.json
 data/trade_log.json
+
+.secret/
