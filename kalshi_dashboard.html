@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Praescientia — Kalshi Trading Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --bg-input: #1a2744;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent-green: #00d26a;
+            --accent-red: #ff6b6b;
+            --accent-yellow: #ffd93d;
+            --accent-blue: #4dabf7;
+            --accent-purple: #da77f2;
+            --accent-orange: #ff922b;
+            --border-color: #2a4a6e;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .app { display: flex; height: 100vh; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 220px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            padding: 20px 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .sidebar-header h1 {
+            font-size: 1.1rem;
+            font-weight: 300;
+            letter-spacing: 0.2em;
+            color: var(--accent-blue);
+        }
+
+        .sidebar-header .env-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-top: 6px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+        }
+
+        .env-badge.demo { background: var(--accent-yellow); color: #1a1a2e; }
+        .env-badge.live { background: var(--accent-red); color: #fff; }
+
+        .sidebar nav { flex: 1; padding: 12px 0; }
+
+        .nav-section {
+            padding: 8px 16px 4px;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--text-secondary);
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.8rem;
+            transition: all 0.15s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover { background: rgba(77,171,247,0.08); color: var(--text-primary); }
+        .nav-item.active {
+            color: var(--accent-blue);
+            background: rgba(77,171,247,0.12);
+            border-left-color: var(--accent-blue);
+        }
+
+        .nav-icon { font-size: 1rem; width: 20px; text-align: center; }
+
+        .sidebar-footer {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        #exchange-status-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--text-secondary);
+            margin-right: 6px;
+        }
+
+        #exchange-status-dot.open { background: var(--accent-green); }
+        #exchange-status-dot.closed { background: var(--accent-red); }
+
+        /* Main content */
+        .main { flex: 1; overflow-y: auto; padding: 24px; }
+
+        /* Page header */
+        .page-header {
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .page-header h2 { font-size: 1.4rem; font-weight: 400; }
+        .page-header p { color: var(--text-secondary); font-size: 0.8rem; margin-top: 4px; }
+
+        /* Cards */
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .card-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .card-value {
+            font-size: 1.6rem;
+            font-weight: 300;
+        }
+
+        .card-value.positive { color: var(--accent-green); }
+        .card-value.negative { color: var(--accent-red); }
+
+        .card-sub { font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; }
+
+        /* Tables */
+        .table-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+
+        .table-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .table-header h3 { font-size: 0.9rem; font-weight: 500; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 16px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            background: rgba(0,0,0,0.15);
+            font-weight: 500;
+        }
+
+        td {
+            padding: 12px 16px;
+            border-top: 1px solid rgba(42,74,110,0.4);
+        }
+
+        tr:hover td { background: rgba(77,171,247,0.04); }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .badge-yes { background: rgba(0,210,106,0.2); color: var(--accent-green); }
+        .badge-no { background: rgba(255,107,107,0.2); color: var(--accent-red); }
+        .badge-open { background: rgba(0,210,106,0.2); color: var(--accent-green); }
+        .badge-closed { background: rgba(255,107,107,0.2); color: var(--accent-red); }
+        .badge-settled { background: rgba(160,160,160,0.2); color: var(--text-secondary); }
+        .badge-resting { background: rgba(77,171,247,0.2); color: var(--accent-blue); }
+        .badge-executed { background: rgba(0,210,106,0.2); color: var(--accent-green); }
+        .badge-canceled { background: rgba(255,107,107,0.2); color: var(--accent-red); }
+
+        /* Forms / Inputs */
+        .form-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+
+        .form-group label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+        }
+
+        input, select {
+            background: var(--bg-input);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 0.8rem;
+            outline: none;
+        }
+
+        input:focus, select:focus { border-color: var(--accent-blue); }
+
+        select option { background: var(--bg-secondary); }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 0.8rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+
+        .btn-primary { background: var(--accent-blue); color: #fff; }
+        .btn-primary:hover { background: #3a9ae8; }
+        .btn-danger { background: var(--accent-red); color: #fff; }
+        .btn-danger:hover { background: #e85555; }
+        .btn-sm { padding: 4px 10px; font-size: 0.7rem; }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+        .btn-ghost:hover { border-color: var(--accent-blue); color: var(--text-primary); }
+
+        /* Orderbook */
+        .orderbook { display: flex; gap: 16px; }
+        .orderbook-side { flex: 1; }
+        .orderbook-side h4 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 8px;
+        }
+        .ob-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            border-radius: 4px;
+        }
+        .ob-row.yes { background: rgba(0,210,106,0.06); }
+        .ob-row.no { background: rgba(255,107,107,0.06); }
+        .ob-bar {
+            position: absolute;
+            top: 0; bottom: 0;
+            opacity: 0.1;
+            border-radius: 4px;
+        }
+
+        /* Spinner */
+        .spinner {
+            display: inline-block;
+            width: 16px; height: 16px;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loading-row { text-align: center; padding: 40px; color: var(--text-secondary); }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+        .empty-state .icon { font-size: 2rem; margin-bottom: 12px; }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        .toast.success { background: var(--accent-green); color: #1a1a2e; }
+        .toast.error { background: var(--accent-red); color: #fff; }
+        @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        /* Page sections */
+        .page { display: none; }
+        .page.active { display: block; }
+
+        /* Market detail panel */
+        .detail-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+
+        .detail-panel h3 { font-size: 1rem; margin-bottom: 12px; }
+
+        .detail-row {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+        }
+
+        .detail-key { color: var(--text-secondary); min-width: 140px; }
+
+        /* Clickable rows */
+        .clickable { cursor: pointer; }
+        .clickable:hover td { background: rgba(77,171,247,0.08) !important; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+    </style>
+</head>
+<body>
+<div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1>PRAESCIENTIA</h1>
+            <div class="env-badge demo" id="env-badge">DEMO</div>
+        </div>
+        <nav>
+            <div class="nav-section">Overview</div>
+            <a class="nav-item active" data-page="dashboard">
+                <span class="nav-icon">&#9670;</span> Dashboard
+            </a>
+            <div class="nav-section">Trading</div>
+            <a class="nav-item" data-page="markets">
+                <span class="nav-icon">&#9633;</span> Markets
+            </a>
+            <a class="nav-item" data-page="events">
+                <span class="nav-icon">&#9656;</span> Events
+            </a>
+            <a class="nav-item" data-page="orders">
+                <span class="nav-icon">&#9998;</span> Orders
+            </a>
+            <div class="nav-section">Account</div>
+            <a class="nav-item" data-page="portfolio">
+                <span class="nav-icon">&#9673;</span> Portfolio
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <span id="exchange-status-dot"></span>
+            <span id="exchange-status-text">Checking...</span>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+
+        <!-- ============================================================ -->
+        <!-- DASHBOARD PAGE -->
+        <!-- ============================================================ -->
+        <div class="page active" id="page-dashboard">
+            <div class="page-header">
+                <h2>Dashboard</h2>
+                <p>Kalshi trading overview</p>
+            </div>
+
+            <div class="card-grid" id="balance-cards">
+                <div class="card">
+                    <div class="card-label">Available Balance</div>
+                    <div class="card-value" id="dash-balance">--</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Portfolio Value</div>
+                    <div class="card-value" id="dash-portfolio">--</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Open Positions</div>
+                    <div class="card-value" id="dash-positions">--</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Resting Orders</div>
+                    <div class="card-value" id="dash-orders">--</div>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <h3>Exchange Announcements</h3>
+                    <button class="btn btn-ghost btn-sm" onclick="loadAnnouncements()">Refresh</button>
+                </div>
+                <table>
+                    <thead><tr><th>Date</th><th>Title</th><th>Message</th></tr></thead>
+                    <tbody id="announcements-body">
+                        <tr><td colspan="3" class="loading-row"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <h3>Recent Fills</h3>
+                </div>
+                <table>
+                    <thead><tr><th>Ticker</th><th>Side</th><th>Action</th><th>Count</th><th>Price</th><th>Time</th></tr></thead>
+                    <tbody id="dash-fills-body">
+                        <tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- MARKETS PAGE -->
+        <!-- ============================================================ -->
+        <div class="page" id="page-markets">
+            <div class="page-header">
+                <h2>Markets</h2>
+                <p>Browse and search Kalshi markets</p>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="market-status-filter">
+                        <option value="">All</option>
+                        <option value="open" selected>Open</option>
+                        <option value="closed">Closed</option>
+                        <option value="settled">Settled</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Event Ticker</label>
+                    <input type="text" id="market-event-filter" placeholder="e.g. KXBTC">
+                </div>
+                <div class="form-group">
+                    <label>Limit</label>
+                    <select id="market-limit">
+                        <option value="20" selected>20</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="loadMarkets()">Search</button>
+            </div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <h3>Markets</h3>
+                    <span id="market-count" style="font-size:0.75rem;color:var(--text-secondary)"></span>
+                </div>
+                <table>
+                    <thead><tr><th>Ticker</th><th>Title</th><th>Status</th><th>Yes Price</th><th>No Price</th><th>Volume</th></tr></thead>
+                    <tbody id="markets-body">
+                        <tr><td colspan="6" class="loading-row">Use the filters above to search markets</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Market Detail -->
+            <div id="market-detail" style="display:none">
+                <div class="detail-panel">
+                    <h3 id="md-title"></h3>
+                    <div class="detail-row"><span class="detail-key">Ticker</span><span id="md-ticker"></span></div>
+                    <div class="detail-row"><span class="detail-key">Event Ticker</span><span id="md-event"></span></div>
+                    <div class="detail-row"><span class="detail-key">Status</span><span id="md-status"></span></div>
+                    <div class="detail-row"><span class="detail-key">Yes Price</span><span id="md-yes"></span></div>
+                    <div class="detail-row"><span class="detail-key">No Price</span><span id="md-no"></span></div>
+                    <div class="detail-row"><span class="detail-key">Volume</span><span id="md-volume"></span></div>
+                    <div class="detail-row"><span class="detail-key">Open Interest</span><span id="md-oi"></span></div>
+                    <div class="detail-row"><span class="detail-key">Expiration</span><span id="md-expiration"></span></div>
+                    <div class="detail-row"><span class="detail-key">Category</span><span id="md-category"></span></div>
+                </div>
+
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>Order Book</h3>
+                        <button class="btn btn-ghost btn-sm" id="btn-refresh-ob">Refresh</button>
+                    </div>
+                    <div style="padding:20px">
+                        <div class="orderbook" id="orderbook-container">
+                            <div class="loading-row"><span class="spinner"></span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- EVENTS PAGE -->
+        <!-- ============================================================ -->
+        <div class="page" id="page-events">
+            <div class="page-header">
+                <h2>Events</h2>
+                <p>Browse Kalshi event contracts</p>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="event-status-filter">
+                        <option value="">All</option>
+                        <option value="open" selected>Open</option>
+                        <option value="closed">Closed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Series Ticker</label>
+                    <input type="text" id="event-series-filter" placeholder="e.g. KXBTC">
+                </div>
+                <div class="form-group">
+                    <label>Limit</label>
+                    <select id="event-limit">
+                        <option value="20" selected>20</option>
+                        <option value="50">50</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="loadEvents()">Search</button>
+            </div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <h3>Events</h3>
+                    <span id="event-count" style="font-size:0.75rem;color:var(--text-secondary)"></span>
+                </div>
+                <table>
+                    <thead><tr><th>Event Ticker</th><th>Title</th><th>Category</th><th>Status</th><th>Markets</th></tr></thead>
+                    <tbody id="events-body">
+                        <tr><td colspan="5" class="loading-row">Use the filters above to search events</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- ORDERS PAGE -->
+        <!-- ============================================================ -->
+        <div class="page" id="page-orders">
+            <div class="page-header">
+                <h2>Orders</h2>
+                <p>View and place orders</p>
+            </div>
+
+            <!-- Create Order Form -->
+            <div class="card" style="margin-bottom:24px">
+                <h3 style="font-size:0.9rem;margin-bottom:16px">Place Order</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Ticker</label>
+                        <input type="text" id="order-ticker" placeholder="MARKET-TICKER" style="width:180px">
+                    </div>
+                    <div class="form-group">
+                        <label>Side</label>
+                        <select id="order-side">
+                            <option value="yes">YES</option>
+                            <option value="no">NO</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Action</label>
+                        <select id="order-action">
+                            <option value="buy">Buy</option>
+                            <option value="sell">Sell</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="order-type">
+                            <option value="limit">Limit</option>
+                            <option value="market">Market</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Count</label>
+                        <input type="number" id="order-count" placeholder="10" min="1" style="width:80px">
+                    </div>
+                    <div class="form-group">
+                        <label>Yes Price (cents)</label>
+                        <input type="number" id="order-yes-price" placeholder="50" min="1" max="99" style="width:100px">
+                    </div>
+                    <button class="btn btn-primary" onclick="createOrder()">Submit Order</button>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Filter Status</label>
+                    <select id="order-status-filter">
+                        <option value="">All</option>
+                        <option value="resting" selected>Resting</option>
+                        <option value="executed">Executed</option>
+                        <option value="canceled">Canceled</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="loadOrders()">Refresh</button>
+            </div>
+
+            <div class="table-container">
+                <div class="table-header">
+                    <h3>Order History</h3>
+                    <span id="order-count-label" style="font-size:0.75rem;color:var(--text-secondary)"></span>
+                </div>
+                <table>
+                    <thead><tr><th>Order ID</th><th>Ticker</th><th>Side</th><th>Action</th><th>Type</th><th>Count</th><th>Price</th><th>Status</th><th></th></tr></thead>
+                    <tbody id="orders-body">
+                        <tr><td colspan="9" class="loading-row"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- PORTFOLIO PAGE -->
+        <!-- ============================================================ -->
+        <div class="page" id="page-portfolio">
+            <div class="page-header">
+                <h2>Portfolio</h2>
+                <p>Positions, settlements, and fill history</p>
+            </div>
+
+            <div class="card-grid" id="portfolio-balance-cards">
+                <div class="card">
+                    <div class="card-label">Available Balance</div>
+                    <div class="card-value" id="port-balance">--</div>
+                </div>
+                <div class="card">
+                    <div class="card-label">Portfolio Value</div>
+                    <div class="card-value" id="port-value">--</div>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div style="display:flex;gap:8px;margin-bottom:16px">
+                <button class="btn btn-primary port-tab" data-tab="positions" onclick="switchPortfolioTab('positions')">Positions</button>
+                <button class="btn btn-ghost port-tab" data-tab="settlements" onclick="switchPortfolioTab('settlements')">Settlements</button>
+                <button class="btn btn-ghost port-tab" data-tab="fills" onclick="switchPortfolioTab('fills')">Fills</button>
+            </div>
+
+            <!-- Positions -->
+            <div class="table-container port-panel" id="panel-positions">
+                <div class="table-header">
+                    <h3>Open Positions</h3>
+                    <button class="btn btn-ghost btn-sm" onclick="loadPositions()">Refresh</button>
+                </div>
+                <table>
+                    <thead><tr><th>Ticker</th><th>Side</th><th>Contracts</th><th>Avg Price</th><th>Market Price</th><th>P&L</th></tr></thead>
+                    <tbody id="positions-body">
+                        <tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Settlements -->
+            <div class="table-container port-panel" id="panel-settlements" style="display:none">
+                <div class="table-header">
+                    <h3>Settlements</h3>
+                    <button class="btn btn-ghost btn-sm" onclick="loadSettlements()">Refresh</button>
+                </div>
+                <table>
+                    <thead><tr><th>Ticker</th><th>Side</th><th>Result</th><th>Revenue</th><th>Settled At</th></tr></thead>
+                    <tbody id="settlements-body">
+                        <tr><td colspan="5" class="loading-row"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Fills -->
+            <div class="table-container port-panel" id="panel-fills" style="display:none">
+                <div class="table-header">
+                    <h3>Fill History</h3>
+                    <button class="btn btn-ghost btn-sm" onclick="loadFills()">Refresh</button>
+                </div>
+                <table>
+                    <thead><tr><th>Ticker</th><th>Side</th><th>Action</th><th>Count</th><th>Price</th><th>Time</th></tr></thead>
+                    <tbody id="fills-body">
+                        <tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<script>
+// =============================================================================
+// API helpers
+// =============================================================================
+const API = '/api/kalshi';
+
+async function apiFetch(path, opts = {}) {
+    try {
+        const resp = await fetch(API + path, opts);
+        const json = await resp.json();
+        if (!json.success) throw new Error(json.error || 'API error');
+        return json.data;
+    } catch (e) {
+        showToast(e.message, 'error');
+        throw e;
+    }
+}
+
+function showToast(msg, type = 'success') {
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 4000);
+}
+
+function centsToDollars(cents) {
+    if (cents == null) return '--';
+    return '$' + (cents / 100).toFixed(2);
+}
+
+function formatPrice(cents) {
+    if (cents == null) return '--';
+    return (cents / 100).toFixed(2);
+}
+
+function formatTime(ts) {
+    if (!ts) return '--';
+    const d = new Date(typeof ts === 'number' ? ts * 1000 : ts);
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+}
+
+function badgeFor(value, map) {
+    const cls = map[value?.toLowerCase?.()] || '';
+    return `<span class="badge ${cls}">${value || '--'}</span>`;
+}
+
+const statusBadge = v => badgeFor(v, {open:'badge-open',closed:'badge-closed',settled:'badge-settled',resting:'badge-resting',executed:'badge-executed',canceled:'badge-canceled'});
+const sideBadge = v => badgeFor(v, {yes:'badge-yes',no:'badge-no'});
+
+// =============================================================================
+// Navigation
+// =============================================================================
+document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+        const page = item.dataset.page;
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        item.classList.add('active');
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById('page-' + page).classList.add('active');
+
+        // Load data on first visit
+        if (page === 'markets' && !marketsLoaded) loadMarkets();
+        if (page === 'events' && !eventsLoaded) loadEvents();
+        if (page === 'orders') loadOrders();
+        if (page === 'portfolio') { loadBalance('port'); loadPositions(); }
+    });
+});
+
+// =============================================================================
+// Dashboard
+// =============================================================================
+async function loadDashboard() {
+    loadExchangeStatus();
+    loadBalance('dash');
+    loadDashPositionCount();
+    loadDashOrderCount();
+    loadAnnouncements();
+    loadDashFills();
+}
+
+async function loadExchangeStatus() {
+    try {
+        const data = await apiFetch('/exchange/status');
+        const trading = data.trading_active ?? data.exchange_active ?? false;
+        const dot = document.getElementById('exchange-status-dot');
+        const text = document.getElementById('exchange-status-text');
+        dot.className = trading ? 'open' : 'closed';
+        text.textContent = trading ? 'Exchange Open' : 'Exchange Closed';
+    } catch { /* handled by apiFetch */ }
+}
+
+async function loadBalance(prefix) {
+    try {
+        const data = await apiFetch('/portfolio/balance');
+        const balance = data.balance ?? data.available_balance ?? 0;
+        const portfolio = data.portfolio_value ?? 0;
+        document.getElementById(prefix + '-balance').textContent = centsToDollars(balance);
+        document.getElementById(prefix + '-portfolio').textContent = centsToDollars(portfolio);
+    } catch { /* handled */ }
+}
+
+async function loadDashPositionCount() {
+    try {
+        const data = await apiFetch('/portfolio/positions?settlement_status=unsettled&limit=100');
+        const positions = data.market_positions || data.positions || [];
+        document.getElementById('dash-positions').textContent = positions.length;
+    } catch { document.getElementById('dash-positions').textContent = '--'; }
+}
+
+async function loadDashOrderCount() {
+    try {
+        const data = await apiFetch('/orders?status=resting&limit=100');
+        const orders = data.orders || [];
+        document.getElementById('dash-orders').textContent = orders.length;
+    } catch { document.getElementById('dash-orders').textContent = '--'; }
+}
+
+async function loadAnnouncements() {
+    try {
+        const data = await apiFetch('/exchange/announcements');
+        const items = data.announcements || [];
+        const body = document.getElementById('announcements-body');
+        if (items.length === 0) {
+            body.innerHTML = '<tr><td colspan="3" class="loading-row">No announcements</td></tr>';
+            return;
+        }
+        body.innerHTML = items.slice(0, 10).map(a => `
+            <tr>
+                <td>${formatTime(a.created_at || a.date)}</td>
+                <td>${a.title || '--'}</td>
+                <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message || a.body || '--'}</td>
+            </tr>
+        `).join('');
+    } catch {
+        document.getElementById('announcements-body').innerHTML = '<tr><td colspan="3" class="loading-row">Failed to load</td></tr>';
+    }
+}
+
+async function loadDashFills() {
+    try {
+        const data = await apiFetch('/portfolio/fills?limit=10');
+        const fills = data.fills || [];
+        renderFillsTable(fills, 'dash-fills-body');
+    } catch {
+        document.getElementById('dash-fills-body').innerHTML = '<tr><td colspan="6" class="loading-row">Failed to load</td></tr>';
+    }
+}
+
+function renderFillsTable(fills, bodyId) {
+    const body = document.getElementById(bodyId);
+    if (fills.length === 0) {
+        body.innerHTML = `<tr><td colspan="6" class="loading-row">No fills</td></tr>`;
+        return;
+    }
+    body.innerHTML = fills.map(f => `
+        <tr>
+            <td>${f.ticker || '--'}</td>
+            <td>${sideBadge(f.side)}</td>
+            <td>${f.action || '--'}</td>
+            <td>${f.count ?? '--'}</td>
+            <td>${formatPrice(f.yes_price ?? f.price)}</td>
+            <td>${formatTime(f.created_time || f.created_at)}</td>
+        </tr>
+    `).join('');
+}
+
+// =============================================================================
+// Markets
+// =============================================================================
+let marketsLoaded = false;
+let currentMarketsCursor = '';
+
+async function loadMarkets() {
+    const status = document.getElementById('market-status-filter').value;
+    const event_ticker = document.getElementById('market-event-filter').value;
+    const limit = document.getElementById('market-limit').value;
+    const body = document.getElementById('markets-body');
+    body.innerHTML = '<tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>';
+    document.getElementById('market-detail').style.display = 'none';
+
+    try {
+        let qs = `?limit=${limit}`;
+        if (status) qs += `&status=${status}`;
+        if (event_ticker) qs += `&event_ticker=${event_ticker}`;
+
+        const data = await apiFetch('/markets' + qs);
+        const markets = data.markets || [];
+        currentMarketsCursor = data.cursor || '';
+        document.getElementById('market-count').textContent = `${markets.length} results`;
+        marketsLoaded = true;
+
+        if (markets.length === 0) {
+            body.innerHTML = '<tr><td colspan="6" class="loading-row">No markets found</td></tr>';
+            return;
+        }
+
+        body.innerHTML = markets.map(m => `
+            <tr class="clickable" onclick="showMarket('${m.ticker}')">
+                <td style="color:var(--accent-blue)">${m.ticker || '--'}</td>
+                <td>${m.title || m.subtitle || '--'}</td>
+                <td>${statusBadge(m.status)}</td>
+                <td style="color:var(--accent-green)">${m.yes_ask != null ? formatPrice(m.yes_ask) : (m.last_price != null ? formatPrice(m.last_price) : '--')}</td>
+                <td style="color:var(--accent-red)">${m.no_ask != null ? formatPrice(m.no_ask) : '--'}</td>
+                <td>${m.volume != null ? m.volume.toLocaleString() : '--'}</td>
+            </tr>
+        `).join('');
+    } catch {
+        body.innerHTML = '<tr><td colspan="6" class="loading-row">Failed to load markets</td></tr>';
+    }
+}
+
+async function showMarket(ticker) {
+    const panel = document.getElementById('market-detail');
+    panel.style.display = 'block';
+    panel.scrollIntoView({ behavior: 'smooth' });
+
+    try {
+        const data = await apiFetch(`/markets/${ticker}`);
+        const m = data.market || data;
+        document.getElementById('md-title').textContent = m.title || m.subtitle || ticker;
+        document.getElementById('md-ticker').textContent = m.ticker || ticker;
+        document.getElementById('md-event').textContent = m.event_ticker || '--';
+        document.getElementById('md-status').innerHTML = statusBadge(m.status);
+        document.getElementById('md-yes').textContent = m.yes_ask != null ? formatPrice(m.yes_ask) + ' cents' : (m.last_price != null ? formatPrice(m.last_price) + ' cents' : '--');
+        document.getElementById('md-no').textContent = m.no_ask != null ? formatPrice(m.no_ask) + ' cents' : '--';
+        document.getElementById('md-volume').textContent = m.volume != null ? m.volume.toLocaleString() : '--';
+        document.getElementById('md-oi').textContent = m.open_interest != null ? m.open_interest.toLocaleString() : '--';
+        document.getElementById('md-expiration').textContent = m.expiration_time ? formatTime(m.expiration_time) : '--';
+        document.getElementById('md-category').textContent = m.category || '--';
+
+        // Set up refresh button
+        document.getElementById('btn-refresh-ob').onclick = () => loadOrderbook(ticker);
+        loadOrderbook(ticker);
+    } catch { /* handled */ }
+}
+
+async function loadOrderbook(ticker) {
+    const container = document.getElementById('orderbook-container');
+    container.innerHTML = '<div class="loading-row"><span class="spinner"></span></div>';
+
+    try {
+        const data = await apiFetch(`/markets/${ticker}/orderbook`);
+        const ob = data.orderbook || data;
+        const yes_bids = ob.yes || [];
+        const no_bids = ob.no || [];
+
+        let html = '<div class="orderbook-side"><h4 style="color:var(--accent-green)">Yes Bids</h4>';
+        if (yes_bids.length === 0) {
+            html += '<div style="color:var(--text-secondary);font-size:0.75rem;padding:8px">No bids</div>';
+        } else {
+            yes_bids.slice(0, 15).forEach(([price, qty]) => {
+                html += `<div class="ob-row yes"><span>${formatPrice(price)}</span><span>${qty}</span></div>`;
+            });
+        }
+        html += '</div><div class="orderbook-side"><h4 style="color:var(--accent-red)">No Bids</h4>';
+        if (no_bids.length === 0) {
+            html += '<div style="color:var(--text-secondary);font-size:0.75rem;padding:8px">No bids</div>';
+        } else {
+            no_bids.slice(0, 15).forEach(([price, qty]) => {
+                html += `<div class="ob-row no"><span>${formatPrice(price)}</span><span>${qty}</span></div>`;
+            });
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    } catch {
+        container.innerHTML = '<div class="loading-row">Failed to load orderbook</div>';
+    }
+}
+
+// =============================================================================
+// Events
+// =============================================================================
+let eventsLoaded = false;
+
+async function loadEvents() {
+    const status = document.getElementById('event-status-filter').value;
+    const series = document.getElementById('event-series-filter').value;
+    const limit = document.getElementById('event-limit').value;
+    const body = document.getElementById('events-body');
+    body.innerHTML = '<tr><td colspan="5" class="loading-row"><span class="spinner"></span></td></tr>';
+
+    try {
+        let qs = `?limit=${limit}`;
+        if (status) qs += `&status=${status}`;
+        if (series) qs += `&series_ticker=${series}`;
+
+        const data = await apiFetch('/events' + qs);
+        const events = data.events || [];
+        document.getElementById('event-count').textContent = `${events.length} results`;
+        eventsLoaded = true;
+
+        if (events.length === 0) {
+            body.innerHTML = '<tr><td colspan="5" class="loading-row">No events found</td></tr>';
+            return;
+        }
+
+        body.innerHTML = events.map(e => `
+            <tr class="clickable" onclick="viewEventMarkets('${e.event_ticker}')">
+                <td style="color:var(--accent-blue)">${e.event_ticker || '--'}</td>
+                <td>${e.title || '--'}</td>
+                <td>${e.category || '--'}</td>
+                <td>${statusBadge(e.status)}</td>
+                <td>${e.markets?.length ?? e.mutually_exclusive ? 'Multi' : '--'}</td>
+            </tr>
+        `).join('');
+    } catch {
+        body.innerHTML = '<tr><td colspan="5" class="loading-row">Failed to load events</td></tr>';
+    }
+}
+
+function viewEventMarkets(eventTicker) {
+    // Navigate to markets with this event filter
+    document.getElementById('market-event-filter').value = eventTicker;
+    document.querySelector('[data-page="markets"]').click();
+    loadMarkets();
+}
+
+// =============================================================================
+// Orders
+// =============================================================================
+async function loadOrders() {
+    const status = document.getElementById('order-status-filter').value;
+    const body = document.getElementById('orders-body');
+    body.innerHTML = '<tr><td colspan="9" class="loading-row"><span class="spinner"></span></td></tr>';
+
+    try {
+        let qs = '?limit=100';
+        if (status) qs += `&status=${status}`;
+        const data = await apiFetch('/orders' + qs);
+        const orders = data.orders || [];
+        document.getElementById('order-count-label').textContent = `${orders.length} orders`;
+
+        if (orders.length === 0) {
+            body.innerHTML = '<tr><td colspan="9" class="loading-row">No orders</td></tr>';
+            return;
+        }
+
+        body.innerHTML = orders.map(o => `
+            <tr>
+                <td style="font-size:0.7rem;color:var(--text-secondary)">${(o.order_id || o.id || '').slice(0, 12)}...</td>
+                <td style="color:var(--accent-blue)">${o.ticker || '--'}</td>
+                <td>${sideBadge(o.side)}</td>
+                <td>${o.action || '--'}</td>
+                <td>${o.type || '--'}</td>
+                <td>${o.remaining_count ?? o.count ?? '--'}</td>
+                <td>${o.yes_price != null ? formatPrice(o.yes_price) : (o.no_price != null ? formatPrice(o.no_price) : '--')}</td>
+                <td>${statusBadge(o.status)}</td>
+                <td>${o.status === 'resting' ? `<button class="btn btn-danger btn-sm" onclick="cancelOrder('${o.order_id || o.id}')">Cancel</button>` : ''}</td>
+            </tr>
+        `).join('');
+    } catch {
+        body.innerHTML = '<tr><td colspan="9" class="loading-row">Failed to load orders</td></tr>';
+    }
+}
+
+async function createOrder() {
+    const ticker = document.getElementById('order-ticker').value.trim();
+    const side = document.getElementById('order-side').value;
+    const action = document.getElementById('order-action').value;
+    const type = document.getElementById('order-type').value;
+    const count = parseInt(document.getElementById('order-count').value);
+    const yesPrice = parseInt(document.getElementById('order-yes-price').value);
+
+    if (!ticker) { showToast('Ticker required', 'error'); return; }
+    if (!count || count < 1) { showToast('Count must be >= 1', 'error'); return; }
+
+    const body = { ticker, side, action, type, count };
+    if (!isNaN(yesPrice)) body.yes_price = yesPrice;
+
+    try {
+        await apiFetch('/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        showToast('Order placed successfully');
+        loadOrders();
+    } catch { /* handled */ }
+}
+
+async function cancelOrder(orderId) {
+    if (!confirm('Cancel this order?')) return;
+    try {
+        await fetch(API + '/orders/' + orderId, { method: 'DELETE' });
+        showToast('Order cancelled');
+        loadOrders();
+    } catch { /* handled */ }
+}
+
+// =============================================================================
+// Portfolio
+// =============================================================================
+function switchPortfolioTab(tab) {
+    document.querySelectorAll('.port-tab').forEach(b => {
+        b.className = b.dataset.tab === tab ? 'btn btn-primary port-tab' : 'btn btn-ghost port-tab';
+    });
+    document.querySelectorAll('.port-panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-' + tab).style.display = '';
+
+    if (tab === 'positions') loadPositions();
+    if (tab === 'settlements') loadSettlements();
+    if (tab === 'fills') loadFills();
+}
+
+async function loadPositions() {
+    const body = document.getElementById('positions-body');
+    body.innerHTML = '<tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>';
+
+    try {
+        const data = await apiFetch('/portfolio/positions?settlement_status=unsettled&limit=100');
+        const positions = data.market_positions || data.positions || [];
+
+        if (positions.length === 0) {
+            body.innerHTML = '<tr><td colspan="6" class="loading-row">No open positions</td></tr>';
+            return;
+        }
+
+        body.innerHTML = positions.map(p => {
+            const side = (p.market_exposure > 0 || p.position === 'yes') ? 'yes' : 'no';
+            const contracts = Math.abs(p.total_traded || p.position_contracts || p.market_exposure || 0);
+            const avgPrice = p.realized_pnl != null ? '--' : '--';
+            const marketPrice = p.market_price ?? '--';
+            const pnl = p.total_pnl ?? p.realized_pnl ?? 0;
+            const pnlClass = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : '';
+            return `
+                <tr>
+                    <td style="color:var(--accent-blue)">${p.ticker || p.market_ticker || '--'}</td>
+                    <td>${sideBadge(side)}</td>
+                    <td>${contracts}</td>
+                    <td>${avgPrice}</td>
+                    <td>${marketPrice}</td>
+                    <td class="${pnlClass}">${centsToDollars(pnl)}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch {
+        body.innerHTML = '<tr><td colspan="6" class="loading-row">Failed to load positions</td></tr>';
+    }
+}
+
+async function loadSettlements() {
+    const body = document.getElementById('settlements-body');
+    body.innerHTML = '<tr><td colspan="5" class="loading-row"><span class="spinner"></span></td></tr>';
+
+    try {
+        const data = await apiFetch('/portfolio/settlements?limit=50');
+        const settlements = data.settlements || [];
+
+        if (settlements.length === 0) {
+            body.innerHTML = '<tr><td colspan="5" class="loading-row">No settlements</td></tr>';
+            return;
+        }
+
+        body.innerHTML = settlements.map(s => `
+            <tr>
+                <td style="color:var(--accent-blue)">${s.ticker || s.market_ticker || '--'}</td>
+                <td>${sideBadge(s.side)}</td>
+                <td>${s.market_result || s.result || '--'}</td>
+                <td>${centsToDollars(s.revenue ?? s.settlement_value)}</td>
+                <td>${formatTime(s.settled_time || s.settled_at)}</td>
+            </tr>
+        `).join('');
+    } catch {
+        body.innerHTML = '<tr><td colspan="5" class="loading-row">Failed to load settlements</td></tr>';
+    }
+}
+
+async function loadFills() {
+    const body = document.getElementById('fills-body');
+    body.innerHTML = '<tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>';
+
+    try {
+        const data = await apiFetch('/portfolio/fills?limit=50');
+        const fills = data.fills || [];
+        renderFillsTable(fills, 'fills-body');
+    } catch {
+        body.innerHTML = '<tr><td colspan="6" class="loading-row">Failed to load fills</td></tr>';
+    }
+}
+
+// =============================================================================
+// Init
+// =============================================================================
+loadDashboard();
+</script>
+</body>
+</html>
