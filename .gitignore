@@ -31,6 +31,8 @@ LocalPreferences.toml
 *.key
 credentials.json
 secrets.json
+Claude-Demo.txt
+*-Demo.txt
 
 # Claude Code
 .claude/

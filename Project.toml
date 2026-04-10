@@ -16,6 +16,8 @@ JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
+OpenSSL_jll = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 
 [compat]
 julia = "1.9"
