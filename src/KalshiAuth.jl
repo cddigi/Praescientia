@@ -76,7 +76,7 @@ Precedence for api_key_id:
 Precedence for private_key_file:
   1. Explicit `private_key_file` parameter
   2. `KALSHI_PRIVATE_KEY_FILE` environment variable
-  3. `Claude-Demo.txt` in project root (for demo mode)
+  3. `kalshi_api_key_private.txt` in project root (for demo mode)
 """
 function load_config(;
     api_key_id::String = "",
@@ -84,11 +84,27 @@ function load_config(;
     demo::Bool = true,
     verbose::Bool = false
 )
+    # Find .secret/ directory, walking up from src/ (handles worktrees)
+    secret_dir = ""
+    dir = dirname(dirname(@__FILE__))  # src/KalshiAuth.jl -> src/ -> project root
+    for _ in 1:10
+        candidate = joinpath(dir, ".secret")
+        if isdir(candidate)
+            secret_dir = candidate
+            break
+        end
+        parent = dirname(dir)
+        parent == dir && break
+        dir = parent
+    end
+
     # Resolve API Key ID
     key_id = if !isempty(api_key_id)
         api_key_id
     elseif haskey(ENV, "KALSHI_API_KEY_ID")
         ENV["KALSHI_API_KEY_ID"]
+    elseif !isempty(secret_dir) && isfile(joinpath(secret_dir, "kalshi_api_key_id.txt"))
+        strip(read(joinpath(secret_dir, "kalshi_api_key_id.txt"), String))
     else
         ""
     end
@@ -98,6 +114,7 @@ function load_config(;
         No API Key ID provided. Set one of:
           1. Pass api_key_id="your-key-id" to load_config()
           2. Set KALSHI_API_KEY_ID environment variable
+          3. Place key ID in .secret/kalshi_api_key_id.txt
         You can find your key ID in the Kalshi dashboard under API Keys.
         """
     end
@@ -107,21 +124,8 @@ function load_config(;
         private_key_file
     elseif haskey(ENV, "KALSHI_PRIVATE_KEY_FILE")
         ENV["KALSHI_PRIVATE_KEY_FILE"]
-    elseif demo
-        # Look for Claude-Demo.txt, walking up parent directories (handles worktrees)
-        found = ""
-        dir = dirname(dirname(@__FILE__))
-        for _ in 1:10
-            candidate = joinpath(dir, "Claude-Demo.txt")
-            if isfile(candidate)
-                found = candidate
-                break
-            end
-            parent = dirname(dir)
-            parent == dir && break
-            dir = parent
-        end
-        found
+    elseif !isempty(secret_dir) && isfile(joinpath(secret_dir, "kalshi_api_key_private.txt"))
+        joinpath(secret_dir, "kalshi_api_key_private.txt")
     else
         ""
     end

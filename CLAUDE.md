@@ -197,10 +197,12 @@ praescientia/
 │   ├── but-cleanup.sh       # GitButler workspace cleanup
 │   └── but-delete-branch.sh # GitButler branch deletion helper
 ├── server.jl                # Julia HTTP server (replaces Node.js)
+├── kalshi_server.jl         # Oxygen.jl Kalshi trading dashboard server
 ├── demo.jl                  # Demonstration script
 ├── backtest.jl              # Backtesting (oct/nov/dec 2025)
 ├── check_portfolios.jl      # Portfolio status checker with live odds
 ├── dashboard.html           # D3.js portfolio visualization (AJAX to Julia)
+├── kalshi_dashboard.html    # Kalshi trading dashboard (Oxygen.jl frontend)
 ├── Project.toml
 ├── README.md
 ├── UNLICENSE
@@ -236,6 +238,7 @@ praescientia/
 | Script | Purpose | Usage |
 |--------|---------|-------|
 | `server.jl` | HTTP API server for dashboard | `julia --project=. server.jl [--port=3000]` |
+| `kalshi_server.jl` | Oxygen.jl Kalshi trading dashboard | `julia --project=. kalshi_server.jl [--port=8080] [--live] [--verbose]` |
 | `check_portfolios.jl` | Check wager status & outcomes | `julia --project=. check_portfolios.jl [daily\|weekly\|contrarian]` |
 | `scripts/poll_resolved_markets.jl` | Poll resolved market data + prices | `julia --project=. scripts/poll_resolved_markets.jl [month year\|--all]` |
 | `backtest.jl` | Backtest against historical data | `julia --project=. backtest.jl [month]` |
