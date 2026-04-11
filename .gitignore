@@ -27,16 +27,11 @@ LocalPreferences.toml
 *.env
 
 # Secrets/credentials
+.secret/
 *.pem
 *.key
 credentials.json
 secrets.json
-Claude-Demo.txt
-*-Demo.txt
-
-# Claude Code
-.claude/
-IMPLEMENTATION_PLAN.md
 
 # macOS
 .DS_Store
@@ -52,11 +47,6 @@ IMPLEMENTATION_PLAN.md
 .vscode/
 *.sublime-*
 
-# Data (keep structure, ignore large files)
-data/*.csv
-data/*.parquet
-!data/*.json
-
 # Logs
 *.log
 logs/
@@ -64,12 +54,3 @@ logs/
 # Node.js
 node_modules/
 package-lock.json
-
-# Transaction logs (JSONL blockchain)
-portfolios/*.jsonl
-portfolios/archive/*.jsonl
-!portfolios/archive/.gitkeep
-data/portfolio_state.json
-data/trade_log.json
-
-.secret/
