@@ -123,6 +123,40 @@ julia --project=. scripts/kalshi_portfolio.jl balance
 julia --project=. scripts/kalshi_orders.jl create
 ```
 
+## Zig Port (in progress)
+
+Praescientia is being ported from Julia to Zig for single-binary deploy. See [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) for the staged plan. The Julia implementation remains canonical and runnable through Stage 4.
+
+**Stage 1 (complete):** RSA-PSS signing risk reduction via vendored mbedTLS. Bidirectional Zig ↔ OpenSSL signature interoperability is proven by [`scripts/cross_verify.sh`](scripts/cross_verify.sh).
+
+### Requirements
+
+- **Zig 0.16.0** — `brew install zig@0.16` (Homebrew) or download from <https://ziglang.org/download/0.16.0/>. The toolchain is pinned via `minimum_zig_version` in `build.zig.zon`; later minor versions are not guaranteed compatible.
+- mbedTLS (3.6 LTS) — vendored as a git submodule at `vendor/mbedtls`. After cloning, run `git submodule update --init --recursive`.
+
+### Building
+
+```bash
+# First-time setup
+git submodule update --init --recursive
+
+# Build everything (library + signtest + verifytest)
+zig build
+
+# Run tests (5 inline tests covering signing, verification, tamper rejection)
+zig build test --summary all
+
+# Cross-language interop check (Zig ↔ OpenSSL, transitively Zig ↔ Julia)
+./scripts/cross_verify.sh
+```
+
+Produced binaries:
+
+| Binary | Purpose |
+|--------|---------|
+| `zig-out/bin/praescientia-signtest` | Sign a message with RSA-PSS; output base64 signature |
+| `zig-out/bin/praescientia-verifytest` | Verify a base64 RSA-PSS signature against a public key + message |
+
 ## Philosophy
 
 The central insight is that **the gap between human and AI reasoning** in error identification isn't a fundamental limitation — it's an architectural choice.
