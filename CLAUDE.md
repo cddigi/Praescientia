@@ -84,24 +84,36 @@ Unrealized P&L = (Current Price × Contracts) - Cost
 
 ### Kalshi API Scripts
 
-All scripts support `--demo` (default) and `--live` flags, plus `--verbose` for debug output.
-Shared auth module: `src/KalshiAuth.jl` (RSA-PSS signing, endpoint switching).
+**Stage 4 complete:** every Julia script in `scripts/kalshi_*.jl` now has a Zig
+CLI equivalent under `zig-out/bin/praescientia-*`. Both produce byte-identical
+JSON for the comparable subcommands (verified via `./scripts/parity_check.sh --tools`).
 
-| Script | Section | Key Commands |
-|--------|---------|--------------|
-| `kalshi_server.jl` | Dashboard | `julia --project=. kalshi_server.jl [--port=8080] [--live] [--verbose]` |
-| `scripts/kalshi_exchange.jl` | Exchange | `status`, `announcements`, `schedule` |
-| `scripts/kalshi_historical.jl` | Historical | `cutoff`, `candlesticks TICKER`, `fills`, `orders`, `trades`, `markets` |
-| `scripts/kalshi_markets.jl` | Markets | `list`, `get TICKER`, `trades`, `orderbook TICKER`, `orderbooks T1,T2` |
-| `scripts/kalshi_events.jl` | Events | `list`, `get TICKER`, `metadata TICKER`, `candlesticks S E`, `forecast S E` |
-| `scripts/kalshi_orders.jl` | Orders | `list`, `create`, `cancel ID`, `amend ID`, `batch`, `queue_positions` |
-| `scripts/kalshi_order_groups.jl` | Order Groups | `list`, `create`, `delete ID`, `reset ID`, `trigger ID`, `set_limit ID` |
-| `scripts/kalshi_portfolio.jl` | Portfolio | `balance`, `positions`, `settlements`, `fills`, `subaccounts_balances` |
-| `scripts/kalshi_communications.jl` | RFQ/Quotes | `list_rfqs`, `create_rfq`, `list_quotes`, `accept_quote ID` |
-| `scripts/kalshi_account.jl` | Account | `list_keys`, `generate_key`, `limits`, `incentives` |
-| `scripts/kalshi_search.jl` | Search | `tags`, `sport_filters`, `targets`, `series TICKER` |
-| `scripts/kalshi_live_data.jl` | Live Data | `milestones`, `live ID`, `batch ID1,ID2`, `game_stats ID` |
-| `scripts/kalshi_test.jl` | Test | API connectivity verification |
+All tools support `--demo` (default) / `--live` / `--verbose` / `--help`.
+Shared auth: Zig `src/kalshi/auth.zig` (mbedTLS RSA-PSS); Julia `src/KalshiAuth.jl` (OpenSSL libcrypto).
+
+| Section | Zig CLI | Julia equivalent | Key subcommands |
+|---------|---------|------------------|-----------------|
+| Dashboard | (Stage 5) | `kalshi_server.jl` | `julia --project=. kalshi_server.jl [--port=8080] [--live]` |
+| Exchange | `zig build run-exchange -- …` | `scripts/kalshi_exchange.jl` | `status`, `schedule`, `announcements` |
+| Historical | `zig build run-historical -- …` | `scripts/kalshi_historical.jl` | `cutoff`, `candlesticks TICKER`, `fills`, `orders`, `trades`, `markets`, `market TICKER` |
+| Markets | `zig build run-markets -- …` | `scripts/kalshi_markets.jl` | `list`, `get TICKER`, `trades`, `orderbook TICKER`, `orderbooks T1,T2`, `candlesticks S M` |
+| Events | `zig build run-events -- …` | `scripts/kalshi_events.jl` | `list`, `multivariate`, `get TICKER`, `metadata TICKER`, `candlesticks S E`, `forecast S E`, `collection C` |
+| Orders | `zig build run-orders -- …` | `scripts/kalshi_orders.jl` | `list`, `create`, `get`, `cancel ID`, `amend ID`, `decrease ID`, `queue_positions`, `queue_position ID` |
+| Order Groups | `zig build run-order-groups -- …` | `scripts/kalshi_order_groups.jl` | `list`, `create`, `get ID`, `delete ID`, `reset ID`, `trigger ID`, `set_limit ID` |
+| Portfolio | `zig build run-portfolio -- …` | `scripts/kalshi_portfolio.jl` | `balance`, `positions`, `settlements`, `fills`, `resting_value`, `subaccounts_balances`, `subaccount_transfers`, `netting`, `create_subaccount`, `transfer`, `set_netting` |
+| Communications | `zig build run-communications -- …` | `scripts/kalshi_communications.jl` | `comms_id`, `list_rfqs`, `create_rfq`, `get_rfq`, `delete_rfq`, `list_quotes`, `create_quote`, `get_quote`, `delete_quote`, `accept_quote`, `confirm_quote` |
+| Account | `zig build run-account -- …` | `scripts/kalshi_account.jl` | `list_keys`, `create_key`, `generate_key`, `delete_key`, `limits`, `incentives`, `fcm_orders`, `fcm_positions` |
+| Search | `zig build run-search -- …` | `scripts/kalshi_search.jl` | `tags`, `sport_filters`, `targets`, `target ID`, `series TICKER` |
+| Live Data | `zig build run-live-data -- …` | `scripts/kalshi_live_data.jl` | `milestones`, `milestone ID`, `live ID`, `live_legacy TYPE ID`, `batch CSV`, `game_stats ID` |
+| Smoke check | `./zig-out/bin/praescientia-test-conn` | `scripts/kalshi_test.jl` | End-to-end demo API smoke check across all endpoints |
+| Resolved markets poller | `zig build run-poll -- prices` | `scripts/poll_resolved_markets.jl` | `prices` (CoinGecko spot). **Full Polymarket harvester remains in Julia** |
+| RSA-PSS sign (Stage 1) | `./zig-out/bin/praescientia-signtest` | — | One-shot RSA-PSS signer for cross-language interop checks |
+| RSA-PSS verify | `./zig-out/bin/praescientia-verifytest` | — | Counterpart verifier |
+
+**Zig build commands at a glance:**
+- `zig build` — compile all binaries + library
+- `zig build test --summary all` — 63 inline tests + `test-cli` --help smoke check (every CLI exits 0 on --help)
+- `./scripts/parity_check.sh --tools` — Zig CLI ↔ Julia script JSON parity
 
 **Kalshi API Config:**
 - Demo: `https://demo-api.kalshi.co/trade-api/v2`

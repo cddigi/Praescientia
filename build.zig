@@ -24,26 +24,68 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lib_tests.step);
 
     // Stage 1 risk-reduction binaries.
-    addTool(b, target, optimize, praescientia, "praescientia-signtest", "tools/signtest.zig", "signtest", "Run the RSA-PSS sign harness");
-    addTool(b, target, optimize, praescientia, "praescientia-verifytest", "tools/verifytest.zig", "verifytest", "Run the RSA-PSS verify harness");
+    addTool(b, target, optimize, praescientia, null, "praescientia-signtest", "tools/signtest.zig", "signtest", "Run the RSA-PSS sign harness");
+    addTool(b, target, optimize, praescientia, null, "praescientia-verifytest", "tools/verifytest.zig", "verifytest", "Run the RSA-PSS verify harness");
 
     // Stage 2 microbenchmark.
-    addTool(b, target, optimize, praescientia, "praescientia-bench-state-chain", "tools/bench_state_chain.zig", "bench", "Benchmark state_chain.Chain.divergesAt on 100k entries");
+    addTool(b, target, optimize, praescientia, null, "praescientia-bench-state-chain", "tools/bench_state_chain.zig", "bench", "Benchmark state_chain.Chain.divergesAt on 100k entries");
 
     // Stage 3 demo API smoke check.
-    addTool(b, target, optimize, praescientia, "praescientia-test-conn", "tools/test_conn.zig", "test-conn", "End-to-end smoke check against the Kalshi demo (or live) API");
+    addTool(b, target, optimize, praescientia, null, "praescientia-test-conn", "tools/test_conn.zig", "test-conn", "End-to-end smoke check against the Kalshi demo (or live) API");
+
+    // Stage 4: shared tools/common.zig + one Zig CLI per Julia script.
+    const tool_common = b.createModule(.{
+        .root_source_file = b.path("tools/common.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "praescientia", .module = praescientia }},
+    });
+
+    const smoke_step = b.step("test-cli", "Smoke-check each Stage 4 CLI --help");
+
+    const Stage4 = struct { name: []const u8, src: []const u8, step: []const u8 };
+    const stage4_tools = [_]Stage4{
+        .{ .name = "praescientia-exchange", .src = "tools/exchange.zig", .step = "run-exchange" },
+        .{ .name = "praescientia-markets", .src = "tools/markets.zig", .step = "run-markets" },
+        .{ .name = "praescientia-events", .src = "tools/events.zig", .step = "run-events" },
+        .{ .name = "praescientia-historical", .src = "tools/historical.zig", .step = "run-historical" },
+        .{ .name = "praescientia-portfolio", .src = "tools/portfolio.zig", .step = "run-portfolio" },
+        .{ .name = "praescientia-orders", .src = "tools/orders.zig", .step = "run-orders" },
+        .{ .name = "praescientia-account", .src = "tools/account.zig", .step = "run-account" },
+        .{ .name = "praescientia-communications", .src = "tools/communications.zig", .step = "run-communications" },
+        .{ .name = "praescientia-order-groups", .src = "tools/order_groups.zig", .step = "run-order-groups" },
+        .{ .name = "praescientia-live-data", .src = "tools/live_data.zig", .step = "run-live-data" },
+        .{ .name = "praescientia-search", .src = "tools/search.zig", .step = "run-search" },
+    };
+    for (stage4_tools) |t| {
+        const exe = addToolReturn(b, target, optimize, praescientia, tool_common, t.name, t.src, t.step, "Stage 4 CLI");
+        const help_run = b.addRunArtifact(exe);
+        help_run.addArg("--help");
+        help_run.expectExitCode(0);
+        help_run.expectStdErrMatch("Usage:");
+        smoke_step.dependOn(&help_run.step);
+    }
+    addTool(b, target, optimize, praescientia, null, "praescientia-poll-resolved-markets", "tools/poll_resolved_markets.zig", "run-poll", "praescientia-poll-resolved-markets CLI (CoinGecko prices only — Julia retains the Polymarket harvester)");
+
+    // tools/common.zig has its own inline tests; surface them through `zig build test`.
+    const common_tests = b.addTest(.{ .root_module = tool_common });
+    const run_common_tests = b.addRunArtifact(common_tests);
+    test_step.dependOn(&run_common_tests.step);
+    test_step.dependOn(smoke_step);
 }
 
-fn addTool(
+fn addToolReturn(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     praescientia: *std.Build.Module,
+    tool_common: *std.Build.Module,
     exe_name: []const u8,
     source: []const u8,
     step_name: []const u8,
     step_description: []const u8,
-) void {
+) *std.Build.Step.Compile {
     const mod = b.createModule(.{
         .root_source_file = b.path(source),
         .target = target,
@@ -51,7 +93,46 @@ fn addTool(
         .link_libc = true,
         .imports = &.{
             .{ .name = "praescientia", .module = praescientia },
+            .{ .name = "common", .module = tool_common },
         },
+    });
+    const exe = b.addExecutable(.{ .name = exe_name, .root_module = mod });
+    b.installArtifact(exe);
+
+    const run = b.addRunArtifact(exe);
+    if (b.args) |args| run.addArgs(args);
+    const step = b.step(step_name, step_description);
+    step.dependOn(&run.step);
+    return exe;
+}
+
+fn addTool(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    praescientia: *std.Build.Module,
+    tool_common: ?*std.Build.Module,
+    exe_name: []const u8,
+    source: []const u8,
+    step_name: []const u8,
+    step_description: []const u8,
+) void {
+    var imports_buf: [2]std.Build.Module.Import = .{
+        .{ .name = "praescientia", .module = praescientia },
+        .{ .name = "common", .module = praescientia }, // overwritten below if tool_common != null
+    };
+    var imports_count: usize = 1;
+    if (tool_common) |c| {
+        imports_buf[1] = .{ .name = "common", .module = c };
+        imports_count = 2;
+    }
+
+    const mod = b.createModule(.{
+        .root_source_file = b.path(source),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = imports_buf[0..imports_count],
     });
     const exe = b.addExecutable(.{ .name = exe_name, .root_module = mod });
     b.installArtifact(exe);

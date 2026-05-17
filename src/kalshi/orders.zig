@@ -120,6 +120,43 @@ pub fn amend(client: *Client, arena: Allocator, order_id: []const u8, body_struc
     return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
 }
 
+/// POST /portfolio/orders/{order_id}/decrease — body: {"reduce_by":N}
+pub fn decrease(client: *Client, arena: Allocator, order_id: []const u8, reduce_by: u32) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const Body = struct { reduce_by: u32 };
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    try std.json.Stringify.value(
+        Body{ .reduce_by = reduce_by },
+        .{ .whitespace = .minified, .emit_null_optional_fields = false },
+        &aw.writer,
+    );
+    const path = try std.fmt.allocPrint(arena, "/portfolio/orders/{s}/decrease", .{order_id});
+    const resp = try client.request(arena, .{
+        .path = path,
+        .method = .POST,
+        .body = aw.written(),
+    });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// GET /portfolio/orders/queue_positions — queue positions for all resting orders.
+pub fn queuePositions(client: *Client, arena: Allocator) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const resp = try client.request(arena, .{ .path = "/portfolio/orders/queue_positions" });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// GET /portfolio/orders/{order_id}/queue_position
+pub fn queuePosition(client: *Client, arena: Allocator, order_id: []const u8) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const path = try std.fmt.allocPrint(arena, "/portfolio/orders/{s}/queue_position", .{order_id});
+    const resp = try client.request(arena, .{ .path = path });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
 const fixture_list = @embedFile("testdata/orders_list.json");
 
 test "parses /portfolio/orders list fixture" {
@@ -129,6 +166,12 @@ test "parses /portfolio/orders list fixture" {
 
     const parsed = try std.json.parseFromSliceLeaky(OrdersList, a, fixture_list, .{ .ignore_unknown_fields = true });
     try std.testing.expectEqual(@as(usize, 0), parsed.orders.len);
+}
+
+test {
+    _ = decrease;
+    _ = queuePositions;
+    _ = queuePosition;
 }
 
 test "CreateOrder serializes with type/yes_price/null elision" {

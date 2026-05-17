@@ -15,6 +15,8 @@ pub const MilestonesList = struct {
 pub const ListOptions = struct {
     limit: ?u32 = null,
     cursor: ?[]const u8 = null,
+    category: ?[]const u8 = null,
+    competition: ?[]const u8 = null,
 };
 
 /// GET /milestones — current and upcoming live-data milestones.
@@ -22,6 +24,8 @@ pub fn listMilestones(client: *Client, arena: Allocator, opts: ListOptions) !Mil
     var q: std.array_list.Managed(QueryParam) = .init(arena);
     if (opts.limit) |v| try q.append(.{ .key = "limit", .value = try std.fmt.allocPrint(arena, "{d}", .{v}) });
     if (opts.cursor) |v| try q.append(.{ .key = "cursor", .value = v });
+    if (opts.category) |v| try q.append(.{ .key = "category", .value = v });
+    if (opts.competition) |v| try q.append(.{ .key = "competition", .value = v });
     const resp = try client.request(arena, .{ .path = "/milestones", .query = q.items });
     if (!resp.isSuccess()) return error.HttpStatus;
     return resp.parseInto(MilestonesList, arena);
@@ -51,6 +55,23 @@ pub fn gameStats(client: *Client, arena: Allocator, milestone_id: []const u8) !s
     return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
 }
 
+/// GET /live_data/{type_str}/milestone/{milestone_id} — legacy live-data path.
+pub fn liveDataLegacy(client: *Client, arena: Allocator, type_str: []const u8, milestone_id: []const u8) !std.json.Value {
+    const path = try std.fmt.allocPrint(arena, "/live_data/{s}/milestone/{s}", .{ type_str, milestone_id });
+    const resp = try client.request(arena, .{ .path = path });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// GET /live_data/batch?milestone_ids=ID1,ID2,... — batch live data.
+pub fn batch(client: *Client, arena: Allocator, ids_csv: []const u8) !std.json.Value {
+    var q: std.array_list.Managed(QueryParam) = .init(arena);
+    try q.append(.{ .key = "milestone_ids", .value = ids_csv });
+    const resp = try client.request(arena, .{ .path = "/live_data/batch", .query = q.items });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
 const fixture_milestones = @embedFile("testdata/live_data_milestones.json");
 
 test "parses /milestones fixture" {
@@ -59,4 +80,9 @@ test "parses /milestones fixture" {
     const a = arena.allocator();
     const parsed = try std.json.parseFromSliceLeaky(MilestonesList, a, fixture_milestones, .{ .ignore_unknown_fields = true });
     try std.testing.expect(parsed.milestones.len > 0);
+}
+
+test {
+    _ = liveDataLegacy;
+    _ = batch;
 }

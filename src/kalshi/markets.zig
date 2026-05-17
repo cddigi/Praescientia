@@ -93,6 +93,71 @@ pub fn orderbook(client: *Client, arena: Allocator, ticker: []const u8) !std.jso
     return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
 }
 
+pub const TradesOptions = struct {
+    limit: ?u32 = null,
+    cursor: ?[]const u8 = null,
+    ticker: ?[]const u8 = null,
+    min_ts: ?i64 = null,
+    max_ts: ?i64 = null,
+};
+
+/// GET /markets/trades — paginated trades across all markets.
+pub fn trades(client: *Client, arena: Allocator, opts: TradesOptions) !std.json.Value {
+    var q: std.array_list.Managed(QueryParam) = .init(arena);
+    if (opts.limit) |v| try q.append(.{ .key = "limit", .value = try fmtU32(arena, v) });
+    if (opts.cursor) |v| try q.append(.{ .key = "cursor", .value = v });
+    if (opts.ticker) |v| try q.append(.{ .key = "ticker", .value = v });
+    if (opts.min_ts) |v| try q.append(.{ .key = "min_ts", .value = try fmtI64(arena, v) });
+    if (opts.max_ts) |v| try q.append(.{ .key = "max_ts", .value = try fmtI64(arena, v) });
+
+    const resp = try client.request(arena, .{ .path = "/markets/trades", .query = q.items });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+pub const CandlesticksOptions = struct {
+    period_interval: ?u32 = null,
+    start_ts: ?i64 = null,
+    end_ts: ?i64 = null,
+};
+
+/// GET /series/{series_ticker}/markets/{market_ticker}/candlesticks
+pub fn candlesticks(
+    client: *Client,
+    arena: Allocator,
+    series_ticker: []const u8,
+    market_ticker: []const u8,
+    opts: CandlesticksOptions,
+) !std.json.Value {
+    var q: std.array_list.Managed(QueryParam) = .init(arena);
+    if (opts.period_interval) |v| try q.append(.{ .key = "period_interval", .value = try fmtU32(arena, v) });
+    if (opts.start_ts) |v| try q.append(.{ .key = "start_ts", .value = try fmtI64(arena, v) });
+    if (opts.end_ts) |v| try q.append(.{ .key = "end_ts", .value = try fmtI64(arena, v) });
+
+    const path = try std.fmt.allocPrint(arena, "/series/{s}/markets/{s}/candlesticks", .{ series_ticker, market_ticker });
+    const resp = try client.request(arena, .{ .path = path, .query = q.items });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+const OrderbooksBody = struct {
+    market_tickers: []const []const u8,
+};
+
+/// POST /markets/orderbooks — fetch order books for several tickers at once.
+pub fn orderbooks(client: *Client, arena: Allocator, tickers: []const []const u8) !std.json.Value {
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    const body_struct: OrderbooksBody = .{ .market_tickers = tickers };
+    try std.json.Stringify.value(body_struct, .{ .whitespace = .minified }, &aw.writer);
+    const resp = try client.request(arena, .{
+        .path = "/markets/orderbooks",
+        .method = .POST,
+        .body = aw.written(),
+    });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
 fn fmtU32(arena: Allocator, v: u32) ![]const u8 {
     return std.fmt.allocPrint(arena, "{d}", .{v});
 }
@@ -132,4 +197,10 @@ test "parses /markets/{ticker}/orderbook fixture" {
 
     const v = try std.json.parseFromSliceLeaky(std.json.Value, a, fixture_orderbook, .{});
     _ = v.object.get("orderbook_fp") orelse return error.MissingOrderbookFp;
+}
+
+test {
+    _ = trades;
+    _ = candlesticks;
+    _ = orderbooks;
 }

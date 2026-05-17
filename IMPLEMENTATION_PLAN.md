@@ -312,7 +312,41 @@ praescientia/
 4. Update `CLAUDE.md` "Scripts for Quick Reproducibility" table once tools are ready
 5. Record via `gitbutler_update_branches`
 
-**Status:** Not Started
+**Status:** Complete (2026-05-17)
+
+**What landed:**
+
+| File | Role |
+|------|------|
+| `tools/common.zig` | Shared CLI scaffolding — `Context`, `Subcommand`, `runMain`, `printJson`, `Context.flagValue`/`positional`. Every tool's `main` is one `return common.runMain(init, name, subcommands)` call. 2 inline tests. |
+| `tools/exchange.zig` | praescientia-exchange — `status`, `schedule`, `announcements` |
+| `tools/markets.zig` | praescientia-markets — `list`, `get`, `trades`, `candlesticks`, `orderbook`, `orderbooks` |
+| `tools/events.zig` | praescientia-events — `list`, `multivariate`, `get`, `metadata`, `candlesticks`, `forecast`, `collection` |
+| `tools/historical.zig` | praescientia-historical — `cutoff`, `candlesticks`, `fills`, `orders`, `trades`, `markets`, `market` |
+| `tools/portfolio.zig` | praescientia-portfolio — `balance`, `positions`, `settlements`, `fills`, `resting_value`, `subaccounts_balances`, `subaccount_transfers`, `netting`, `create_subaccount`, `transfer`, `set_netting` |
+| `tools/orders.zig` | praescientia-orders — `list`, `create`, `get`, `cancel`, `amend`, `decrease`, `queue_positions`, `queue_position` (auto-generates `client_order_id` via `txlog.generateTxId`) |
+| `tools/account.zig` | praescientia-account — `list_keys`, `create_key`, `generate_key`, `delete_key`, `limits`, `incentives`, `fcm_orders`, `fcm_positions` |
+| `tools/communications.zig` | praescientia-communications — RFQ + quote workflow (11 subcommands) |
+| `tools/order_groups.zig` | praescientia-order-groups — `list`, `create`, `get`, `delete`, `reset`, `trigger`, `set_limit` |
+| `tools/live_data.zig` | praescientia-live-data — `milestones`, `milestone`, `live`, `live_legacy`, `batch`, `game_stats` |
+| `tools/search.zig` | praescientia-search — `tags`, `sport_filters`, `targets`, `target`, `series` |
+| `tools/poll_resolved_markets.zig` | praescientia-poll-resolved-markets — `prices` (CoinGecko spot); `month`/`--all` defer to the Julia version |
+| `build.zig` `test-cli` step | --help smoke-checks all 11 main CLIs as part of `zig build test` |
+| `scripts/parity_check.sh --tools` | New mode: runs each Zig CLI subcommand head-to-head with the matching Julia script, jq-cS-diffs the output |
+
+**Verification log:**
+- `zig build` → all 31 build steps succeed (12 executables + tests)
+- `zig build test --summary all` → 63/63 tests pass + `test-cli` smoke-check confirms all 11 main CLIs respond to `--help` with `Usage: …` and exit 0
+- `./scripts/parity_check.sh --tools` → 6 MATCH, 1 DRIFT (`portfolio.balance` updated_ts changes per call), 0 FAIL — Zig CLIs produce byte-identical JSON to Julia scripts
+
+**Sub-stage execution (worth noting for downstream stages):**
+Stages 4.3-4.5 were ported in parallel via three general-purpose agents (one each for markets/events/historical, portfolio/orders/account, communications/order_groups/live_data/search). Each agent received an explicit endpoint table + subcommand spec + reference files (`tools/exchange.zig`, `tools/common.zig`). All three returned successful with `zig build test` green. Worked well because the pattern was already proven by the reference tool, so agents only needed to translate Julia subcommand → Zig dispatch entry.
+
+**Deviations from plan:**
+- **`poll_resolved_markets.zig` is a thin port** — only `prices` (current CoinGecko spot) is in Zig. The monthly Polymarket-Gamma-API harvester + date-math + `data/` file writes remain canonical in Julia through Stage 5 because (a) they're not on the Kalshi-client critical path and (b) Zig 0.16's date support is limited (no chrono-equivalent stdlib API). The Zig tool's `month` / `--all` subcommands print a deferral message pointing users to the Julia equivalent.
+- **`tests/cli_smoke_test.zig` is implemented as a `build.zig` `Step.Run` chain rather than a separate `.zig` test file** — Zig's build-time `expectExitCode` + `expectStdErrMatch` checks are exactly what the plan asked for, just expressed in build.zig instead of an inline test. Wired into `zig build test` as the `test-cli` step.
+- **`tools/test_conn.zig` rename from "signtest"** — the rename happened in Stage 3 (test_conn.zig is the demo smoke check; signtest.zig is kept as the RSA-PSS-only one-shot binary from Stage 1). No further rename needed.
+- **One DRIFT in tools parity** — `portfolio.balance` differs on `updated_ts` between two captures; same top-level shape; identical handling on both sides.
 
 ---
 
@@ -383,7 +417,7 @@ The Julia implementation **must remain runnable on `main` through Stages 1–4**
 | 1. Foundation & RSA-PSS Risk Reduction | Complete (2026-05-16) |
 | 2. Core State Engine | Complete (2026-05-16) |
 | 3. Kalshi Client Layer | Complete (2026-05-16) |
-| 4. CLI Tools | Not Started |
+| 4. CLI Tools | Complete (2026-05-17) |
 | 5. Dashboard Server & Julia Sunset | Not Started |
 
 Update this table at the start and end of each stage. Remove this file once Stage 5 ships.

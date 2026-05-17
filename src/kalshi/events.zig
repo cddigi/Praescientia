@@ -61,6 +61,76 @@ pub fn get(client: *Client, arena: Allocator, event_ticker: []const u8) !EventDe
     return resp.parseInto(EventDetail, arena);
 }
 
+pub const MultivariateOptions = struct {
+    limit: ?u32 = null,
+    cursor: ?[]const u8 = null,
+};
+
+/// GET /multivariate_events — multivariate combo events.
+pub fn listMultivariate(client: *Client, arena: Allocator, opts: MultivariateOptions) !std.json.Value {
+    var q: std.array_list.Managed(QueryParam) = .init(arena);
+    if (opts.limit) |v| try q.append(.{ .key = "limit", .value = try std.fmt.allocPrint(arena, "{d}", .{v}) });
+    if (opts.cursor) |v| try q.append(.{ .key = "cursor", .value = v });
+
+    const resp = try client.request(arena, .{ .path = "/multivariate_events", .query = q.items });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// GET /events/{event_ticker}/metadata
+pub fn metadata(client: *Client, arena: Allocator, event_ticker: []const u8) !std.json.Value {
+    const path = try std.fmt.allocPrint(arena, "/events/{s}/metadata", .{event_ticker});
+    const resp = try client.request(arena, .{ .path = path });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+pub const CandlesticksOptions = struct {
+    period_interval: ?u32 = null,
+    start_ts: ?i64 = null,
+    end_ts: ?i64 = null,
+};
+
+/// GET /series/{series_ticker}/events/{event_ticker}/candlesticks
+pub fn candlesticks(
+    client: *Client,
+    arena: Allocator,
+    series_ticker: []const u8,
+    event_ticker: []const u8,
+    opts: CandlesticksOptions,
+) !std.json.Value {
+    var q: std.array_list.Managed(QueryParam) = .init(arena);
+    if (opts.period_interval) |v| try q.append(.{ .key = "period_interval", .value = try std.fmt.allocPrint(arena, "{d}", .{v}) });
+    if (opts.start_ts) |v| try q.append(.{ .key = "start_ts", .value = try std.fmt.allocPrint(arena, "{d}", .{v}) });
+    if (opts.end_ts) |v| try q.append(.{ .key = "end_ts", .value = try std.fmt.allocPrint(arena, "{d}", .{v}) });
+
+    const path = try std.fmt.allocPrint(arena, "/series/{s}/events/{s}/candlesticks", .{ series_ticker, event_ticker });
+    const resp = try client.request(arena, .{ .path = path, .query = q.items });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// GET /series/{series_ticker}/events/{event_ticker}/forecast
+pub fn forecast(
+    client: *Client,
+    arena: Allocator,
+    series_ticker: []const u8,
+    event_ticker: []const u8,
+) !std.json.Value {
+    const path = try std.fmt.allocPrint(arena, "/series/{s}/events/{s}/forecast", .{ series_ticker, event_ticker });
+    const resp = try client.request(arena, .{ .path = path });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// GET /multivariate_event_collections/{collection_ticker}
+pub fn collection(client: *Client, arena: Allocator, collection_ticker: []const u8) !std.json.Value {
+    const path = try std.fmt.allocPrint(arena, "/multivariate_event_collections/{s}", .{collection_ticker});
+    const resp = try client.request(arena, .{ .path = path });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
 const fixture_list = @embedFile("testdata/events_list.json");
 const fixture_get = @embedFile("testdata/events_get.json");
 
@@ -81,4 +151,12 @@ test "parses /events/{ticker} fixture" {
 
     const parsed = try std.json.parseFromSliceLeaky(EventDetail, a, fixture_get, .{ .ignore_unknown_fields = true });
     try std.testing.expect(parsed.event.event_ticker.len > 0);
+}
+
+test {
+    _ = listMultivariate;
+    _ = metadata;
+    _ = candlesticks;
+    _ = forecast;
+    _ = collection;
 }

@@ -39,6 +39,14 @@ pub fn structuredTargets(client: *Client, arena: Allocator) !std.json.Value {
     return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
 }
 
+/// GET /structured_targets/{target_id} — single structured target (live-only).
+pub fn searchTarget(client: *Client, arena: Allocator, target_id: []const u8) !std.json.Value {
+    const path = try std.fmt.allocPrint(arena, "/structured_targets/{s}", .{target_id});
+    const resp = try client.request(arena, .{ .path = path });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
 test {
     // Surface compile-tested only; no fixtures captured because /search/* and
     // /structured_targets 404 in the demo environment at fixture-capture time.
@@ -46,4 +54,5 @@ test {
     _ = tagsByCategories;
     _ = filtersBySport;
     _ = structuredTargets;
+    _ = searchTarget;
 }
