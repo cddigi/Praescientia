@@ -26,6 +26,9 @@ pub fn build(b: *std.Build) void {
     // Stage 1 risk-reduction binaries.
     addTool(b, target, optimize, praescientia, "praescientia-signtest", "tools/signtest.zig", "signtest", "Run the RSA-PSS sign harness");
     addTool(b, target, optimize, praescientia, "praescientia-verifytest", "tools/verifytest.zig", "verifytest", "Run the RSA-PSS verify harness");
+
+    // Stage 2 microbenchmark.
+    addTool(b, target, optimize, praescientia, "praescientia-bench-state-chain", "tools/bench_state_chain.zig", "bench", "Benchmark state_chain.Chain.divergesAt on 100k entries");
 }
 
 fn addTool(

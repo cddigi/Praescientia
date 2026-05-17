@@ -1,9 +1,11 @@
 //! Hashed checkpoint chain — the Hopper-doctrine core of Praescientia.
 //!
-//! Each appended state is canonical-JSON-hashed via SHA-256. Two chains can be
-//! compared in O(1) when their heads agree (the common case); when they don't,
-//! a linear scan finds the first differing index. This lets us pinpoint *where*
-//! reality diverged from prediction without reprocessing the whole context.
+//! Each item's `hash` is SHA-256(prev_item.hash || canonical_json_payload) —
+//! a Merkle accumulator. Two chains with the same head hash are identical
+//! (modulo SHA-256 collisions), so `divergesAt` short-circuits in O(1) on the
+//! common case. When heads differ, a linear scan finds the first differing
+//! index — letting us pinpoint *where* reality diverged from prediction
+//! without reprocessing the whole context.
 
 const std = @import("std");
 
@@ -11,11 +13,12 @@ const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 pub const Hash = [Sha256.digest_length]u8;
+pub const zero_hash: Hash = @splat(0);
 
 pub const Item = struct {
     /// Canonical JSON bytes of the appended state. Chain owns this allocation.
     payload: []u8,
-    /// SHA-256 of `payload`.
+    /// Merkle accumulator: SHA-256(prev_item.hash || payload). prev is `zero_hash` for the head.
     hash: Hash,
 };
 
@@ -40,8 +43,16 @@ pub const Chain = struct {
         const owned = try self.allocator.dupe(u8, canonical_json);
         errdefer self.allocator.free(owned);
 
+        const prev: Hash = if (self.items.items.len == 0)
+            zero_hash
+        else
+            self.items.items[self.items.items.len - 1].hash;
+
+        var hasher = Sha256.init(.{});
+        hasher.update(&prev);
+        hasher.update(owned);
         var hash: Hash = undefined;
-        Sha256.hash(owned, &hash, .{});
+        hasher.final(&hash);
 
         try self.items.append(.{ .payload = owned, .hash = hash });
     }
