@@ -130,7 +130,25 @@ praescientia/
 6. Compare Julia vs Zig signatures (cross-verify; do not expect byte equality due to PSS salt)
 7. Record progress via `gitbutler_update_branches`
 
-**Status:** Not Started
+**Status:** Complete (2026-05-16)
+
+**What landed:**
+- `build.zig` + `build.zig.zon` — `minimum_zig_version = "0.16.0"`, fingerprint `0x3123a034a2dd4b1b`
+- `vendor/mbedtls` — submodule pinned to tag `v3.6.6` (3.6 LTS)
+- `vendor/mbedtls_glue.h` — umbrella header consumed by `b.addTranslateC()`
+- `src/root.zig` — public `praescientia.kalshi.auth` re-export
+- `src/kalshi/auth.zig` — `signRequest`, `signDigest`, `verifyDigest`, `signingMessage` matching Julia's `KalshiAuth.rsa_pss_sign` byte-for-byte semantics (SHA-256, MGF1-SHA256, salt = digest length)
+- `tools/signtest.zig` + `tools/verifytest.zig` — Juicy Main CLIs (`pub fn main(init: std.process.Init)`)
+- `scripts/cross_verify.sh` — bidirectional Zig ↔ OpenSSL verification harness; Julia uses OpenSSL internally, so this transitively proves Julia ↔ Zig parity
+
+**Verification log:**
+- `zig build test --summary all` → 5/5 inline tests pass (signing message format, sign-and-self-verify, signRequest round-trip, tampered-signature rejection, message-format edge cases)
+- `scripts/cross_verify.sh` → both directions pass; tampered signatures rejected
+
+**Deviations from plan (recorded for Stage 2+ awareness):**
+- Dropped the `io` parameter from `signRequest` — `std.Io.null_io` does not exist in 0.16, and the parameter has no use yet; Stage 3 will add it if the HTTP client needs cancellation propagation through signing
+- Test fixtures live in `src/kalshi/testdata/` rather than `tests/fixtures/` so `@embedFile` can reach them within the module's package path
+- Skipped the standalone `tests/auth_test.zig` integration file — inline tests already exercise the public re-export through `src/root.zig`; Stage 2 will introduce a true `tests/` directory when there are cross-module integrations to cover
 
 ---
 
@@ -307,7 +325,7 @@ The Julia implementation **must remain runnable on `main` through Stages 1–4**
 
 | Stage | Status |
 |-------|--------|
-| 1. Foundation & RSA-PSS Risk Reduction | Not Started |
+| 1. Foundation & RSA-PSS Risk Reduction | Complete (2026-05-16) |
 | 2. Core State Engine | Not Started |
 | 3. Kalshi Client Layer | Not Started |
 | 4. CLI Tools | Not Started |

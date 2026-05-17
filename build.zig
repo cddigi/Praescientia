@@ -22,6 +22,38 @@ pub fn build(b: *std.Build) void {
     const run_lib_tests = b.addRunArtifact(lib_tests);
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_lib_tests.step);
+
+    // Stage 1 risk-reduction binaries.
+    addTool(b, target, optimize, praescientia, "praescientia-signtest", "tools/signtest.zig", "signtest", "Run the RSA-PSS sign harness");
+    addTool(b, target, optimize, praescientia, "praescientia-verifytest", "tools/verifytest.zig", "verifytest", "Run the RSA-PSS verify harness");
+}
+
+fn addTool(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    praescientia: *std.Build.Module,
+    exe_name: []const u8,
+    source: []const u8,
+    step_name: []const u8,
+    step_description: []const u8,
+) void {
+    const mod = b.createModule(.{
+        .root_source_file = b.path(source),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+        },
+    });
+    const exe = b.addExecutable(.{ .name = exe_name, .root_module = mod });
+    b.installArtifact(exe);
+
+    const run = b.addRunArtifact(exe);
+    if (b.args) |args| run.addArgs(args);
+    const step = b.step(step_name, step_description);
+    step.dependOn(&run.step);
 }
 
 const Mbedtls = struct {

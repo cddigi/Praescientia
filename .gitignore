@@ -12,6 +12,11 @@ docs/site/
 /dev/
 LocalPreferences.toml
 
+# Zig
+zig-out/
+zig-cache/
+.zig-cache/
+
 # Compiled
 *.o
 *.a
@@ -32,6 +37,9 @@ LocalPreferences.toml
 *.key
 credentials.json
 secrets.json
+
+# Test fixtures are not secrets — explicitly tracked.
+!src/kalshi/testdata/*.pem
 
 # macOS
 .DS_Store

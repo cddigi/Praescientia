@@ -1,0 +1,17 @@
+.{
+    .name = .praescientia,
+    .version = "0.1.0",
+    .fingerprint = 0x3123a034a2dd4b1b, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tools",
+        "tests",
+        "vendor",
+        "UNLICENSE",
+        "README.md",
+    },
+}
