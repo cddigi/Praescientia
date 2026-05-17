@@ -7,10 +7,13 @@
 **Architecture:** A single Zig library (`src/`) provides the state-chain engine and Kalshi client; one executable per former Julia script lives in `tools/`; the dashboard server lives in `server/`. Tests live inline (`test "..." { ... }` blocks) with cross-module integration tests in `tests/`. The `kalshi_dashboard.html` asset is bundled via `@embedFile` for true single-file deploy.
 
 **Tech Stack:**
-- **Zig 0.14.x** (pinned — language pre-1.0, breaking changes between minors)
-- `std.http.Client` (HTTP), `std.json` (JSON), `std.crypto` (SHA, RSA primitives)
-- **RSA-PSS via vendored mbedTLS** through Zig C interop (stdlib does not ship PSS padding)
-- `std.testing` for assertions
+- **Zig 0.16.0** (pinned — language pre-1.0, breaking changes between minors; see [0.16.0 release notes](https://ziglang.org/download/0.16.0/release-notes.html))
+- `std.Io` — the new unified I/O interface (mandatory for HTTP, filesystem, network as of 0.16). `Io.Threaded` is the production-ready implementation.
+- `std.http.Client` requires an `Io` parameter: `var http: std.http.Client = .{ .allocator = gpa, .io = io };`
+- `std.json` (JSON), `std.crypto` (SHA, AEAD — no native RSA-PSS)
+- **RSA-PSS via vendored mbedTLS**, integrated through `b.addTranslateC()` in `build.zig` (the old `@cImport` is replaced by build-system C translation in 0.16)
+- `std.testing` + `std.testing.io` for I/O-dependent tests
+- "Juicy Main" — `pub fn main(init: std.process.Init) !void` — for tool entrypoints; gives pre-initialized `gpa`, `arena`, `io`, and argv access
 - GitButler MCP for all version-control writes (no raw `git commit`)
 
 ---
@@ -19,8 +22,10 @@
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| RSA-PSS signing parity with Julia's `MbedTLS.jl` | High | Blocks all auth'd API work | Stage 1 builds a sign-and-verify PoC against a known good signature from the Julia client before any other work begins |
-| Zig 0.14 → 0.15 churn breaks `std.http` API | Medium | Forces refactors | Pin Zig version in `build.zig.zon` `minimum_zig_version`; upgrade as a dedicated PR |
+| RSA-PSS signing parity with Julia's `MbedTLS.jl` | High | Blocks all auth'd API work | Stage 1 builds a sign-and-verify PoC against a known good signature from the Julia client before any other work begins. 0.16 has no native PSS — mbedTLS vendoring is mandatory. |
+| `std.Io` interface is new in 0.16 — most stdlib examples online predate it | High | Onboarding friction, wrong patterns copied | Bookmark the 0.16 release notes; treat any 0.14/0.15 example as suspect. All HTTP/filesystem code must accept `Io` explicitly. |
+| `@cImport` is replaced by `b.addTranslateC()` in 0.16 | Medium | mbedTLS integration path differs from tutorials | Use `b.addTranslateC(.{ .root_source_file = ... })` returning a module; import the module from `auth.zig` instead of `@cImport`. |
+| Zig 0.16 → 0.17 churn breaks `std.Io` again | Medium | Forces refactors | Pin Zig version in `build.zig.zon` `minimum_zig_version = "0.16.0"`; upgrade as a dedicated PR |
 | JSON ergonomics (Kalshi responses are deeply nested) | Medium | Code volume | Use `std.json.parseFromSlice` with typed structs; allocate per-request arena |
 | No REPL for market exploration | Low | Workflow friction | Keep a small Julia/Python notebook outside the repo for ad-hoc work; not part of port |
 | GitButler virtual-branch ownership of new files | Medium | Commits land on wrong branch | Create new branch via `but branch new` *before* generating Zig files (see CLAUDE.md "GitButler MCP Workflow Caveats") |
@@ -97,7 +102,8 @@ praescientia/
 - `praescientia-signtest` signs a fixed test payload using `.secret/kalshi_api_key_private.txt` and outputs a base64 signature
 - That signature verifies against the corresponding public key using `openssl pkeyutl -verify -pkeyopt rsa_padding_mode:pss`
 - The same payload signed by the Julia `KalshiAuth.sign_request` produces an equivalent signature (RSA-PSS uses random salt, so verify *both* sides verify against each other's signatures, not byte equality)
-- `build.zig.zon` declares `minimum_zig_version = "0.14.0"`
+- `build.zig.zon` declares `minimum_zig_version = "0.16.0"`
+- mbedTLS is integrated via `b.addTranslateC()` — no `@cImport` blocks anywhere in the source tree
 
 **Tests:**
 - `tests/auth_test.zig::"signs and self-verifies"` — round-trip
@@ -113,11 +119,14 @@ praescientia/
 - Modify: `.gitignore` (add `zig-out/`, `zig-cache/`, `.zig-cache/`)
 
 **Key sub-tasks:**
-1. Install Zig 0.14 via `zigup` or `asdf`; document in `README.md`
-2. Author minimal `build.zig` with `addStaticLibrary` for `src/root.zig` and `addExecutable` for the sign-test
+1. Install Zig 0.16.0 via `zigup` or direct download from `https://ziglang.org/download/0.16.0/`; document in `README.md`
+2. Author minimal `build.zig` — define a `root` module from `src/root.zig`, add a `signtest` executable, set `minimum_zig_version`
 3. Vendor mbedTLS — `git submodule add https://github.com/Mbed-TLS/mbedtls vendor/mbedtls`, pin a release tag
-4. Wire mbedTLS into `build.zig` (`addCSourceFiles` for the `rsa.c`, `md.c`, `pk_parse.c`, etc.)
-5. Implement `auth.zig::signRequest(allocator, private_key_pem, timestamp, method, path) ![]u8`
+4. Wire mbedTLS into `build.zig`:
+   - Use `b.addTranslateC(.{ .root_source_file = b.path("vendor/mbedtls/include/mbedtls/rsa.h"), .target = target, .optimize = optimize })` to produce a translated-C module
+   - Compile the mbedTLS `.c` sources as a static library via `b.addStaticLibrary` + `addCSourceFiles`
+   - Link the static lib into the `auth` module and import the translated-C module from `auth.zig`
+5. Implement `auth.zig::signRequest(allocator: Allocator, io: Io, private_key_pem: []const u8, timestamp_ms: i64, method: []const u8, path: []const u8) ![]u8` — note the `Io` parameter even though signing itself is sync; this keeps the surface uniform for Stage 3
 6. Compare Julia vs Zig signatures (cross-verify; do not expect byte equality due to PSS salt)
 7. Record progress via `gitbutler_update_branches`
 
@@ -169,7 +178,7 @@ praescientia/
 **Goal:** Port `src/KalshiAuth.jl` and build the full Kalshi endpoint surface as Zig modules. After this stage, every API call available in Julia is callable from Zig with identical behavior against the demo endpoint.
 
 **Success Criteria:**
-- `src/kalshi/client.zig` provides `Client.init(allocator, .{ .env = .demo, .key_id = ..., .private_key_pem = ... })`
+- `src/kalshi/client.zig` provides `Client.init(allocator: Allocator, io: Io, .{ .env = .demo, .key_id = ..., .private_key_pem = ... })` — note the explicit `Io` parameter required by 0.16's `std.http.Client`
 - Each endpoint module (`exchange.zig`, `markets.zig`, …) exposes typed wrappers; e.g. `markets.list(client, .{ .limit = 100 }) ![]Market`
 - A parity test script (`tools/test_conn.zig`) hits every endpoint against the demo API and writes responses to `parity/<date>/<endpoint>.json`; same script run against Julia produces matching shapes (`jq -S` diff is empty modulo `request_id` / timestamps)
 - All endpoint modules have at least one inline test against canned JSON fixtures
@@ -188,7 +197,7 @@ praescientia/
 - Modify: `build.zig` (link mbedTLS into client builds)
 
 **Key sub-tasks (one sub-stage per module — port in this order to manage risk):**
-1. `client.zig` — HTTP wrapper, env switching, header construction, error mapping
+1. `client.zig` — HTTP wrapper using `std.http.Client` with `Io` injection, env switching, header construction, error mapping. Per-request arena allocator (Stage 3 sets the pattern: `var arena: std.heap.ArenaAllocator = .init(gpa); defer arena.deinit(); const a = arena.allocator();`). ArenaAllocator is now lock-free thread-safe in 0.16, so no extra wrapping needed.
 2. `exchange.zig` — simplest endpoints (no params, GET only): status, schedule, announcements
 3. `markets.zig` — adds pagination & query params
 4. `events.zig` — similar to markets
@@ -224,8 +233,8 @@ praescientia/
 - Modify: `README.md` (replace `julia --project=. scripts/...` invocations with `zig build run-<tool>` or `zig-out/bin/...`)
 
 **Key sub-tasks:**
-1. Pick a Zig arg-parser approach — recommend hand-rolled with `std.process.argsAlloc` for the simple subcommand grammar; avoid third-party deps
-2. Extract a shared `tools/common.zig` for flag parsing, client init, JSON pretty-printing
+1. Adopt 0.16's "Juicy Main" pattern — each tool defines `pub fn main(init: std.process.Init) !void` and reads argv via `init.minimal.args.toSlice(init.arena.allocator())`. This replaces hand-rolled `std.process.argsAlloc` boilerplate.
+2. Extract a shared `tools/common.zig` for subcommand dispatch, client init from `init.gpa` + `init.io`, JSON pretty-printing via `std.json.Stringify` to stdout (now requires the `io` writer from `init.io`)
 3. Port one tool end-to-end (`exchange.zig`) to validate the pattern, then fan out
 4. Update `CLAUDE.md` "Scripts for Quick Reproducibility" table once tools are ready
 5. Record via `gitbutler_update_branches`
@@ -262,7 +271,7 @@ praescientia/
 **Key sub-tasks:**
 1. Read `kalshi_server.jl` end-to-end; enumerate every route and handler
 2. Implement `server/handlers.zig` — one function per route, all delegating to the `src/kalshi/*` modules
-3. Wire `std.http.Server` in `server/main.zig`; route table is a comptime array of `.{ method, path_pattern, handler }`
+3. Wire `std.http.Server` in `server/main.zig` using 0.16's `Io.Threaded` for concurrent request handling: `var threaded: std.Io.Threaded = .init(gpa); const io = threaded.io();` then pass `io` into the server loop. Route table is a comptime array of `.{ method, path_pattern, handler }`.
 4. Embed dashboard: `const dashboard_html = @embedFile("../web/dashboard.html");`
 5. Run side-by-side with Julia server for 24 hours; only proceed to Julia removal if no parity issues surface
 6. Delete Julia tree in a single commit titled `chore: remove Julia implementation`
@@ -286,11 +295,11 @@ The Julia implementation **must remain runnable on `main` through Stages 1–4**
 
 ## Open Questions (resolve before starting Stage 1)
 
-1. **Zig version pin** — 0.14.x or wait for 0.15.0 if it lands before Stage 1 begins? (Recommend pin 0.14; upgrade is a separate effort.)
-2. **mbedTLS vs BoringSSL** for RSA-PSS — mbedTLS is smaller and easier to vendor; BoringSSL is more battle-tested. (Recommend mbedTLS.)
-3. **Arg parser** — hand-rolled or vendor `zig-clap`? (Recommend hand-rolled; subcommand grammar is small.)
-4. **Concurrency model for server** — `std.http.Server` is single-threaded per accept; do we need thread-per-request, an event loop, or is sequential fine for a single-user dashboard? (Recommend sequential until measured otherwise.)
-5. **Should `poll_resolved_markets` keep its current cadence**, or move to a `praescientia-server` background task? (Defer to Stage 5.)
+1. **Zig version pin** — Decided: **0.16.0**. Upgrade to 0.17 will be a dedicated PR.
+2. **mbedTLS vs BoringSSL** for RSA-PSS — mbedTLS is smaller and easier to vendor; BoringSSL is more battle-tested. (Recommend mbedTLS, integrated via `b.addTranslateC()`.)
+3. **Arg parser** — Decided: **Juicy Main** (`pub fn main(init: std.process.Init)`) over hand-rolled or `zig-clap`; subcommand grammar is small enough.
+4. **Concurrency model for server** — `Io.Threaded` is production-ready in 0.16 and gives us thread-per-request without async/await keywords. Recommend `Io.Threaded` from day one; `Io.Evented` is still WIP.
+5. **Should `poll_resolved_markets` keep its current cadence**, or move to a `praescientia-server` background task spawned via `io.async()`? (Defer to Stage 5.)
 
 ---
 
