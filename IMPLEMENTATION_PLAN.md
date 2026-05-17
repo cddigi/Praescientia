@@ -187,7 +187,31 @@ praescientia/
 5. Benchmark `divergesAt` on 100k-entry chain; must be sub-millisecond
 6. Record via `gitbutler_update_branches`
 
-**Status:** Not Started
+**Status:** Complete (2026-05-16)
+
+**What landed:**
+- `src/canonical_json.zig` — hash-stable JSON: byte-wise sorted object keys, no whitespace, recursive. `encodeSlice` / `encodeValue` / `encodeAny`.
+- `src/state_chain.zig` — `Chain.init/deinit/append/len/checkpoint/divergesAt`. Each item's `hash` is a Merkle accumulator: `SHA-256(prev_item.hash || canonical_payload)`. This is what makes the head-hash short-circuit in `divergesAt` semantically safe.
+- `src/txlog.zig` — JSONL persistence on top of state_chain. `Tx{tx_id, prev_hash, hash, payload}`. `tx_id` = `"tx_" + 26-char Crockford-base32 ULID` (48-bit ms timestamp + 80-bit CSPRNG randomness via `arc4random_buf` on macOS/BSD, `getentropy` on Linux). `writeAll` emits JSONL; `parseSlice` round-trips and verifies the chain (rejects HashMismatch, GenesisPrevHashNonZero, PrevHashBroken).
+- `tools/bench_state_chain.zig` — 100k-entry benchmark gated by a `zig build bench` step. Asserts both paths complete under 1 ms.
+- `src/root.zig` — re-exports `canonical_json`, `state_chain`, `txlog`.
+
+**Verification log:**
+- `zig build test --summary all` → 26/26 tests pass (5 Stage 1 auth + 7 canonical_json + 8 state_chain + 6 txlog)
+- `zig build bench -Doptimize=ReleaseFast && ./zig-out/bin/praescientia-bench-state-chain`:
+  ```
+  state_chain.Chain.divergesAt on 100000-entry chains:
+    fast path (matching heads):       0 ns (under timer resolution — O(1) short-circuit hit)
+    slow path (divergence at 50000):  321 µs
+  PASS: both paths under 1 ms
+  ```
+
+**Deviations from plan (recorded for downstream-stage awareness):**
+- **Full 64-char SHA-256 hex** in hash fields, not Julia's 16-char truncation. The plan says "SHA-256 of canonical JSON-encoded state" without a truncation spec; full hash gives proper collision resistance and is the boring choice.
+- **state_chain uses Merkle accumulator hashes**, not content-only hashes. Without Merkle chaining, the plan's "O(1) divergence on equal heads" test is semantically unsound — two chains can agree in head but differ in middle. txlog still stores a content-only `hash` per tx (matches the Julia `hash_transaction` spec) plus a `prev_hash` for chain integrity; the two modules have intentionally different hash semantics.
+- **No `tests/state_chain_test.zig` / `tests/txlog_test.zig` files** — inline `test` blocks in each module already cover every behavioral case from the plan's test list, and Zig 0.16's `@embedFile` package-boundary rules make external test files awkward without a real benefit. If Stage 3+ needs cross-module integration tests, those will go in `tests/`.
+- **Stage 2 is generic primitives only** — Julia's `TxLog` portfolio-domain logic (`record_buy/sell/flip/adjust`, `calculate_state`, `verify_chain` portfolio walker) is *not* part of this stage. That domain logic depends on Kalshi types and will land in Stage 3 alongside `src/kalshi/portfolio.zig`.
+- **`millisSinceEpoch` via `std.c.clock_gettime`**, and **`fillRandom` via `arc4random_buf` / `getentropy`** — `std.time.milliTimestamp` and `std.crypto.random` were both removed in Zig 0.16. The new Io-bound replacements would force every tx_id consumer to thread an Io through; direct libc is the boring fix.
 
 ---
 
@@ -326,7 +350,7 @@ The Julia implementation **must remain runnable on `main` through Stages 1–4**
 | Stage | Status |
 |-------|--------|
 | 1. Foundation & RSA-PSS Risk Reduction | Complete (2026-05-16) |
-| 2. Core State Engine | Not Started |
+| 2. Core State Engine | Complete (2026-05-16) |
 | 3. Kalshi Client Layer | Not Started |
 | 4. CLI Tools | Not Started |
 | 5. Dashboard Server & Julia Sunset | Not Started |
