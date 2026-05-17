@@ -2,7 +2,7 @@
 
 **Latin:** *praescientia* (foreknowledge)
 
-> "The hardware and software are, after all, only the tools with which we do the processing and should not occupied the primary position in our thinking. It's high time we began to turn our attention to the data and the information."
+> "The hardware and software are, after all, only the tools with which we do the processing and should not occupy the primary position in our thinking. It's high time we began to turn our attention to the data and the information."
 > — **Grace Hopper, 1982**
 
 ## Overview
@@ -15,7 +15,7 @@ Praescientia is a prediction market trading system built on [Kalshi](https://kal
 
 ### State Chains with Rollback
 
-Instead of a monolithic conversation context, we use discrete, hashed state blocks:
+Instead of a monolithic conversation context, we use discrete, hashed state blocks. Each item's hash is a Merkle accumulator (`SHA-256(prev_item.hash || canonical_payload)`), so equal heads guarantee equal chains — divergence detection is O(1) in the common case.
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
@@ -33,150 +33,149 @@ Instead of a monolithic conversation context, we use discrete, hashed state bloc
                         └─────────────────┘     └─────────────────┘
 ```
 
-When reality diverges from prediction, we identify the exact block and fork:
+The Zig API:
 
-```julia
-divergence = calculate_divergence_point(chain, reality; threshold=0.15)
-new_chain = rollback_to_block(chain, divergence - 1)
-# Fork from last valid state — no reprocessing needed
+```zig
+const std = @import("std");
+const praescientia = @import("praescientia");
+
+var chain: praescientia.state_chain.Chain = .init(gpa);
+defer chain.deinit();
+
+try chain.append("{\"prediction\":0.6}");
+try chain.append("{\"prediction\":0.7}");
+
+if (chain.divergesAt(&reality_chain)) |idx| {
+    // Fork from chain.items[0..idx]; no full reprocessing needed.
+}
 ```
+
+`src/txlog.zig` is the JSONL persistence layer with `tx_` Crockford-base32 ULIDs and chained `prev_hash` for tamper-evident replay.
 
 ### Kalshi Integration
 
-Kalshi is a CFTC-regulated exchange for event contracts. Authentication uses RSA-PSS signing via the `KalshiAuth` module.
+Kalshi is a CFTC-regulated exchange for event contracts. Authentication uses RSA-PSS (SHA-256, MGF1-SHA256, salt = digest length) via vendored mbedTLS in `src/kalshi/auth.zig`.
 
 | Environment | Base URL |
 |-------------|----------|
 | **Demo** | `https://demo-api.kalshi.co/trade-api/v2` |
 | **Live** | `https://api.elections.kalshi.com/trade-api/v2` |
 
-The trading dashboard (`kalshi_server.jl`) provides a web frontend powered by Oxygen.jl that proxies authenticated requests to the Kalshi API, supporting market browsing, portfolio management, and order placement.
+The trading dashboard (`praescientia-server`) is a single static binary that embeds `server/dashboard.html` and proxies authenticated requests through `src/kalshi/*`.
 
 ## Project Structure
 
 ```
 praescientia/
+├── build.zig                    # Build entry: library + 16 binaries
+├── build.zig.zon                # Zig 0.16.0 pinned, fingerprint stable
 ├── src/
-│   ├── Praescientia.jl      # Core module (state chains, predictions)
-│   ├── TxLog.jl             # JSONL transaction log (blockchain-style)
-│   └── KalshiAuth.jl        # Kalshi API auth (RSA-PSS signing, live/demo)
+│   ├── root.zig                 # Public lib surface: praescientia.{state_chain,txlog,canonical_json,kalshi.*}
+│   ├── state_chain.zig          # Merkle-accumulator chain
+│   ├── txlog.zig                # JSONL persistence + ULID tx_ids
+│   ├── canonical_json.zig       # Hash-stable JSON (sorted object keys, no whitespace)
+│   └── kalshi/                  # Library wrappers — one file per Kalshi endpoint group
+│       ├── auth.zig             # RSA-PSS signing (mbedTLS-backed)
+│       ├── client.zig           # HTTP transport, env switching, auth headers
+│       ├── exchange.zig         # /exchange/*
+│       ├── markets.zig          # /markets/*
+│       ├── events.zig           # /events/*
+│       ├── orders.zig           # /portfolio/orders*
+│       ├── order_groups.zig     # /portfolio/order_groups/*
+│       ├── portfolio.zig        # /portfolio/{balance,positions,...}
+│       ├── historical.zig       # /historical/* + /markets/trades
+│       ├── account.zig          # /account/*, /api_keys
+│       ├── communications.zig   # RFQ / quote workflow
+│       ├── search.zig           # /series/*, /search/*
+│       ├── live_data.zig        # /milestones, /live_data/*
+│       └── testdata/            # Captured demo-API fixtures for inline tests
+├── tools/
+│   ├── common.zig               # Shared CLI scaffolding (Juicy Main + subcommand dispatch)
+│   ├── exchange.zig             # praescientia-exchange CLI
+│   ├── markets.zig              # praescientia-markets CLI
+│   ├── events.zig               # praescientia-events CLI
+│   ├── historical.zig           # praescientia-historical CLI
+│   ├── portfolio.zig            # praescientia-portfolio CLI
+│   ├── orders.zig               # praescientia-orders CLI
+│   ├── account.zig              # praescientia-account CLI
+│   ├── communications.zig       # praescientia-communications CLI
+│   ├── order_groups.zig         # praescientia-order-groups CLI
+│   ├── live_data.zig            # praescientia-live-data CLI
+│   ├── search.zig               # praescientia-search CLI
+│   ├── poll_resolved_markets.zig  # praescientia-poll-resolved-markets (CoinGecko prices only)
+│   ├── test_conn.zig            # End-to-end demo-API smoke harness
+│   ├── signtest.zig             # RSA-PSS sign one-off
+│   ├── verifytest.zig           # RSA-PSS verify one-off
+│   └── bench_state_chain.zig    # 100k-entry divergesAt microbenchmark
+├── server/
+│   ├── main.zig                 # std.http.Server + Io.Threaded loop
+│   ├── handlers.zig             # One handler per route, delegates to src/kalshi/*
+│   └── dashboard.html           # @embedFile'd into praescientia-server
 ├── scripts/
-│   ├── kalshi_exchange.jl    # Exchange status, announcements, schedule
-│   ├── kalshi_markets.jl     # Markets: list, get, trades, orderbook
-│   ├── kalshi_events.jl      # Events: list, metadata, forecasts
-│   ├── kalshi_orders.jl      # Orders: create, cancel, batch, amend
-│   ├── kalshi_order_groups.jl# Order groups: create, reset, trigger
-│   ├── kalshi_portfolio.jl   # Portfolio: balance, positions, settlements
-│   ├── kalshi_historical.jl  # Historical: cutoff, candlesticks, fills
-│   ├── kalshi_communications.jl # RFQ & quotes workflow
-│   ├── kalshi_account.jl     # API keys, limits, incentives
-│   ├── kalshi_search.jl      # Search: tags, filters, series
-│   ├── kalshi_live_data.jl   # Milestones & live data
-│   └── kalshi_test.jl        # API connectivity test
-├── kalshi_server.jl          # Oxygen.jl trading dashboard server
-├── kalshi_dashboard.html     # Trading dashboard frontend
-├── test/
-│   ├── runtests.jl           # Test suite runner
-│   ├── test_txlog.jl         # Transaction log tests
-│   └── test_server.jl        # Server tests
-├── Project.toml
-├── Manifest.toml
-├── CLAUDE.md                 # Session context for Claude Code
+│   ├── cross_verify.sh          # Stage 1: Zig ↔ OpenSSL RSA-PSS interop
+│   └── parity_check.sh          # Stage 3/4: Zig ↔ external reference (historical)
+├── vendor/
+│   └── mbedtls/                 # 3.6 LTS submodule for RSA-PSS
+├── .secret/                     # gitignored — Kalshi API key + key ID
+├── portfolios/                  # gitignored runtime txlog data
 ├── README.md
+├── CLAUDE.md
 └── UNLICENSE
 ```
 
 ## Requirements
 
-- Julia 1.9+
-- Packages: HTTP.jl, JSON3.jl, Oxygen.jl, SHA.jl, Dates, UUIDs
-- Kalshi API key (RSA private key + key ID)
+- **Zig 0.16.0** — `brew install zig@0.16` (Homebrew) or download from <https://ziglang.org/download/0.16.0/>. The toolchain is pinned via `minimum_zig_version` in `build.zig.zon`; later minor versions are not guaranteed compatible.
+- **mbedTLS 3.6 LTS** — vendored as a git submodule at `vendor/mbedtls`. After cloning, run `git submodule update --init --recursive`.
+- **Kalshi API key** — drop `kalshi_api_key_id.txt` and `kalshi_api_key_private.txt` into `.secret/`. Public endpoints work without them.
 
 ## Quick Start
-
-```bash
-# Install dependencies
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
-
-# Start the trading dashboard
-julia --project=. kalshi_server.jl [--port=8080] [--live] [--verbose]
-
-# Run tests
-julia --project=. test/runtests.jl
-```
-
-### Kalshi API Scripts
-
-All scripts support `--demo` (default) and `--live` flags, plus `--verbose` for debug output.
-
-```bash
-# Check exchange status
-julia --project=. scripts/kalshi_exchange.jl status
-
-# Browse open markets
-julia --project=. scripts/kalshi_markets.jl list --status=open
-
-# Check portfolio balance
-julia --project=. scripts/kalshi_portfolio.jl balance
-
-# Place an order
-julia --project=. scripts/kalshi_orders.jl create
-```
-
-## Zig Port (in progress)
-
-Praescientia is being ported from Julia to Zig for single-binary deploy. See [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) for the staged plan. The Julia implementation remains canonical and runnable through Stage 4.
-
-**Stage 1 (complete):** RSA-PSS signing risk reduction via vendored mbedTLS. Bidirectional Zig ↔ OpenSSL signature interoperability is proven by [`scripts/cross_verify.sh`](scripts/cross_verify.sh).
-
-### Requirements
-
-- **Zig 0.16.0** — `brew install zig@0.16` (Homebrew) or download from <https://ziglang.org/download/0.16.0/>. The toolchain is pinned via `minimum_zig_version` in `build.zig.zon`; later minor versions are not guaranteed compatible.
-- mbedTLS (3.6 LTS) — vendored as a git submodule at `vendor/mbedtls`. After cloning, run `git submodule update --init --recursive`.
-
-### Building
 
 ```bash
 # First-time setup
 git submodule update --init --recursive
 
-# Build everything (library + 15 CLI binaries)
+# Build everything (library + 16 binaries)
 zig build
 
-# Run tests (63 inline + CLI --help smoke check)
+# Run all tests (73 inline + CLI --help smoke check)
 zig build test --summary all
 
-# End-to-end demo API smoke check (Stage 3)
+# Start the dashboard at http://localhost:8080
+./zig-out/bin/praescientia-server --port=8080
+
+# End-to-end demo-API smoke check
 ./zig-out/bin/praescientia-test-conn
 
-# Zig CLI ↔ Julia parity (Stage 4)
-./scripts/parity_check.sh --tools
-
-# RSA-PSS sign-verify interop (Stage 1)
+# RSA-PSS sign-verify interop (Zig ↔ OpenSSL)
 ./scripts/cross_verify.sh
+
+# 100k-entry divergesAt microbenchmark (sub-millisecond target)
+zig build bench -Doptimize=ReleaseFast && ./zig-out/bin/praescientia-bench-state-chain
 ```
 
-Produced binaries (Stage 4 CLIs replace `scripts/kalshi_*.jl`):
+## CLI Tools
 
-| Zig invocation | Replaces Julia |
-|----------------|----------------|
-| `zig build run-exchange -- status` | `julia --project=. scripts/kalshi_exchange.jl status` |
-| `zig build run-markets -- list --limit=10` | `julia --project=. scripts/kalshi_markets.jl list --limit=10` |
-| `zig build run-events -- list` | `julia --project=. scripts/kalshi_events.jl list` |
-| `zig build run-historical -- cutoff` | `julia --project=. scripts/kalshi_historical.jl cutoff` |
-| `zig build run-portfolio -- balance` | `julia --project=. scripts/kalshi_portfolio.jl balance` |
-| `zig build run-orders -- list` | `julia --project=. scripts/kalshi_orders.jl list` |
-| `zig build run-account -- limits` | `julia --project=. scripts/kalshi_account.jl limits` |
-| `zig build run-communications -- list_rfqs` | `julia --project=. scripts/kalshi_communications.jl list_rfqs` |
-| `zig build run-order-groups -- list` | `julia --project=. scripts/kalshi_order_groups.jl list` |
-| `zig build run-live-data -- milestones` | `julia --project=. scripts/kalshi_live_data.jl milestones` |
-| `zig build run-search -- series KXBTCD` | `julia --project=. scripts/kalshi_search.jl series KXBTCD` |
-| `zig build run-poll -- prices` | `julia --project=. scripts/poll_resolved_markets.jl` *(thin port; full harvester stays in Julia)* |
-| `./zig-out/bin/praescientia-signtest` | (no Julia equivalent) — Stage 1 RSA-PSS signing harness |
-| `./zig-out/bin/praescientia-verifytest` | (no Julia equivalent) — verify a base64 signature |
-| `./zig-out/bin/praescientia-test-conn` | (no Julia equivalent) — demo-API smoke check |
+All Kalshi CLIs accept `--demo` (default), `--live`, `--verbose`, and `--help`.
 
-All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
+| Command | Purpose |
+|---------|---------|
+| `zig build run-exchange -- status` | `/exchange/{status,schedule,announcements}` |
+| `zig build run-markets -- list --limit=10` | `/markets/*` (list, get, trades, orderbook, orderbooks, candlesticks) |
+| `zig build run-events -- list` | `/events/*` (list, multivariate, get, metadata, candlesticks, forecast, collection) |
+| `zig build run-historical -- cutoff` | `/historical/*` (cutoff, candlesticks, fills, orders, trades, markets) |
+| `zig build run-portfolio -- balance` | `/portfolio/*` (balance, positions, settlements, fills, resting_value, subaccounts, transfers, netting) |
+| `zig build run-orders -- list` | `/portfolio/orders*` (list, create, get, cancel, amend, decrease, queue_positions) |
+| `zig build run-account -- limits` | `/account/*`, `/api_keys` |
+| `zig build run-communications -- list_rfqs` | RFQ + quote workflow |
+| `zig build run-order-groups -- list` | Order group lifecycle |
+| `zig build run-live-data -- milestones` | `/milestones`, `/live_data/*` |
+| `zig build run-search -- series KXBTCD` | `/series/{ticker}`, `/search/*` |
+| `zig build run-poll -- prices` | CoinGecko BTC/ETH/SOL spot |
+| `zig build run-server -- --port=8080` | Dashboard at `http://localhost:<port>/` |
+| `./zig-out/bin/praescientia-test-conn` | End-to-end demo smoke (every endpoint, exit 0/1) |
+| `./zig-out/bin/praescientia-signtest` | One-shot RSA-PSS signer |
+| `./zig-out/bin/praescientia-verifytest` | One-shot RSA-PSS verifier |
 
 ## Philosophy
 

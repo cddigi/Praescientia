@@ -10,6 +10,7 @@
         "src",
         "tools",
         "tests",
+        "server",
         "vendor",
         "UNLICENSE",
         "README.md",
