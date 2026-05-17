@@ -68,6 +68,26 @@ pub fn build(b: *std.Build) void {
     }
     addTool(b, target, optimize, praescientia, null, "praescientia-poll-resolved-markets", "tools/poll_resolved_markets.zig", "run-poll", "praescientia-poll-resolved-markets CLI (CoinGecko prices only — Julia retains the Polymarket harvester)");
 
+    // Stage 5: dashboard server.
+    const server_mod = b.createModule(.{
+        .root_source_file = b.path("server/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "praescientia", .module = praescientia }},
+    });
+    const server_exe = b.addExecutable(.{ .name = "praescientia-server", .root_module = server_mod });
+    b.installArtifact(server_exe);
+    const run_server = b.addRunArtifact(server_exe);
+    if (b.args) |args| run_server.addArgs(args);
+    const run_server_step = b.step("run-server", "Run the dashboard server");
+    run_server_step.dependOn(&run_server.step);
+
+    // Wire server tests into `zig build test`.
+    const server_tests = b.addTest(.{ .root_module = server_mod });
+    const run_server_tests = b.addRunArtifact(server_tests);
+    test_step.dependOn(&run_server_tests.step);
+
     // tools/common.zig has its own inline tests; surface them through `zig build test`.
     const common_tests = b.addTest(.{ .root_module = tool_common });
     const run_common_tests = b.addRunArtifact(common_tests);
