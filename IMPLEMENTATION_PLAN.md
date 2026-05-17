@@ -250,7 +250,38 @@ praescientia/
 9. Capture parity fixtures after each module lands; do not move on until parity check is green
 10. Record via `gitbutler_update_branches` after each module
 
-**Status:** Not Started
+**Status:** Complete (2026-05-16)
+
+**What landed:**
+
+| Module | Endpoints covered | Test status |
+|--------|-------------------|-------------|
+| `src/kalshi/client.zig` | Transport: env switching, auth-header signing, per-request arena, percent-encoded query | 2 inline tests |
+| `src/kalshi/exchange.zig` | `status`, `schedule`, `announcements` | 3 fixture + 3 live |
+| `src/kalshi/markets.zig` | `list`, `get`, `orderbook` | 3 fixture + 3 live |
+| `src/kalshi/events.zig` | `list`, `get` | 2 fixture + 2 live |
+| `src/kalshi/portfolio.zig` | `balance`, `positions`, `settlements`, `fills` | 4 fixture + 4 live |
+| `src/kalshi/orders.zig` | `list`, `get`, `create`, `cancel`, `amend` | 2 fixture + 1 live (read-only) |
+| `src/kalshi/historical.zig` | `cutoff`, `marketTrades` | 2 fixture + 2 live |
+| `src/kalshi/search.zig` | `series`, `tagsByCategories`, `filtersBySport`, `structuredTargets` | compile-only (demo 404s these) |
+| `src/kalshi/account.zig` | `limits`, `listApiKeys`, `deleteApiKey` | 2 fixture + 2 live |
+| `src/kalshi/communications.zig` | `listRfqs`, `getRfq`, `cancelRfq`, `acceptQuote` | 1 fixture + 1 live |
+| `src/kalshi/order_groups.zig` | `list`, `get`, `delete_`, `reset`, `trigger` | 1 fixture + 1 live |
+| `src/kalshi/live_data.zig` | `listMilestones`, `getMilestone`, `liveData`, `gameStats` | 1 fixture + 1 live |
+| `tools/test_conn.zig` | Smoke-checks every implemented endpoint; `--capture-dir=PATH` writes raw response bodies for parity diff | n/a |
+| `scripts/parity_check.sh` | Captures Julia + Zig responses for selected endpoints; jq -cS canonical-form compare | 4 MATCH, 1 DRIFT, 0 FAIL |
+
+**Verification log:**
+- `zig build test --summary all` → 50/50 tests pass (5 Stage 1 + 15 Stage 2 + 30 Stage 3)
+- `./zig-out/bin/praescientia-test-conn` → 20/20 demo endpoints OK
+- `./scripts/parity_check.sh` → `4 matched, 1 drift (values changed between captures), 0 structural mismatches` against Julia's `scripts/kalshi_*.jl`
+
+**Deviations from plan:**
+- **Inner shapes for positions/settlements/fills/orders/etc. are kept as `std.json.Value`**, not strict typed structs. The demo account had no trading history at fixture-capture time, so any inner-type freezing would be speculative. Stage 4+ tightens these when real data flows.
+- **`search.zig` is compile-tested only** — `/search/*` and `/structured_targets` returned 404 in the demo environment. The wrappers are still present so live-API consumers can call them. `/series/{ticker}` (the one search endpoint that should work) is exposed as `search.series`.
+- **`/series` (list) skipped from fixtures** — the demo response is ~12 MB even with `limit=2` (the parameter isn't honored). Capturing such a large fixture would inflate the test binary. Listing series is rarely useful anyway; consumers want a specific series by ticker.
+- **POST/DELETE not exercised against the live demo** (`orders.create`, `communications.cancelRfq`, etc.). Write operations are gated behind a separate one-off tool (deferred to Stage 4) to avoid accidental demo-state mutations during routine `test_conn` runs.
+- **Parity script compares a focused subset** (5 endpoints with stable shapes). The full 20-endpoint matrix isn't worth the Julia CLI surface gap; Stage 4 introduces per-endpoint Zig CLIs that will make 1-to-1 parity comparison straightforward.
 
 ---
 
@@ -351,7 +382,7 @@ The Julia implementation **must remain runnable on `main` through Stages 1–4**
 |-------|--------|
 | 1. Foundation & RSA-PSS Risk Reduction | Complete (2026-05-16) |
 | 2. Core State Engine | Complete (2026-05-16) |
-| 3. Kalshi Client Layer | Not Started |
+| 3. Kalshi Client Layer | Complete (2026-05-16) |
 | 4. CLI Tools | Not Started |
 | 5. Dashboard Server & Julia Sunset | Not Started |
 

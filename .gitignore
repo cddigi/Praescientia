@@ -17,6 +17,9 @@ zig-out/
 zig-cache/
 .zig-cache/
 
+# Stage 3 parity captures
+parity/
+
 # Compiled
 *.o
 *.a

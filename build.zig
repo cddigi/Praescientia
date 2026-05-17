@@ -29,6 +29,9 @@ pub fn build(b: *std.Build) void {
 
     // Stage 2 microbenchmark.
     addTool(b, target, optimize, praescientia, "praescientia-bench-state-chain", "tools/bench_state_chain.zig", "bench", "Benchmark state_chain.Chain.divergesAt on 100k entries");
+
+    // Stage 3 demo API smoke check.
+    addTool(b, target, optimize, praescientia, "praescientia-test-conn", "tools/test_conn.zig", "test-conn", "End-to-end smoke check against the Kalshi demo (or live) API");
 }
 
 fn addTool(
