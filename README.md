@@ -140,22 +140,43 @@ Praescientia is being ported from Julia to Zig for single-binary deploy. See [`I
 # First-time setup
 git submodule update --init --recursive
 
-# Build everything (library + signtest + verifytest)
+# Build everything (library + 15 CLI binaries)
 zig build
 
-# Run tests (5 inline tests covering signing, verification, tamper rejection)
+# Run tests (63 inline + CLI --help smoke check)
 zig build test --summary all
 
-# Cross-language interop check (Zig ↔ OpenSSL, transitively Zig ↔ Julia)
+# End-to-end demo API smoke check (Stage 3)
+./zig-out/bin/praescientia-test-conn
+
+# Zig CLI ↔ Julia parity (Stage 4)
+./scripts/parity_check.sh --tools
+
+# RSA-PSS sign-verify interop (Stage 1)
 ./scripts/cross_verify.sh
 ```
 
-Produced binaries:
+Produced binaries (Stage 4 CLIs replace `scripts/kalshi_*.jl`):
 
-| Binary | Purpose |
-|--------|---------|
-| `zig-out/bin/praescientia-signtest` | Sign a message with RSA-PSS; output base64 signature |
-| `zig-out/bin/praescientia-verifytest` | Verify a base64 RSA-PSS signature against a public key + message |
+| Zig invocation | Replaces Julia |
+|----------------|----------------|
+| `zig build run-exchange -- status` | `julia --project=. scripts/kalshi_exchange.jl status` |
+| `zig build run-markets -- list --limit=10` | `julia --project=. scripts/kalshi_markets.jl list --limit=10` |
+| `zig build run-events -- list` | `julia --project=. scripts/kalshi_events.jl list` |
+| `zig build run-historical -- cutoff` | `julia --project=. scripts/kalshi_historical.jl cutoff` |
+| `zig build run-portfolio -- balance` | `julia --project=. scripts/kalshi_portfolio.jl balance` |
+| `zig build run-orders -- list` | `julia --project=. scripts/kalshi_orders.jl list` |
+| `zig build run-account -- limits` | `julia --project=. scripts/kalshi_account.jl limits` |
+| `zig build run-communications -- list_rfqs` | `julia --project=. scripts/kalshi_communications.jl list_rfqs` |
+| `zig build run-order-groups -- list` | `julia --project=. scripts/kalshi_order_groups.jl list` |
+| `zig build run-live-data -- milestones` | `julia --project=. scripts/kalshi_live_data.jl milestones` |
+| `zig build run-search -- series KXBTCD` | `julia --project=. scripts/kalshi_search.jl series KXBTCD` |
+| `zig build run-poll -- prices` | `julia --project=. scripts/poll_resolved_markets.jl` *(thin port; full harvester stays in Julia)* |
+| `./zig-out/bin/praescientia-signtest` | (no Julia equivalent) — Stage 1 RSA-PSS signing harness |
+| `./zig-out/bin/praescientia-verifytest` | (no Julia equivalent) — verify a base64 signature |
+| `./zig-out/bin/praescientia-test-conn` | (no Julia equivalent) — demo-API smoke check |
+
+All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 
 ## Philosophy
 

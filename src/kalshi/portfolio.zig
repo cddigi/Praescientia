@@ -68,6 +68,117 @@ pub fn fills(client: *Client, arena: Allocator, opts: ListOptions) !FillsList {
     return getJson(FillsList, client, arena, "/portfolio/fills", try queryFromList(arena, opts));
 }
 
+/// GET /portfolio/orders/resting_value — total value of all resting orders.
+pub fn restingValue(client: *Client, arena: Allocator) !std.json.Value {
+    return getJsonValue(client, arena, "/portfolio/orders/resting_value", &.{});
+}
+
+/// GET /portfolio/subaccounts/balances — balances for all subaccounts.
+pub fn subaccountsBalances(client: *Client, arena: Allocator) !std.json.Value {
+    return getJsonValue(client, arena, "/portfolio/subaccounts/balances", &.{});
+}
+
+pub const SubaccountTransfersOptions = struct {
+    limit: ?u32 = null,
+    cursor: ?[]const u8 = null,
+};
+
+/// GET /portfolio/subaccounts/transfers
+pub fn listSubaccountTransfers(client: *Client, arena: Allocator, opts: SubaccountTransfersOptions) !std.json.Value {
+    var q: std.array_list.Managed(QueryParam) = .init(arena);
+    if (opts.limit) |v| try q.append(.{ .key = "limit", .value = try std.fmt.allocPrint(arena, "{d}", .{v}) });
+    if (opts.cursor) |v| try q.append(.{ .key = "cursor", .value = v });
+    return getJsonValue(client, arena, "/portfolio/subaccounts/transfers", q.items);
+}
+
+/// GET /portfolio/subaccounts/{subaccount_id}/netting
+pub fn getNetting(client: *Client, arena: Allocator, subaccount_id: []const u8) !std.json.Value {
+    const path = try std.fmt.allocPrint(arena, "/portfolio/subaccounts/{s}/netting", .{subaccount_id});
+    return getJsonValue(client, arena, path, &.{});
+}
+
+/// POST /portfolio/subaccounts — body: {"name":"..."}
+pub fn createSubaccount(client: *Client, arena: Allocator, name: []const u8) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const Body = struct { name: []const u8 };
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    try std.json.Stringify.value(Body{ .name = name }, .{ .whitespace = .minified, .emit_null_optional_fields = false }, &aw.writer);
+    const resp = try client.request(arena, .{
+        .path = "/portfolio/subaccounts",
+        .method = .POST,
+        .body = aw.written(),
+    });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// POST /portfolio/subaccounts/transfers — body:
+/// {"from_subaccount_id":"...","to_subaccount_id":"...","amount":N}
+pub fn transferBetweenSubaccounts(
+    client: *Client,
+    arena: Allocator,
+    from_id: []const u8,
+    to_id: []const u8,
+    amount_cents: i64,
+) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const Body = struct {
+        from_subaccount_id: []const u8,
+        to_subaccount_id: []const u8,
+        amount: i64,
+    };
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    try std.json.Stringify.value(
+        Body{ .from_subaccount_id = from_id, .to_subaccount_id = to_id, .amount = amount_cents },
+        .{ .whitespace = .minified, .emit_null_optional_fields = false },
+        &aw.writer,
+    );
+    const resp = try client.request(arena, .{
+        .path = "/portfolio/subaccounts/transfers",
+        .method = .POST,
+        .body = aw.written(),
+    });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+/// PUT /portfolio/subaccounts/{subaccount_id}/netting — body: {"netting_enabled":bool}
+pub fn setNetting(
+    client: *Client,
+    arena: Allocator,
+    subaccount_id: []const u8,
+    enabled: bool,
+) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const Body = struct { netting_enabled: bool };
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    try std.json.Stringify.value(
+        Body{ .netting_enabled = enabled },
+        .{ .whitespace = .minified, .emit_null_optional_fields = false },
+        &aw.writer,
+    );
+    const path = try std.fmt.allocPrint(arena, "/portfolio/subaccounts/{s}/netting", .{subaccount_id});
+    const resp = try client.request(arena, .{
+        .path = path,
+        .method = .PUT,
+        .body = aw.written(),
+    });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
+fn getJsonValue(
+    client: *Client,
+    arena: Allocator,
+    path: []const u8,
+    query: []const QueryParam,
+) !std.json.Value {
+    if (!client.hasCredentials()) return error.MissingCredentials;
+    const resp = try client.request(arena, .{ .path = path, .query = query });
+    if (!resp.isSuccess()) return error.HttpStatus;
+    return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
+}
+
 fn getJson(
     comptime T: type,
     client: *Client,
@@ -134,4 +245,14 @@ test "parses /portfolio/fills fixture" {
 
     const parsed = try std.json.parseFromSliceLeaky(FillsList, a, fixture_fills, .{ .ignore_unknown_fields = true });
     try std.testing.expectEqual(@as(usize, 0), parsed.fills.len);
+}
+
+test {
+    _ = restingValue;
+    _ = subaccountsBalances;
+    _ = listSubaccountTransfers;
+    _ = getNetting;
+    _ = createSubaccount;
+    _ = transferBetweenSubaccounts;
+    _ = setNetting;
 }
