@@ -94,6 +94,44 @@ pub fn parseThesis(allocator: Allocator, json: []const u8) !ThesisManifest {
     };
 }
 
+/// Semantic checks on top of parseMarket. Length, charset, and range.
+pub fn validateMarket(m: *const MarketManifest) !void {
+    if (m.ticker.len == 0 or m.ticker.len > 64) return error.TickerLengthOutOfRange;
+    for (m.ticker) |c| {
+        const ok = (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '-';
+        if (!ok) return error.TickerHasInvalidChar;
+    }
+    if (m.price_delta_cents == 0 or m.price_delta_cents > 100) return error.PriceDeltaOutOfRange;
+}
+
+test "validateMarket accepts a well-formed manifest" {
+    const json = "{\"kind\":\"market\",\"ticker\":\"KXBTC-26\",\"trigger\":{\"price_delta_cents\":1}}";
+    var m = try parseMarket(std.testing.allocator, json);
+    defer m.deinit();
+    try validateMarket(&m);
+}
+
+test "validateMarket rejects an empty ticker" {
+    const json = "{\"kind\":\"market\",\"ticker\":\"\",\"trigger\":{\"price_delta_cents\":1}}";
+    var m = try parseMarket(std.testing.allocator, json);
+    defer m.deinit();
+    try std.testing.expectError(error.TickerLengthOutOfRange, validateMarket(&m));
+}
+
+test "validateMarket rejects a ticker with invalid characters" {
+    const json = "{\"kind\":\"market\",\"ticker\":\"kx bad\",\"trigger\":{\"price_delta_cents\":1}}";
+    var m = try parseMarket(std.testing.allocator, json);
+    defer m.deinit();
+    try std.testing.expectError(error.TickerHasInvalidChar, validateMarket(&m));
+}
+
+test "validateMarket rejects price_delta_cents = 0" {
+    const json = "{\"kind\":\"market\",\"ticker\":\"KX\",\"trigger\":{\"price_delta_cents\":0}}";
+    var m = try parseMarket(std.testing.allocator, json);
+    defer m.deinit();
+    try std.testing.expectError(error.PriceDeltaOutOfRange, validateMarket(&m));
+}
+
 test "parseMarket extracts ticker + price_delta_cents" {
     const json =
         \\{"kind":"market","ticker":"KXBTC-26APR10-T100000","trigger":{"price_delta_cents":1}}
