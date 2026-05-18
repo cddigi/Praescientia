@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Build the `kb/` knowledge-base substrate on top of the existing `state_chain.zig` + `txlog.zig` + `canonical_json.zig` primitives, per the validated design at `docs/plans/2026-05-17-state-chain-knowledge-base-design.md`.
+**Goal:** Build the `kb/` knowledge-base substrate on top of the existing `state_chain.zig` + `txlog.zig` + `canonical_json.zig` primitives, per the validated design at `2026-05-17-state-chain-knowledge-base-design.md` (sibling in `docs/plans/done/`).
 
 **Architecture:** New `src/kb/` module tree (`chain`, `branches`, `manifest`, `ingest`, `rollup`, `divergence`). Per-market substrate chains + per-thesis projection chains, both JSONL-backed using the existing txlog format. Git-like branches via `branches.json` metadata + one JSONL file per branch. `flock(2)` advisory locks for single-writer-per-chain. Read API returns zero-copy slices. Hooks into `src/kalshi/markets.zig` and `src/kalshi/orders.zig` are optional and configured per-deployment via a `kb_root` path.
 
@@ -2257,7 +2257,7 @@ These hold throughout:
 
 ## Execution
 
-Plan complete and saved to `docs/plans/2026-05-17-state-chain-knowledge-base-implementation.md`. Two execution options:
+Plan complete and archived at `docs/plans/done/2026-05-17-state-chain-knowledge-base-implementation.md`. Two execution options:
 
 **1. Subagent-Driven (this session)** — I dispatch a fresh subagent per task, review between tasks, fast iteration.
 
