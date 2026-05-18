@@ -735,9 +735,9 @@ pub fn append(self: *WriteHandle, canonical_json: []const u8) !*const txlog.Tx {
         .{ tx.tx_id, prev_hex, hash_hex, tx.payload },
     );
 
-    try self.file.seekFromEnd(io, 0);
-    try self.file.writeStreamingAll(io, line_buf.written());
-    try self.file.sync(io); // fdatasync on POSIX; fallback on others.
+    try self.file.seekFromEnd(self.io, 0);
+    try self.file.writeStreamingAll(self.io, line_buf.written());
+    try self.file.sync(self.io); // fdatasync on POSIX; fallback on others.
 
     return tx;
 }

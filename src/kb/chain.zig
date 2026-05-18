@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const txlog = @import("../txlog.zig");
 const branches_mod = @import("branches.zig");
 const Hash = @import("../state_chain.zig").Hash;
+const hash_hex_len = txlog.hash_hex_len;
 
 /// In-memory knowledge-base chain. Wraps a `txlog.TxLog` with a branch identity.
 ///
@@ -169,6 +170,32 @@ pub const WriteHandle = struct {
         self.chain.deinit();
         self.allocator.free(self.branch_file_name);
     }
+
+    pub fn append(self: *WriteHandle, canonical_json: []const u8) !*const txlog.Tx {
+        const tx = try self.chain.log.append(canonical_json);
+
+        var line_buf: std.Io.Writer.Allocating = .init(self.allocator);
+        defer line_buf.deinit();
+
+        // Emit exactly this one tx via the existing txlog wire format.
+        var prev_hex: [hash_hex_len]u8 = undefined;
+        var hash_hex: [hash_hex_len]u8 = undefined;
+        _ = std.fmt.bufPrint(&prev_hex, "{x}", .{tx.prev_hash}) catch unreachable;
+        _ = std.fmt.bufPrint(&hash_hex, "{x}", .{tx.hash}) catch unreachable;
+        try line_buf.writer.print(
+            "{{\"tx_id\":\"{s}\",\"prev_hash\":\"{s}\",\"hash\":\"{s}\",\"payload\":{s}}}\n",
+            .{ tx.tx_id, prev_hex, hash_hex, tx.payload },
+        );
+
+        // Append at end-of-file using positional writes (no seek-from-end on
+        // std.Io.File in Zig 0.16; positional writes also avoid races with
+        // any concurrent positioned readers we may add later).
+        const eof = try self.file.length(self.io);
+        try self.file.writePositionalAll(self.io, line_buf.written(), eof);
+        try self.file.sync(self.io); // fdatasync on POSIX; fallback on others.
+
+        return tx;
+    }
 };
 
 pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
@@ -241,4 +268,26 @@ test "openForWrite releases the lock on deinit" {
     // Second open must now succeed — the prior lock was released.
     var h2 = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
     defer h2.deinit();
+}
+
+test "append writes a JSONL line, fdatasyncs, and updates the in-memory chain" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+
+    var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h.deinit();
+
+    _ = try h.append("{\"kind\":\"market.reality\",\"ts\":1,\"yes_bid_cents\":50,\"yes_ask_cents\":51}");
+    try std.testing.expectEqual(@as(usize, 1), h.chain.len());
+
+    // File on disk has exactly one line.
+    const buf = try tmp.dir.readFileAlloc(io, "main.jsonl", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(buf);
+    var line_count: usize = 0;
+    for (buf) |c| if (c == '\n') {
+        line_count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), line_count);
 }
