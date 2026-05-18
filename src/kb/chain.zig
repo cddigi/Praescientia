@@ -155,3 +155,70 @@ test "tail returns last N entries; rangeByHash bounds inclusive" {
     // rangeByTime is stubbed; assert empty for now
     try std.testing.expectEqual(@as(usize, 0), chain.rangeByTime(0, 1).len);
 }
+
+pub const WriteHandle = struct {
+    allocator: Allocator,
+    chain: Chain,
+    file: std.Io.File, // holds the exclusive lock for the lifetime of the handle
+    io: std.Io,
+    dir: std.Io.Dir,
+    branch_file_name: []u8,
+
+    pub fn deinit(self: *WriteHandle) void {
+        // Closing the file releases the advisory lock (POSIX flock semantics).
+        self.file.close(self.io);
+        self.chain.deinit();
+        self.allocator.free(self.branch_file_name);
+    }
+};
+
+pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
+    var file_name_buf: [256]u8 = undefined;
+    const file_name = try std.fmt.bufPrint(&file_name_buf, "{s}.jsonl", .{branch});
+
+    var file = dir.openFile(io, file_name, .{ .mode = .read_write }) catch |err| switch (err) {
+        error.FileNotFound => try dir.createFile(io, file_name, .{ .read = true, .truncate = false }),
+        else => return err,
+    };
+    errdefer file.close(io);
+
+    // Advisory exclusive lock, non-blocking. tryLock returns false on contention;
+    // surface that as error.AlreadyLocked so callers can fail fast.
+    if (!try file.tryLock(io, .exclusive)) return error.AlreadyLocked;
+
+    // Load existing chain content. We hold the exclusive lock, so reading via the
+    // dir (separate fd, same inode) is race-free with any well-behaved writer.
+    const data = try dir.readFileAlloc(io, file_name, allocator, .unlimited);
+    defer allocator.free(data);
+
+    var log = try txlog.TxLog.parseSlice(allocator, data);
+    errdefer log.deinit();
+
+    return .{
+        .allocator = allocator,
+        .chain = .{
+            .allocator = allocator,
+            .log = log,
+            .branch_name = try allocator.dupe(u8, branch),
+        },
+        .file = file,
+        .io = io,
+        .dir = dir,
+        .branch_file_name = try allocator.dupe(u8, file_name),
+    };
+}
+
+test "openForWrite acquires an exclusive lock; second open fails fast" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    // Empty branch file is acceptable — chain is empty, head = null.
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+
+    var h1 = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h1.deinit();
+
+    const err = openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    try std.testing.expectError(error.AlreadyLocked, err);
+}
