@@ -18,6 +18,12 @@ pub const kalshi = struct {
     pub const live_data = @import("kalshi/live_data.zig");
 };
 
+pub const kb = struct {
+    pub const chain = @import("kb/chain.zig");
+    pub const branches = @import("kb/branches.zig");
+    pub const manifest = @import("kb/manifest.zig");
+};
+
 pub const canonical_json = @import("canonical_json.zig");
 pub const state_chain = @import("state_chain.zig");
 pub const txlog = @import("txlog.zig");
@@ -36,6 +42,9 @@ test {
     _ = kalshi.communications;
     _ = kalshi.order_groups;
     _ = kalshi.live_data;
+    _ = kb.chain;
+    _ = kb.branches;
+    _ = kb.manifest;
     _ = canonical_json;
     _ = state_chain;
     _ = txlog;
