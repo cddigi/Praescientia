@@ -35,7 +35,7 @@
 | `file.sync()` | `file.sync(io)` |
 | `file.close()` | `file.close(io)` (used inside `defer f.close(io);`) |
 | `file.seekFromEnd(n)` | `file.seekFromEnd(io, n)` |
-| `file.setEndPos(n)` | `file.setEndPos(io, n)` |
+| `file.setEndPos(n)` (pre-0.16 name) | `file.setLength(io, n)` (Zig 0.16) |
 | `std.time.nanoTimestamp()` | `std.Io.Clock.awake.now(io).nanoseconds` |
 | `std.time.milliTimestamp()` | `@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)` |
 | `std.posix.flock(fd, LOCK.EX \| LOCK.NB)` | `file.tryLock(io, .exclusive)` (returns `bool` instead of erroring) |
@@ -901,7 +901,7 @@ test "fork copies entries up to and including fork_at_hash into a new branch fil
         ,
     });
 
-    try fork(std.testing.allocator, tmp.dir, "main", fork_at, "exp-a");
+    try fork(std.testing.allocator, io, tmp.dir, "main", fork_at, "exp-a");
 
     // New branch file exists and has exactly 2 entries.
     const buf = try tmp.dir.readFileAlloc(io, "exp-a.jsonl", std.testing.allocator, .unlimited);
@@ -927,7 +927,7 @@ pub fn fork(
     new_branch_name: []const u8,
 ) !void {
     // 1) Open parent's JSONL, find fork_at_hash, slice entries up to (incl) that idx.
-    var parent_chain = try chain_mod.openRead(allocator, io, io, io, dir, parent_branch);
+    var parent_chain = try chain_mod.openRead(allocator, io, dir, parent_branch);
     defer parent_chain.deinit();
 
     var fork_idx: ?usize = null;
