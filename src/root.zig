@@ -22,6 +22,7 @@ pub const kb = struct {
     pub const chain = @import("kb/chain.zig");
     pub const branches = @import("kb/branches.zig");
     pub const manifest = @import("kb/manifest.zig");
+    pub const ingest = @import("kb/ingest.zig");
 };
 
 pub const canonical_json = @import("canonical_json.zig");
@@ -45,6 +46,7 @@ test {
     _ = kb.chain;
     _ = kb.branches;
     _ = kb.manifest;
+    _ = kb.ingest;
     _ = canonical_json;
     _ = state_chain;
     _ = txlog;
