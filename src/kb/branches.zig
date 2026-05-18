@@ -87,6 +87,45 @@ fn hexNibble(c: u8) !u8 {
     };
 }
 
+pub fn writeSlice(allocator: Allocator, bf: *const BranchesFile) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    const w = &aw.writer;
+
+    try w.print("{{\"active\":\"{s}\",\"branches\":[", .{bf.active});
+    for (bf.branches, 0..) |b, i| {
+        if (i > 0) try w.writeByte(',');
+        var head_hex: [hash_hex_len]u8 = undefined;
+        var parent_hex: [hash_hex_len]u8 = undefined;
+        _ = std.fmt.bufPrint(&head_hex, "{x}", .{b.head_hash}) catch unreachable;
+        _ = std.fmt.bufPrint(&parent_hex, "{x}", .{b.parent_hash}) catch unreachable;
+        try w.print(
+            "{{\"name\":\"{s}\",\"head_hash\":\"{s}\",\"parent_hash\":\"{s}\",\"parent_branch\":\"{s}\",\"created_ts_ms\":{d}}}",
+            .{ b.name, head_hex, parent_hex, b.parent_branch, b.created_ts_ms },
+        );
+    }
+    try w.writeAll("]}");
+    return aw.toOwnedSlice();
+}
+
+test "writeSlice + parseSlice round-trip is stable" {
+    const original_json =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":1747500000000}]}
+    ;
+    var bf = try parseSlice(std.testing.allocator, original_json);
+    defer bf.deinit();
+
+    const round = try writeSlice(std.testing.allocator, &bf);
+    defer std.testing.allocator.free(round);
+
+    var bf2 = try parseSlice(std.testing.allocator, round);
+    defer bf2.deinit();
+
+    try std.testing.expectEqualStrings(bf.active, bf2.active);
+    try std.testing.expectEqual(bf.branches.len, bf2.branches.len);
+    try std.testing.expectEqualSlices(u8, &bf.branches[0].head_hash, &bf2.branches[0].head_hash);
+}
+
 test "parseSlice round-trips a two-branch file" {
     const json =
         \\{"active":"main","branches":[
