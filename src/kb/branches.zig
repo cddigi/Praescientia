@@ -7,9 +7,18 @@ const Allocator = std.mem.Allocator;
 const Hash = @import("../state_chain.zig").Hash;
 const hash_hex_len = 64;
 
+/// Per-branch metadata persisted in `branches.json`.
+///
+/// `created_at_hash` is the hash at the moment this branch was created. It is
+/// NOT the current head — use `Chain.head()` for that. This field is
+/// fork-point metadata; it stays frozen for the lifetime of the branch.
+///
+/// Note: the on-disk JSON key remains `"head_hash"` for backwards compatibility
+/// with existing fixtures; only the in-memory field name was renamed to better
+/// reflect its actual semantics.
 pub const BranchInfo = struct {
     name: []const u8,
-    head_hash: Hash,
+    created_at_hash: Hash,
     parent_hash: Hash,
     parent_branch: []const u8, // empty string for the root branch
     created_ts_ms: u64,
@@ -48,14 +57,16 @@ pub fn parseSlice(allocator: Allocator, json: []const u8) !BranchesFile {
         const parent_branch = try allocator.dupe(u8, obj.get("parent_branch").?.string);
         errdefer allocator.free(parent_branch);
 
-        var head_hash: Hash = undefined;
-        try hexDecode(obj.get("head_hash").?.string, &head_hash);
+        // On-disk JSON key remains "head_hash" for backwards compatibility
+        // with existing fixtures; the in-memory field is `created_at_hash`.
+        var created_at_hash: Hash = undefined;
+        try hexDecode(obj.get("head_hash").?.string, &created_at_hash);
         var parent_hash: Hash = undefined;
         try hexDecode(obj.get("parent_hash").?.string, &parent_hash);
 
         branches[i] = .{
             .name = name,
-            .head_hash = head_hash,
+            .created_at_hash = created_at_hash,
             .parent_hash = parent_hash,
             .parent_branch = parent_branch,
             .created_ts_ms = @intCast(obj.get("created_ts_ms").?.integer),
@@ -87,7 +98,7 @@ fn hexNibble(c: u8) !u8 {
     };
 }
 
-fn validateBranchName(name: []const u8) !void {
+pub fn validateBranchName(name: []const u8) !void {
     if (name.len == 0) return error.InvalidBranchName;
     if (std.mem.eql(u8, name, ".")) return error.InvalidBranchName;
     if (std.mem.eql(u8, name, "..")) return error.InvalidBranchName;
@@ -111,9 +122,11 @@ pub fn writeSlice(allocator: Allocator, bf: *const BranchesFile) ![]u8 {
     try w.print("{{\"active\":\"{s}\",\"branches\":[", .{bf.active});
     for (bf.branches, 0..) |b, i| {
         if (i > 0) try w.writeByte(',');
+        // JSON key remains "head_hash" for backwards compatibility; in-memory
+        // field is `created_at_hash`.
         var head_hex: [hash_hex_len]u8 = undefined;
         var parent_hex: [hash_hex_len]u8 = undefined;
-        _ = std.fmt.bufPrint(&head_hex, "{x}", .{b.head_hash}) catch unreachable;
+        _ = std.fmt.bufPrint(&head_hex, "{x}", .{b.created_at_hash}) catch unreachable;
         _ = std.fmt.bufPrint(&parent_hex, "{x}", .{b.parent_hash}) catch unreachable;
         try w.print(
             "{{\"name\":\"{s}\",\"head_hash\":\"{s}\",\"parent_hash\":\"{s}\",\"parent_branch\":\"{s}\",\"created_ts_ms\":{d}}}",
@@ -141,7 +154,7 @@ test "writeSlice + parseSlice round-trip is stable" {
 
     try std.testing.expectEqualStrings(bf.active, bf2.active);
     try std.testing.expectEqual(bf.branches.len, bf2.branches.len);
-    try std.testing.expectEqualSlices(u8, &bf.branches[0].head_hash, &bf2.branches[0].head_hash);
+    try std.testing.expectEqualSlices(u8, &bf.branches[0].created_at_hash, &bf2.branches[0].created_at_hash);
 }
 
 test "parseSlice round-trips a two-branch file" {
@@ -171,7 +184,7 @@ test "writeSlice rejects branch names with JSON-special characters" {
     const branches = try sa.alloc(BranchInfo, 1);
     branches[0] = .{
         .name = try sa.dupe(u8, "evil\"name"),
-        .head_hash = @splat(0),
+        .created_at_hash = @splat(0),
         .parent_hash = @splat(0),
         .parent_branch = try sa.dupe(u8, ""),
         .created_ts_ms = 0,
@@ -213,7 +226,7 @@ test "atomicWrite produces a parseable branches.json" {
     const branches = try sa.alloc(BranchInfo, 1);
     branches[0] = .{
         .name = try sa.dupe(u8, "main"),
-        .head_hash = @splat(0),
+        .created_at_hash = @splat(0),
         .parent_hash = @splat(0),
         .parent_branch = try sa.dupe(u8, ""),
         .created_ts_ms = 1747500000000,
@@ -310,7 +323,7 @@ pub fn fork(
     const wall_ns = std.Io.Clock.real.now(io).nanoseconds;
     new_list[bf.branches.len] = .{
         .name = new_name,
-        .head_hash = fork_at_hash,
+        .created_at_hash = fork_at_hash,
         .parent_hash = fork_at_hash,
         .parent_branch = new_parent_branch,
         .created_ts_ms = @intCast(@divFloor(wall_ns, 1_000_000)),

@@ -72,6 +72,7 @@ pub const Chain = struct {
 };
 
 pub fn openRead(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !Chain {
+    try branches_mod.validateBranchName(branch);
     var file_name_buf: [256]u8 = undefined;
     const file_name = try std.fmt.bufPrint(&file_name_buf, "{s}.jsonl", .{branch});
 
@@ -216,6 +217,7 @@ pub const WriteHandle = struct {
 };
 
 pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
+    try branches_mod.validateBranchName(branch);
     var file_name_buf: [256]u8 = undefined;
     const file_name = try std.fmt.bufPrint(&file_name_buf, "{s}.jsonl", .{branch});
 
@@ -228,6 +230,9 @@ pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: [
     // Advisory exclusive lock, non-blocking. tryLock returns false on contention;
     // surface that as error.AlreadyLocked so callers can fail fast.
     if (!try file.tryLock(io, .exclusive)) return error.AlreadyLocked;
+
+    // Self-heal a torn tail from a prior crashed writer.
+    try recoverTornTail(allocator, io, dir, file_name);
 
     // Load existing chain content. We hold the exclusive lock, so reading via the
     // dir (separate fd, same inode) is race-free with any well-behaved writer.
@@ -288,6 +293,26 @@ test "openForWrite releases the lock on deinit" {
     defer h2.deinit();
 }
 
+test "openRead rejects invalid branch names" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try std.testing.expectError(
+        error.InvalidBranchName,
+        openRead(std.testing.allocator, io, tmp.dir, "../evil"),
+    );
+}
+
+test "openForWrite rejects invalid branch names" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try std.testing.expectError(
+        error.InvalidBranchName,
+        openForWrite(std.testing.allocator, io, tmp.dir, "../evil"),
+    );
+}
+
 test "append rejects further writes when WriteHandle is poisoned" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -329,24 +354,21 @@ test "append writes a JSONL line, fdatasyncs, and updates the in-memory chain" {
 /// Recover from a torn write at the tail of `branch_file_name`.
 ///
 /// Opens the file read+write and inspects its current contents through a
-/// separate read fd on the same inode (race-free here because recovery runs
-/// before any chain lock is acquired). Anything after the last `\n` is a torn
-/// partial line and is truncated. If the remaining content still fails
-/// hash-chain validation (rare: power loss between write and `fsync`), the
-/// last complete line is peeled off and the file is truncated to the
-/// preceding newline.
-///
-/// Note: the `std.testing.allocator` use here is intentional and matches the
-/// plan's known follow-up to thread an allocator parameter into this function
-/// once `openForWrite` invokes it (Task 1.7+ integration).
-pub fn recoverTornTail(io: std.Io, dir: std.Io.Dir, branch_file_name: []const u8) !void {
+/// separate read fd on the same inode. When invoked from `openForWrite` this
+/// is race-free because the caller holds the exclusive advisory lock; the
+/// separate-fd read just observes bytes on the same inode. Anything after
+/// the last `\n` is a torn partial line and is truncated. If the remaining
+/// content still fails hash-chain validation (rare: power loss between write
+/// and `fsync`), the last complete line is peeled off and the file is
+/// truncated to the preceding newline.
+pub fn recoverTornTail(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch_file_name: []const u8) !void {
     var file = try dir.openFile(io, branch_file_name, .{ .mode = .read_write });
     defer file.close(io);
 
-    // Read current contents via a separate fd through the directory — same inode,
-    // no lock needed since recovery runs before any chain lock is acquired.
-    const data = try dir.readFileAlloc(io, branch_file_name, std.testing.allocator, .unlimited);
-    defer std.testing.allocator.free(data);
+    // Read current contents via a separate fd through the directory — same
+    // inode. Safe under the caller's lock (see doc comment).
+    const data = try dir.readFileAlloc(io, branch_file_name, allocator, .unlimited);
+    defer allocator.free(data);
 
     if (data.len == 0) return;
 
@@ -365,7 +387,7 @@ pub fn recoverTornTail(io: std.Io, dir: std.Io.Dir, branch_file_name: []const u8
     // Additionally, validate the truncated chain — if the LAST complete line
     // is itself hash-broken (rare: power loss between write and sync), peel it.
     const trimmed = data[0..valid_len];
-    var probe = txlog.TxLog.parseSlice(std.testing.allocator, trimmed) catch |err| switch (err) {
+    var probe = txlog.TxLog.parseSlice(allocator, trimmed) catch |err| switch (err) {
         error.HashMismatch, error.PrevHashBroken => {
             // Drop the last newline-terminated line and re-validate.
             // `trimmed` ends in '\n' at index valid_len - 1; search before it.
@@ -400,7 +422,7 @@ test "recoverTornTail truncates a malformed final line" {
 
     try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = full.items });
 
-    try recoverTornTail(io, tmp.dir, "main.jsonl");
+    try recoverTornTail(std.testing.allocator, io, tmp.dir, "main.jsonl");
 
     // After recovery, file parses cleanly and has exactly 2 entries.
     const after = try tmp.dir.readFileAlloc(io, "main.jsonl", std.testing.allocator, .unlimited);
@@ -408,6 +430,33 @@ test "recoverTornTail truncates a malformed final line" {
     var parsed = try txlog.TxLog.parseSlice(std.testing.allocator, after);
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 2), parsed.len());
+}
+
+test "openForWrite self-heals a torn-tail chain" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    // Build a valid 2-line JSONL via TxLog, then append a torn line.
+    var src: txlog.TxLog = .init(std.testing.allocator);
+    defer src.deinit();
+    _ = try src.append("{\"v\":1}");
+    _ = try src.append("{\"v\":2}");
+
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try src.writeAll(&aw.writer);
+
+    var full = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer full.deinit();
+    try full.appendSlice(aw.written());
+    try full.appendSlice("{\"tx_id\":\"tx_TORN");
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = full.items });
+
+    // openForWrite must now self-heal and return a handle with 2 entries.
+    var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h.deinit();
+    try std.testing.expectEqual(@as(usize, 2), h.chain.len());
 }
 
 test "golden lifecycle: write 3 -> fork at idx1 -> switchActive -> recover torn tail" {
@@ -464,7 +513,7 @@ test "golden lifecycle: write 3 -> fork at idx1 -> switchActive -> recover torn 
         try f.writePositionalAll(io, "{\"tx_id\":\"tx_TORN_", eof);
     }
 
-    try recoverTornTail(io, tmp.dir, "exp-a.jsonl");
+    try recoverTornTail(std.testing.allocator, io, tmp.dir, "exp-a.jsonl");
 
     var exp_a_recovered = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
     defer exp_a_recovered.deinit();
