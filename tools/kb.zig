@@ -20,6 +20,7 @@ const chain_mod = kb.chain;
 const branches_mod = kb.branches;
 const divergence_mod = kb.divergence;
 const init_mod = kb.init;
+const predict_mod = kb.predict;
 const Hash = praescientia.state_chain.Hash;
 
 pub fn main(init: std.process.Init) !u8 {
@@ -29,7 +30,43 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "fork", .description = "Fork a branch at a given hash into a new branch", .run = cmdFork },
         .{ .name = "divergence", .description = "Temporal divergence between a prediction and reality chain", .run = cmdDivergence },
         .{ .name = "init", .description = "Bootstrap a fresh kb_root directory tree (--with-sample for skeleton data)", .run = cmdInit },
+        .{ .name = "predict", .description = "Append a thesis prediction (--confidence-bp=N, optional --rationale=)", .run = cmdPredict },
     });
+}
+
+fn cmdPredict(ctx: *common.Context) !u8 {
+    const thesis_id = ctx.positional(0) orelse {
+        try ctx.stderr.print("usage: praescientia-kb predict <thesis-id> --confidence-bp=N [--rationale=\"...\"]\n", .{});
+        return 2;
+    };
+    const conf_str = ctx.flagValue("--confidence-bp") orelse {
+        try ctx.stderr.print("--confidence-bp is required\n", .{});
+        return 2;
+    };
+    const confidence_bp = std.fmt.parseInt(u32, conf_str, 10) catch {
+        try ctx.stderr.print("--confidence-bp must be an integer\n", .{});
+        return 2;
+    };
+    if (confidence_bp == 0 or confidence_bp > 10000) {
+        try ctx.stderr.print("--confidence-bp must be in [1, 10000]\n", .{});
+        return 2;
+    }
+    const rationale = ctx.flagValue("--rationale") orelse "";
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    predict_mod.writePrediction(ctx.gpa, ctx.io, kb_root, thesis_id, confidence_bp, rationale) catch |err| {
+        try ctx.stderr.print("predict failed: {t}\n", .{err});
+        return 1;
+    };
+
+    try ctx.stdout.print("wrote prediction for thesis '{s}' at confidence={d} bp\n", .{ thesis_id, confidence_bp });
+    return 0;
 }
 
 fn cmdInit(ctx: *common.Context) !u8 {
