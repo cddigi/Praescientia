@@ -52,7 +52,10 @@ pub fn observeMarket(
 
     // Predicate: first observation always fires; otherwise compare bid delta.
     const fires = prev_yes_bid == null or absDeltaU32(prev_yes_bid.?, snap.yes_bid_cents) >= manifest.price_delta_cents;
-    if (!fires) return false;
+    if (!fires) {
+        @import("metrics.zig").bumpObserveSkipped(.price_delta_below_threshold);
+        return false;
+    }
 
     // Build the canonical-JSON payload. Keys are pre-sorted alphabetically so
     // the line stays hash-stable without a separate canonical_json round-trip.
@@ -314,7 +317,10 @@ pub fn recomputeThesisReality(
     }
     if (prev_agg) |p| {
         const delta = if (p > result.aggregate_yes_cents) p - result.aggregate_yes_cents else result.aggregate_yes_cents - p;
-        if (delta < 1) return false;
+        if (delta < 1) {
+            @import("metrics.zig").bumpObserveSkipped(.aggregate_unchanged);
+            return false;
+        }
     }
 
     // Emit canonical-ordered JSON: aggregate_yes_cents, kind, rollup_fn,

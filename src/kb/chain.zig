@@ -240,7 +240,10 @@ pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: [
 
     // Advisory exclusive lock, non-blocking. tryLock returns false on contention;
     // surface that as error.AlreadyLocked so callers can fail fast.
-    if (!try file.tryLock(io, .exclusive)) return error.AlreadyLocked;
+    if (!try file.tryLock(io, .exclusive)) {
+        metrics.bumpLockContention();
+        return error.AlreadyLocked;
+    }
 
     // Self-heal a torn tail from a prior crashed writer.
     try recoverTornTail(allocator, io, dir, file_name);
@@ -388,11 +391,13 @@ pub fn recoverTornTail(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch
     if (last_nl == null) {
         // No newline at all — the entire file is a torn partial line.
         try file.setLength(io, 0);
+        metrics.bumpTornTail();
         return;
     }
     const valid_len = last_nl.? + 1;
     if (valid_len < data.len) {
         try file.setLength(io, valid_len);
+        metrics.bumpTornTail();
     }
 
     // Additionally, validate the truncated chain — if the LAST complete line
@@ -405,6 +410,7 @@ pub fn recoverTornTail(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch
             const prior_nl = std.mem.lastIndexOfScalar(u8, trimmed[0 .. valid_len - 1], '\n');
             const new_len: usize = if (prior_nl) |i| i + 1 else 0;
             try file.setLength(io, new_len);
+            metrics.bumpTornTail();
             return;
         },
         else => return err,
