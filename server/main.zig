@@ -39,6 +39,7 @@ pub fn main(init: std.process.Init) !u8 {
     var port: u16 = 8080;
     var env: kalshi.client.Env = .demo;
     var verbose = false;
+    var kb_root_path: ?[]const u8 = null;
 
     for (argv[1..]) |a| {
         if (std.mem.startsWith(u8, a, "--port=")) {
@@ -46,6 +47,8 @@ pub fn main(init: std.process.Init) !u8 {
                 try stderr.print("invalid --port value: {s}\n", .{a["--port=".len..]});
                 return 2;
             };
+        } else if (std.mem.startsWith(u8, a, "--kb-root=")) {
+            kb_root_path = a["--kb-root=".len..];
         } else if (std.mem.eql(u8, a, "--live")) {
             env = .live;
         } else if (std.mem.eql(u8, a, "--demo")) {
@@ -54,12 +57,12 @@ pub fn main(init: std.process.Init) !u8 {
             verbose = true;
         } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             try stderr.print(
-                \\Usage: praescientia-server [--port=N] [--demo|--live] [--verbose]
+                \\Usage: praescientia-server [--port=N] [--demo|--live] [--kb-root=PATH] [--verbose]
                 \\
-                \\Defaults: --port=8080 --demo
+                \\Defaults: --port=8080 --demo  (kb routes disabled until --kb-root is set)
                 \\
                 \\Dashboard is served at http://localhost:<port>/.
-                \\API routes live under /api/kalshi/*.
+                \\API routes live under /api/kalshi/* and /api/kb/* (when --kb-root is set).
                 \\
             , .{});
             return 0;
@@ -94,6 +97,7 @@ pub fn main(init: std.process.Init) !u8 {
         \\  Server:       http://localhost:{d}
         \\  Dashboard:    http://localhost:{d}/
         \\  Credentials:  {s}
+        \\  KB root:      {s}
         \\============================================================
         \\
     , .{
@@ -101,6 +105,7 @@ pub fn main(init: std.process.Init) !u8 {
         port,
         port,
         if (key_id != null and pem != null) "yes" else "public-only",
+        kb_root_path orelse "(disabled)",
     });
     try stdout.flush();
 
@@ -112,11 +117,18 @@ pub fn main(init: std.process.Init) !u8 {
             try stderr.flush();
             continue;
         };
-        _ = Io.async(io, handleConnection, .{ gpa, io, &client, stream, verbose });
+        _ = Io.async(io, handleConnection, .{ gpa, io, &client, stream, verbose, kb_root_path });
     }
 }
 
-fn handleConnection(gpa: Allocator, io: Io, client: *kalshi.client.Client, stream: std.Io.net.Stream, verbose: bool) void {
+fn handleConnection(
+    gpa: Allocator,
+    io: Io,
+    client: *kalshi.client.Client,
+    stream: std.Io.net.Stream,
+    verbose: bool,
+    kb_root_path: ?[]const u8,
+) void {
     defer stream.close(io);
 
     var read_buf: [16 * 1024]u8 = undefined;
@@ -131,7 +143,7 @@ fn handleConnection(gpa: Allocator, io: Io, client: *kalshi.client.Client, strea
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
 
-        handleRequest(arena.allocator(), io, client, &request, verbose) catch |e| {
+        handleRequest(arena.allocator(), io, client, &request, verbose, kb_root_path) catch |e| {
             if (verbose) std.debug.print("handler error: {s}\n", .{@errorName(e)});
             // Bail on this connection; client will reconnect.
             break;
@@ -147,6 +159,7 @@ fn handleRequest(
     client: *kalshi.client.Client,
     request: *std.http.Server.Request,
     verbose: bool,
+    kb_root_path: ?[]const u8,
 ) !void {
     const target = request.head.target;
     const method = request.head.method;
@@ -192,6 +205,7 @@ fn handleRequest(
         .query = query,
         .params = params,
         .param_count = hit.param_count,
+        .kb_root_path = kb_root_path,
     };
     try hit.route.handler(&ctx);
 }

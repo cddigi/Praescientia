@@ -12,6 +12,7 @@ const praescientia = @import("praescientia");
 
 pub const kalshi = praescientia.kalshi;
 pub const Client = kalshi.client.Client;
+pub const kb = praescientia.kb;
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -31,6 +32,9 @@ pub const RequestCtx = struct {
     /// Captured path placeholders in declaration order.
     params: [max_path_params][]const u8,
     param_count: usize,
+    /// Root of the knowledge-base directory tree (containing `markets/` and
+    /// `theses/`). `null` disables /api/kb/* — those routes return 503.
+    kb_root_path: ?[]const u8 = null,
 
     pub fn param(self: *const RequestCtx, i: usize) []const u8 {
         std.debug.assert(i < self.param_count);
@@ -86,6 +90,10 @@ pub const routes = [_]Route{
     // Search / Series
     .{ .method = .GET, .pattern = "/api/kalshi/search/tags", .handler = searchTags },
     .{ .method = .GET, .pattern = "/api/kalshi/series/{ticker}", .handler = seriesGet },
+    // Knowledge base
+    .{ .method = .GET, .pattern = "/api/kb/markets/{ticker}/head", .handler = kbMarketHead },
+    .{ .method = .GET, .pattern = "/api/kb/theses/{id}/divergence", .handler = kbThesisDivergence },
+    .{ .method = .GET, .pattern = "/api/kb/theses/{id}/branches", .handler = kbThesisBranches },
 };
 
 /// Look up the request method + path against `routes`. Returns null on miss.
@@ -220,6 +228,134 @@ fn searchTags(ctx: *RequestCtx) !void {
 fn seriesGet(ctx: *RequestCtx) !void {
     const path = try std.fmt.allocPrint(ctx.arena, "/series/{s}", .{ctx.param(0)});
     return proxyGet(ctx, path);
+}
+
+// ----- Knowledge-base handlers ----------------------------------------------
+
+fn requireKbRoot(ctx: *RequestCtx) !?std.Io.Dir {
+    const path = ctx.kb_root_path orelse {
+        try respondError(ctx, "kb_root is not configured (start praescientia-server with --kb-root=PATH)", .service_unavailable);
+        return null;
+    };
+    return std.Io.Dir.cwd().openDir(ctx.io, path, .{ .iterate = false }) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "open kb_root '{s}': {t}", .{ path, err });
+        try respondError(ctx, msg, .internal_server_error);
+        return null;
+    };
+}
+
+fn kbMarketHead(ctx: *RequestCtx) !void {
+    var root = (try requireKbRoot(ctx)) orelse return;
+    defer root.close(ctx.io);
+
+    const ticker = ctx.param(0);
+    const sub_path = try std.fmt.allocPrint(ctx.arena, "markets/{s}/reality", .{ticker});
+    var reality_dir = root.openDir(ctx.io, sub_path, .{ .iterate = false }) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "no reality chain for {s}: {t}", .{ ticker, err });
+        return respondError(ctx, msg, .not_found);
+    };
+    defer reality_dir.close(ctx.io);
+
+    var chain = kb.chain.openRead(ctx.arena, ctx.io, reality_dir, "main") catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "open chain: {t}", .{err});
+        return respondError(ctx, msg, .internal_server_error);
+    };
+    defer chain.deinit();
+
+    var body: std.array_list.Managed(u8) = .init(ctx.arena);
+    try body.appendSlice("{\"ticker\":");
+    try writeJsonString(&body, ticker);
+    try body.print(",\"length\":{d},\"head\":", .{chain.len()});
+    if (chain.head()) |h| {
+        var hex: [64]u8 = undefined;
+        _ = std.fmt.bufPrint(&hex, "{x}", .{h}) catch unreachable;
+        try writeJsonString(&body, &hex);
+    } else {
+        try body.appendSlice("null");
+    }
+    try body.appendSlice(",\"tail\":[");
+    for (chain.tail(3), 0..) |tx, i| {
+        if (i > 0) try body.append(',');
+        try body.appendSlice(tx.payload);
+    }
+    try body.appendSlice("]}");
+    return respondOk(ctx, body.items);
+}
+
+fn kbThesisBranches(ctx: *RequestCtx) !void {
+    var root = (try requireKbRoot(ctx)) orelse return;
+    defer root.close(ctx.io);
+
+    const id = ctx.param(0);
+    const sub_path = try std.fmt.allocPrint(ctx.arena, "theses/{s}/reality", .{id});
+    var reality_dir = root.openDir(ctx.io, sub_path, .{ .iterate = false }) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "no reality chain for thesis {s}: {t}", .{ id, err });
+        return respondError(ctx, msg, .not_found);
+    };
+    defer reality_dir.close(ctx.io);
+
+    const meta_buf = reality_dir.readFileAlloc(ctx.io, "branches.json", ctx.arena, .unlimited) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "read branches.json: {t}", .{err});
+        return respondError(ctx, msg, .internal_server_error);
+    };
+    // Pass the file through as `data`; it's already canonical JSON.
+    return respondOk(ctx, meta_buf);
+}
+
+fn kbThesisDivergence(ctx: *RequestCtx) !void {
+    var root = (try requireKbRoot(ctx)) orelse return;
+    defer root.close(ctx.io);
+
+    const id = ctx.param(0);
+
+    var threshold_bp: u32 = 1000;
+    if (ctx.queryParam("threshold_bp")) |v| {
+        threshold_bp = std.fmt.parseInt(u32, v, 10) catch {
+            return respondError(ctx, "threshold_bp must be an integer", .bad_request);
+        };
+    }
+
+    const pred_path = try std.fmt.allocPrint(ctx.arena, "theses/{s}/prediction", .{id});
+    var pred_dir = root.openDir(ctx.io, pred_path, .{ .iterate = false }) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "no prediction chain for thesis {s}: {t}", .{ id, err });
+        return respondError(ctx, msg, .not_found);
+    };
+    defer pred_dir.close(ctx.io);
+
+    const real_path = try std.fmt.allocPrint(ctx.arena, "theses/{s}/reality", .{id});
+    var real_dir = root.openDir(ctx.io, real_path, .{ .iterate = false }) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "no reality chain for thesis {s}: {t}", .{ id, err });
+        return respondError(ctx, msg, .not_found);
+    };
+    defer real_dir.close(ctx.io);
+
+    var pred = kb.chain.openRead(ctx.arena, ctx.io, pred_dir, "main") catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "open prediction: {t}", .{err});
+        return respondError(ctx, msg, .internal_server_error);
+    };
+    defer pred.deinit();
+    var real = kb.chain.openRead(ctx.arena, ctx.io, real_dir, "main") catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "open reality: {t}", .{err});
+        return respondError(ctx, msg, .internal_server_error);
+    };
+    defer real.deinit();
+
+    const d = kb.divergence.temporalDivergence(ctx.arena, &pred, &real, threshold_bp) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "divergence: {t}", .{err});
+        return respondError(ctx, msg, .internal_server_error);
+    };
+
+    var body: std.array_list.Managed(u8) = .init(ctx.arena);
+    try body.appendSlice("{\"thesis_id\":");
+    try writeJsonString(&body, id);
+    try body.print(",\"threshold_bp\":{d},\"drift_amount_bp\":{d},\"first_drift_idx\":", .{ d.threshold_bp, d.drift_amount_bp });
+    if (d.first_drift_idx) |idx| {
+        try body.print("{d}", .{idx});
+    } else {
+        try body.appendSlice("null");
+    }
+    try body.appendSlice("}");
+    return respondOk(ctx, body.items);
 }
 
 // ----- Proxy helpers ---------------------------------------------------------
@@ -416,6 +552,23 @@ test "match: every Julia route in the docstring has a Zig handler" {
             return error.MissingRoute;
         }
     }
+}
+
+test "match: kb routes are wired up and capture path params" {
+    var params: [max_path_params][]const u8 = undefined;
+
+    const head = match(.GET, "/api/kb/markets/KXBTC/head", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/markets/{ticker}/head", head.route.pattern);
+    try std.testing.expectEqual(@as(usize, 1), head.param_count);
+    try std.testing.expectEqualStrings("KXBTC", params[0]);
+
+    const div = match(.GET, "/api/kb/theses/fed-cuts-jun/divergence", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/theses/{id}/divergence", div.route.pattern);
+    try std.testing.expectEqualStrings("fed-cuts-jun", params[0]);
+
+    const br = match(.GET, "/api/kb/theses/fed-cuts-jun/branches", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/theses/{id}/branches", br.route.pattern);
+    try std.testing.expectEqualStrings("fed-cuts-jun", params[0]);
 }
 
 test "appendIso8601Now produces YYYY-MM-DDTHH:MM:SSZ" {
