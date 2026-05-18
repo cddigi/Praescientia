@@ -180,3 +180,51 @@ test "writeSlice rejects branch names with JSON-special characters" {
 
     try std.testing.expectError(error.InvalidBranchName, writeSlice(std.testing.allocator, &bf));
 }
+
+pub fn atomicWrite(dir: std.Io.Dir, io: std.Io, bf: *const BranchesFile, scratch: Allocator) !void {
+    const bytes = try writeSlice(scratch, bf);
+    defer scratch.free(bytes);
+
+    var tmp_name_buf: [64]u8 = undefined;
+    const nanos = std.Io.Clock.awake.now(io).nanoseconds;
+    const tmp_name = try std.fmt.bufPrint(&tmp_name_buf, ".branches.json.tmp.{d}", .{nanos});
+
+    {
+        var f = try dir.createFile(io, tmp_name, .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io, bytes);
+        try f.sync(io);
+    }
+    try dir.rename(tmp_name, dir, "branches.json", io);
+}
+
+test "atomicWrite produces a parseable branches.json" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const sa = arena.allocator();
+
+    const branches = try sa.alloc(BranchInfo, 1);
+    branches[0] = .{
+        .name = try sa.dupe(u8, "main"),
+        .head_hash = @splat(0),
+        .parent_hash = @splat(0),
+        .parent_branch = try sa.dupe(u8, ""),
+        .created_ts_ms = 1747500000000,
+    };
+    const bf = BranchesFile{
+        .allocator = sa,
+        .active = try sa.dupe(u8, "main"),
+        .branches = branches,
+    };
+
+    try atomicWrite(tmp.dir, std.testing.io, &bf, std.testing.allocator);
+
+    const buf = try tmp.dir.readFileAlloc(std.testing.io, "branches.json", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(buf);
+    var parsed = try parseSlice(std.testing.allocator, buf);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("main", parsed.active);
+}
