@@ -161,7 +161,6 @@ pub const WriteHandle = struct {
     chain: Chain,
     file: std.Io.File, // holds the exclusive lock for the lifetime of the handle
     io: std.Io,
-    dir: std.Io.Dir,
     branch_file_name: []u8,
 
     pub fn deinit(self: *WriteHandle) void {
@@ -194,17 +193,22 @@ pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: [
     var log = try txlog.TxLog.parseSlice(allocator, data);
     errdefer log.deinit();
 
+    const branch_file_name_owned = try allocator.dupe(u8, file_name);
+    errdefer allocator.free(branch_file_name_owned);
+
+    const branch_name_owned = try allocator.dupe(u8, branch);
+    // No errdefer needed for branch_name_owned — this is the last fallible op.
+
     return .{
         .allocator = allocator,
         .chain = .{
             .allocator = allocator,
             .log = log,
-            .branch_name = try allocator.dupe(u8, branch),
+            .branch_name = branch_name_owned,
         },
         .file = file,
         .io = io,
-        .dir = dir,
-        .branch_file_name = try allocator.dupe(u8, file_name),
+        .branch_file_name = branch_file_name_owned,
     };
 }
 
@@ -221,4 +225,20 @@ test "openForWrite acquires an exclusive lock; second open fails fast" {
 
     const err = openForWrite(std.testing.allocator, io, tmp.dir, "main");
     try std.testing.expectError(error.AlreadyLocked, err);
+}
+
+test "openForWrite releases the lock on deinit" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+
+    {
+        var h1 = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+        h1.deinit(); // explicit deinit before scope exit
+    }
+
+    // Second open must now succeed — the prior lock was released.
+    var h2 = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h2.deinit();
 }
