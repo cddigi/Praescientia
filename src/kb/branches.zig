@@ -445,6 +445,7 @@ pub fn switchActive(
     dir: std.Io.Dir,
     branch_name: []const u8,
 ) !void {
+    try validateBranchName(branch_name);
     const buf = try dir.readFileAlloc(io, "branches.json", allocator, .unlimited);
     defer allocator.free(buf);
     var bf = try parseSlice(allocator, buf);
@@ -459,8 +460,9 @@ pub fn switchActive(
     }
     if (!found) return error.UnknownBranch;
 
+    const new_active = try allocator.dupe(u8, branch_name);
     allocator.free(bf.active);
-    bf.active = try allocator.dupe(u8, branch_name);
+    bf.active = new_active;
     try atomicWrite(dir, io, &bf, allocator);
 }
 
@@ -490,5 +492,21 @@ test "switchActive flips branches.json.active and errors on unknown branch" {
     try std.testing.expectError(
         error.UnknownBranch,
         switchActive(std.testing.allocator, io, tmp.dir, "nope"),
+    );
+}
+
+test "switchActive rejects invalid branch names" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+    try std.testing.expectError(
+        error.InvalidBranchName,
+        switchActive(std.testing.allocator, io, tmp.dir, "../evil"),
     );
 }
