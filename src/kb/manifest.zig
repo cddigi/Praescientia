@@ -45,11 +45,15 @@ pub fn parseMarket(allocator: Allocator, json: []const u8) !MarketManifest {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
     defer parsed.deinit();
     const root = parsed.value.object;
-    if (!std.mem.eql(u8, root.get("kind").?.string, "market")) return error.WrongManifestKind;
+    const kind = (root.get("kind") orelse return error.MissingKind).string;
+    if (!std.mem.eql(u8, kind, "market")) return error.WrongManifestKind;
+    const ticker_v = root.get("ticker") orelse return error.MissingTicker;
+    const trigger = (root.get("trigger") orelse return error.MissingTrigger).object;
+    const pd = trigger.get("price_delta_cents") orelse return error.MissingPriceDelta;
     return .{
         .allocator = allocator,
-        .ticker = try allocator.dupe(u8, root.get("ticker").?.string),
-        .price_delta_cents = @intCast(root.get("trigger").?.object.get("price_delta_cents").?.integer),
+        .ticker = try allocator.dupe(u8, ticker_v.string),
+        .price_delta_cents = @intCast(pd.integer),
     };
 }
 
@@ -90,6 +94,21 @@ test "parseMarket extracts ticker + price_delta_cents" {
     defer m.deinit();
     try std.testing.expectEqualStrings("KXBTC-26APR10-T100000", m.ticker);
     try std.testing.expectEqual(@as(u32, 1), m.price_delta_cents);
+}
+
+test "parseMarket returns MissingTicker when ticker is absent" {
+    const json = "{\"kind\":\"market\",\"trigger\":{\"price_delta_cents\":1}}";
+    try std.testing.expectError(error.MissingTicker, parseMarket(std.testing.allocator, json));
+}
+
+test "parseMarket returns MissingTrigger when trigger is absent" {
+    const json = "{\"kind\":\"market\",\"ticker\":\"KXTEST\"}";
+    try std.testing.expectError(error.MissingTrigger, parseMarket(std.testing.allocator, json));
+}
+
+test "parseMarket returns MissingPriceDelta when trigger.price_delta_cents is absent" {
+    const json = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{}}";
+    try std.testing.expectError(error.MissingPriceDelta, parseMarket(std.testing.allocator, json));
 }
 
 test "parseThesis reads market_set + weights in parallel" {
