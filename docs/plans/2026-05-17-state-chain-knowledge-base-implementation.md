@@ -12,7 +12,45 @@
 
 ## Conventions
 
-**Test command (project-wide):** `zig build test --summary all` runs every inline test in `src/`, `server/`, and `tools/common.zig`. New `src/kb/*.zig` modules become part of the library test surface as soon as they're imported from `src/root.zig`.
+> **REVISED 2026-05-17 after Task 1.4** — the plan was originally drafted against a pre-0.16 Zig stdlib. Zig 0.16 reorganized file/clock APIs into `std.Io.*` and threads an explicit `io: std.Io` parameter through every filesystem operation. The Zig 0.16 API map below is authoritative for Tasks 1.4 onward. Earlier tasks (1.1–1.3) didn't touch the filesystem and don't need re-translation.
+
+### Zig 0.16 stdlib API map (authoritative for this plan)
+
+| Was (pre-0.16) | Is (Zig 0.16) |
+|---|---|
+| `std.fs.Dir` | `std.Io.Dir` |
+| `std.fs.File` | `std.Io.File` |
+| `std.fs.cwd()` | `std.Io.Dir.cwd()` |
+| `dir.createFile(name, opts)` | `dir.createFile(io, name, opts)` |
+| `dir.openFile(name, opts)` | `dir.openFile(io, name, opts)` |
+| `dir.openDir(name, opts)` | `dir.openDir(io, name, opts)` |
+| `dir.makePath(path)` | `dir.makePath(io, path)` |
+| `dir.makeDir(name)` | `dir.makeDir(io, name)` |
+| `dir.readFileAlloc(allocator, name, max)` | `dir.readFileAlloc(io, name, allocator, .unlimited)` |
+| `dir.writeFile(.{...})` | `dir.writeFile(io, .{...})` |
+| `dir.rename(old, new)` | `dir.rename(old_sub_path, new_dir, new_sub_path, io)` (5-arg form on a `Dir`) |
+| `dir.deleteFile(name)` | `dir.deleteFile(io, name)` |
+| `file.writeAll(bytes)` | `file.writeStreamingAll(io, bytes)` |
+| `file.readToEndAlloc(alloc, max)` | use `dir.readFileAlloc(io, ...)` instead, or `file.readStreamingAll(io, buf)` |
+| `file.sync()` | `file.sync(io)` |
+| `file.close()` | `file.close(io)` (used inside `defer f.close(io);`) |
+| `file.seekFromEnd(n)` | `file.seekFromEnd(io, n)` |
+| `file.setEndPos(n)` | `file.setEndPos(io, n)` |
+| `std.time.nanoTimestamp()` | `std.Io.Clock.awake.now(io).nanoseconds` |
+| `std.time.milliTimestamp()` | `@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)` |
+| `std.posix.flock(fd, LOCK.EX \| LOCK.NB)` | `file.tryLock(io, .exclusive)` (returns `bool` instead of erroring) |
+
+Tests get the io handle from `std.testing.io`. Pass it through to any function that takes `io: std.Io`.
+
+The lone non-mechanical translation is Task 1.7's `flock` → `tryLock`. The pre-0.16 form errored with `WouldBlock` on contention; `tryLock` returns `false`. The plan's Task 1.7 below has been hand-revised to use the `bool`-returning API.
+
+### Why one canonical reference
+
+Tasks 1.4–1.13 each have several code blocks (failing-test stub, implementation, follow-up tests). Rather than duplicate translation guidance in every task, the implementer is expected to apply this map mechanically and surface ANY genuine ambiguity (e.g., "this stdlib function isn't in the map, what do I use?") as a question before guessing.
+
+### Test command (project-wide)
+
+`zig build test --summary all` runs every inline test in `src/`, `server/`, and `tools/common.zig`. New `src/kb/*.zig` modules become part of the library test surface as soon as they're imported from `src/root.zig`.
 
 **TDD cycle per task:**
 1. **Write the failing test.** Edit the relevant `.zig` file. Add an inline `test "..."` block that references the API you're about to build.
@@ -299,7 +337,7 @@ pub fn writeSlice(allocator: Allocator, bf: *const BranchesFile) ![]u8 {
 **Step 1: Write the failing test.**
 
 ```zig
-pub fn atomicWrite(dir: std.fs.Dir, bf: *const BranchesFile, scratch: Allocator) !void {
+pub fn atomicWrite(io: std.Io, dir: std.Io.Dir, bf: *const BranchesFile, scratch: Allocator) !void {
     _ = dir;
     _ = bf;
     _ = scratch;
@@ -309,6 +347,7 @@ pub fn atomicWrite(dir: std.fs.Dir, bf: *const BranchesFile, scratch: Allocator)
 test "atomicWrite produces a parseable branches.json" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -330,7 +369,7 @@ test "atomicWrite produces a parseable branches.json" {
 
     try atomicWrite(tmp.dir, &bf, std.testing.allocator);
 
-    const buf = try tmp.dir.readFileAlloc(std.testing.allocator, "branches.json", 1 << 16);
+    const buf = try tmp.dir.readFileAlloc(io, "branches.json", std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(buf);
     var parsed = try parseSlice(std.testing.allocator, buf);
     defer parsed.deinit();
@@ -343,20 +382,20 @@ test "atomicWrite produces a parseable branches.json" {
 **Step 3: Implement.**
 
 ```zig
-pub fn atomicWrite(dir: std.fs.Dir, bf: *const BranchesFile, scratch: Allocator) !void {
+pub fn atomicWrite(io: std.Io, dir: std.Io.Dir, bf: *const BranchesFile, scratch: Allocator) !void {
     const bytes = try writeSlice(scratch, bf);
     defer scratch.free(bytes);
 
     var tmp_name_buf: [64]u8 = undefined;
-    const tmp_name = try std.fmt.bufPrint(&tmp_name_buf, ".branches.json.tmp.{d}", .{std.time.nanoTimestamp()});
+    const tmp_name = try std.fmt.bufPrint(&tmp_name_buf, ".branches.json.tmp.{d}", .{std.Io.Clock.awake.now(io).nanoseconds});
 
     {
-        var f = try dir.createFile(tmp_name, .{ .truncate = true });
-        defer f.close();
-        try f.writeAll(bytes);
-        try f.sync();
+        var f = try dir.createFile(io, tmp_name, .{ .truncate = true });
+        defer f.close(io);
+        try f.writeStreamingAll(io, bytes);
+        try f.sync(io);
     }
-    try dir.rename(tmp_name, "branches.json");
+    try dir.rename(tmp_name, dir, "branches.json", io);
 }
 ```
 
@@ -403,7 +442,7 @@ pub const Chain = struct {
     }
 };
 
-pub fn openRead(allocator: Allocator, dir: std.fs.Dir, branch: []const u8) !Chain {
+pub fn openRead(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !Chain {
     _ = allocator;
     _ = dir;
     _ = branch;
@@ -413,6 +452,7 @@ pub fn openRead(allocator: Allocator, dir: std.fs.Dir, branch: []const u8) !Chai
 test "openRead loads an existing branch's JSONL" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     // Hand-craft a one-entry JSONL using TxLog directly.
     var src: txlog.TxLog = .init(std.testing.allocator);
@@ -423,9 +463,9 @@ test "openRead loads an existing branch's JSONL" {
     defer aw.deinit();
     try src.writeAll(&aw.writer);
 
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = aw.written() });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = aw.written() });
 
-    var chain = try openRead(std.testing.allocator, tmp.dir, "main");
+    var chain = try openRead(std.testing.allocator, io, tmp.dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
     try std.testing.expect(chain.head() != null);
@@ -437,11 +477,11 @@ test "openRead loads an existing branch's JSONL" {
 **Step 3: Implement.**
 
 ```zig
-pub fn openRead(allocator: Allocator, dir: std.fs.Dir, branch: []const u8) !Chain {
+pub fn openRead(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !Chain {
     var file_name_buf: [256]u8 = undefined;
     const file_name = try std.fmt.bufPrint(&file_name_buf, "{s}.jsonl", .{branch});
 
-    const data = dir.readFileAlloc(allocator, file_name, 1 << 26) catch |err| switch (err) {
+    const data = dir.readFileAlloc(io, file_name, allocator, .unlimited) catch |err| switch (err) {
         error.FileNotFound => return error.BranchNotFound,
         else => return err,
     };
@@ -507,6 +547,7 @@ pub fn rangeByTime(self: *const Chain, from_ms: u64, to_ms: u64) []const txlog.T
 test "tail returns last N entries; rangeByHash bounds inclusive" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
     var src: txlog.TxLog = .init(std.testing.allocator);
     defer src.deinit();
     _ = try src.append("{\"v\":1}");
@@ -516,9 +557,9 @@ test "tail returns last N entries; rangeByHash bounds inclusive" {
     var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer aw.deinit();
     try src.writeAll(&aw.writer);
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = aw.written() });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = aw.written() });
 
-    var chain = try openRead(std.testing.allocator, tmp.dir, "main");
+    var chain = try openRead(std.testing.allocator, io, tmp.dir, "main");
     defer chain.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), chain.tail(2).len);
@@ -550,41 +591,42 @@ Expected: green.
 **Step 1: Write the failing test.**
 
 ```zig
-const posix = std.posix;
-
 pub const WriteHandle = struct {
     allocator: Allocator,
     chain: Chain,
-    file: std.fs.File, // holds the flock for the lifetime of the handle
-    dir: std.fs.Dir,
+    file: std.Io.File, // holds the exclusive lock for the lifetime of the handle
+    io: std.Io,
+    dir: std.Io.Dir,
     branch_file_name: []u8,
 
     pub fn deinit(self: *WriteHandle) void {
-        // Releasing the file's fd releases the flock automatically on Linux/macOS.
-        self.file.close();
+        // Closing the file releases the advisory lock (POSIX flock semantics).
+        self.file.close(self.io);
         self.chain.deinit();
         self.allocator.free(self.branch_file_name);
     }
 };
 
-pub fn openForWrite(allocator: Allocator, dir: std.fs.Dir, branch: []const u8) !WriteHandle {
+pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
     _ = allocator;
+    _ = io;
     _ = dir;
     _ = branch;
     return error.NotImplemented;
 }
 
-test "openForWrite acquires an exclusive flock; second open fails fast" {
+test "openForWrite acquires an exclusive lock; second open fails fast" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     // Empty branch file is acceptable — chain is empty, head = null.
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
 
-    var h1 = try openForWrite(std.testing.allocator, tmp.dir, "main");
+    var h1 = try openForWrite(std.testing.allocator, io, io, tmp.dir, "main");
     defer h1.deinit();
 
-    const err = openForWrite(std.testing.allocator, tmp.dir, "main");
+    const err = openForWrite(std.testing.allocator, io, io, tmp.dir, "main");
     try std.testing.expectError(error.AlreadyLocked, err);
 }
 ```
@@ -594,25 +636,23 @@ test "openForWrite acquires an exclusive flock; second open fails fast" {
 **Step 3: Implement.**
 
 ```zig
-pub fn openForWrite(allocator: Allocator, dir: std.fs.Dir, branch: []const u8) !WriteHandle {
+pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
     var file_name_buf: [256]u8 = undefined;
     const file_name = try std.fmt.bufPrint(&file_name_buf, "{s}.jsonl", .{branch});
 
-    var file = dir.openFile(file_name, .{ .mode = .read_write }) catch |err| switch (err) {
-        error.FileNotFound => try dir.createFile(file_name, .{ .read = true, .truncate = false }),
+    var file = dir.openFile(io, file_name, .{ .mode = .read_write }) catch |err| switch (err) {
+        error.FileNotFound => try dir.createFile(io, file_name, .{ .read = true, .truncate = false }),
         else => return err,
     };
-    errdefer file.close();
+    errdefer file.close(io);
 
-    // Advisory exclusive lock, non-blocking. On contention -> error.WouldBlock,
-    // which we surface as error.AlreadyLocked for callers.
-    posix.flock(file.handle, posix.LOCK.EX | posix.LOCK.NB) catch |err| switch (err) {
-        error.WouldBlock => return error.AlreadyLocked,
-        else => return err,
-    };
+    // Advisory exclusive lock, non-blocking. tryLock returns false on contention;
+    // surface that as error.AlreadyLocked so callers can fail fast.
+    if (!try file.tryLock(io, .exclusive)) return error.AlreadyLocked;
 
-    // Load existing chain content from byte zero.
-    const data = try file.readToEndAlloc(allocator, 1 << 26);
+    // Load existing chain content. We hold the exclusive lock, so reading via the
+    // dir (separate fd, same inode) is race-free with any well-behaved writer.
+    const data = try dir.readFileAlloc(io, file_name, allocator, .unlimited);
     defer allocator.free(data);
 
     var log = try txlog.TxLog.parseSlice(allocator, data);
@@ -626,6 +666,7 @@ pub fn openForWrite(allocator: Allocator, dir: std.fs.Dir, branch: []const u8) !
             .branch_name = try allocator.dupe(u8, branch),
         },
         .file = file,
+        .io = io,
         .dir = dir,
         .branch_file_name = try allocator.dupe(u8, file_name),
     };
@@ -655,16 +696,17 @@ pub fn append(self: *WriteHandle, canonical_json: []const u8) !*const txlog.Tx {
 test "append writes a JSONL line, fdatasyncs, and updates the in-memory chain" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = "" });
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
 
-    var h = try openForWrite(std.testing.allocator, tmp.dir, "main");
+    var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
     defer h.deinit();
 
     _ = try h.append("{\"kind\":\"market.reality\",\"ts\":1,\"yes_bid_cents\":50,\"yes_ask_cents\":51}");
     try std.testing.expectEqual(@as(usize, 1), h.chain.len());
 
     // File on disk has exactly one line.
-    const buf = try tmp.dir.readFileAlloc(std.testing.allocator, "main.jsonl", 1 << 16);
+    const buf = try tmp.dir.readFileAlloc(io, "main.jsonl", std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(buf);
     var line_count: usize = 0;
     for (buf) |c| if (c == '\n') { line_count += 1; };
@@ -693,9 +735,9 @@ pub fn append(self: *WriteHandle, canonical_json: []const u8) !*const txlog.Tx {
         .{ tx.tx_id, prev_hex, hash_hex, tx.payload },
     );
 
-    try self.file.seekFromEnd(0);
-    try self.file.writeAll(line_buf.written());
-    try self.file.sync(); // fdatasync on POSIX; fallback on others.
+    try self.file.seekFromEnd(io, 0);
+    try self.file.writeStreamingAll(io, line_buf.written());
+    try self.file.sync(io); // fdatasync on POSIX; fallback on others.
 
     return tx;
 }
@@ -717,7 +759,7 @@ const hash_hex_len = txlog.hash_hex_len;
 **Step 1: Write the failing test.**
 
 ```zig
-pub fn recoverTornTail(dir: std.fs.Dir, branch_file_name: []const u8) !void {
+pub fn recoverTornTail(io: std.Io, dir: std.Io.Dir, branch_file_name: []const u8) !void {
     _ = dir;
     _ = branch_file_name;
     return error.NotImplemented;
@@ -726,6 +768,7 @@ pub fn recoverTornTail(dir: std.fs.Dir, branch_file_name: []const u8) !void {
 test "recoverTornTail truncates a malformed final line" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     // Build a well-formed two-line JSONL then append a torn third line.
     var src: txlog.TxLog = .init(std.testing.allocator);
@@ -741,12 +784,12 @@ test "recoverTornTail truncates a malformed final line" {
     try full.appendSlice(aw.written());
     try full.appendSlice("{\"tx_id\":\"tx_BROKE"); // torn line, no newline
 
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = full.items });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = full.items });
 
-    try recoverTornTail(tmp.dir, "main.jsonl");
+    try recoverTornTail(io, tmp.dir, "main.jsonl");
 
     // After recovery, file parses cleanly and has exactly 2 entries.
-    const after = try tmp.dir.readFileAlloc(std.testing.allocator, "main.jsonl", 1 << 16);
+    const after = try tmp.dir.readFileAlloc(io, "main.jsonl", std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(after);
     var parsed = try txlog.TxLog.parseSlice(std.testing.allocator, after);
     defer parsed.deinit();
@@ -759,23 +802,25 @@ test "recoverTornTail truncates a malformed final line" {
 **Step 3: Implement.**
 
 ```zig
-pub fn recoverTornTail(dir: std.fs.Dir, branch_file_name: []const u8) !void {
-    var file = try dir.openFile(branch_file_name, .{ .mode = .read_write });
-    defer file.close();
+pub fn recoverTornTail(io: std.Io, dir: std.Io.Dir, branch_file_name: []const u8) !void {
+    var file = try dir.openFile(io, branch_file_name, .{ .mode = .read_write });
+    defer file.close(io);
 
-    const data = try file.readToEndAlloc(std.testing.allocator, 1 << 26);
+    // Read current contents via a separate fd through the directory — same inode,
+    // no lock needed since recovery runs before any writer acquires the chain lock.
+    const data = try dir.readFileAlloc(io, branch_file_name, std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(data);
 
     // Find the last newline; anything after it is a torn write.
     if (data.len == 0) return;
     const last_nl = std.mem.lastIndexOfScalar(u8, data, '\n');
     if (last_nl == null) {
-        try file.setEndPos(0);
+        try file.setEndPos(io, 0);
         return;
     }
     const valid_len = last_nl.? + 1;
     if (valid_len < data.len) {
-        try file.setEndPos(valid_len);
+        try file.setEndPos(io, valid_len);
     }
 
     // Additionally, validate the full chain — if the LAST complete line is
@@ -786,7 +831,7 @@ pub fn recoverTornTail(dir: std.fs.Dir, branch_file_name: []const u8) !void {
             // Drop the last newline-terminated line and re-validate.
             const prior_nl = std.mem.lastIndexOfScalar(u8, trimmed[0..valid_len - 1], '\n');
             const new_len: usize = if (prior_nl) |i| i + 1 else 0;
-            try file.setEndPos(new_len);
+            try file.setEndPos(io, new_len);
             return;
         },
         else => return err,
@@ -803,7 +848,7 @@ pub fn recoverTornTail(dir: std.fs.Dir, branch_file_name: []const u8) !void {
 
 ---
 
-### Task 1.10 — `kb.branches.fork(parent_branch, fork_at_hash, new_name)`
+### Task 1.10 — `kb.branches.fork(parent_branch, io, fork_at_hash, new_name)`
 
 **Files:**
 - Modify: `src/kb/branches.zig`
@@ -815,7 +860,8 @@ const chain_mod = @import("chain.zig");
 
 pub fn fork(
     allocator: Allocator,
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     parent_branch: []const u8,
     fork_at_hash: Hash,
     new_branch_name: []const u8,
@@ -832,6 +878,7 @@ test "fork copies entries up to and including fork_at_hash into a new branch fil
     const txlog = @import("../txlog.zig");
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     var src: txlog.TxLog = .init(std.testing.allocator);
     defer src.deinit();
@@ -843,10 +890,10 @@ test "fork copies entries up to and including fork_at_hash into a new branch fil
     var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer aw.deinit();
     try src.writeAll(&aw.writer);
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = aw.written() });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = aw.written() });
 
     // Seed minimal branches.json
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(io, .{
         .sub_path = "branches.json",
         .data =
         \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
@@ -856,7 +903,7 @@ test "fork copies entries up to and including fork_at_hash into a new branch fil
     try fork(std.testing.allocator, tmp.dir, "main", fork_at, "exp-a");
 
     // New branch file exists and has exactly 2 entries.
-    const buf = try tmp.dir.readFileAlloc(std.testing.allocator, "exp-a.jsonl", 1 << 16);
+    const buf = try tmp.dir.readFileAlloc(io, "exp-a.jsonl", std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(buf);
     var parsed = try txlog.TxLog.parseSlice(std.testing.allocator, buf);
     defer parsed.deinit();
@@ -872,13 +919,14 @@ test "fork copies entries up to and including fork_at_hash into a new branch fil
 ```zig
 pub fn fork(
     allocator: Allocator,
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     parent_branch: []const u8,
     fork_at_hash: Hash,
     new_branch_name: []const u8,
 ) !void {
     // 1) Open parent's JSONL, find fork_at_hash, slice entries up to (incl) that idx.
-    var parent_chain = try chain_mod.openRead(allocator, dir, parent_branch);
+    var parent_chain = try chain_mod.openRead(allocator, io, io, io, dir, parent_branch);
     defer parent_chain.deinit();
 
     var fork_idx: ?usize = null;
@@ -902,10 +950,10 @@ pub fn fork(
     }
     var new_file_name_buf: [256]u8 = undefined;
     const new_file_name = try std.fmt.bufPrint(&new_file_name_buf, "{s}.jsonl", .{new_branch_name});
-    try dir.writeFile(.{ .sub_path = new_file_name, .data = aw.written() });
+    try dir.writeFile(io, .{ .sub_path = new_file_name, .data = aw.written() });
 
     // 3) Update branches.json: add a new BranchInfo with parent_hash = fork_at_hash.
-    const meta_buf = try dir.readFileAlloc(allocator, "branches.json", 1 << 16);
+    const meta_buf = try dir.readFileAlloc(io, "branches.json", allocator, .unlimited);
     defer allocator.free(meta_buf);
     var bf = try parseSlice(allocator, meta_buf);
     defer bf.deinit();
@@ -917,14 +965,14 @@ pub fn fork(
         .head_hash = fork_at_hash,
         .parent_hash = fork_at_hash,
         .parent_branch = try allocator.dupe(u8, parent_branch),
-        .created_ts_ms = @intCast(std.time.milliTimestamp()),
+        .created_ts_ms = @intCast(@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)),
     };
     // Take ownership of the existing slice entries by zeroing the old one so
     // bf.deinit doesn't double-free; replace pointers.
     allocator.free(bf.branches);
     bf.branches = new_list;
 
-    try atomicWrite(dir, &bf, allocator);
+    try atomicWrite(io, dir, &bf, allocator);
 }
 ```
 
@@ -944,7 +992,8 @@ pub fn fork(
 ```zig
 pub fn switchActive(
     allocator: Allocator,
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     branch_name: []const u8,
 ) !void {
     _ = allocator;
@@ -956,8 +1005,9 @@ pub fn switchActive(
 test "switchActive flips branches.json.active and errors on unknown branch" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(io, .{
         .sub_path = "branches.json",
         .data =
         \\{"active":"main","branches":[
@@ -969,7 +1019,7 @@ test "switchActive flips branches.json.active and errors on unknown branch" {
 
     try switchActive(std.testing.allocator, tmp.dir, "exp-a");
 
-    const buf = try tmp.dir.readFileAlloc(std.testing.allocator, "branches.json", 1 << 16);
+    const buf = try tmp.dir.readFileAlloc(io, "branches.json", std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(buf);
     var bf = try parseSlice(std.testing.allocator, buf);
     defer bf.deinit();
@@ -989,10 +1039,11 @@ test "switchActive flips branches.json.active and errors on unknown branch" {
 ```zig
 pub fn switchActive(
     allocator: Allocator,
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     branch_name: []const u8,
 ) !void {
-    const buf = try dir.readFileAlloc(allocator, "branches.json", 1 << 16);
+    const buf = try dir.readFileAlloc(io, "branches.json", allocator, .unlimited);
     defer allocator.free(buf);
     var bf = try parseSlice(allocator, buf);
     defer bf.deinit();
@@ -1005,7 +1056,7 @@ pub fn switchActive(
 
     allocator.free(bf.active);
     bf.active = try allocator.dupe(u8, branch_name);
-    try atomicWrite(dir, &bf, allocator);
+    try atomicWrite(io, dir, &bf, allocator);
 }
 ```
 
@@ -1174,10 +1225,11 @@ pub fn parseThesis(allocator: Allocator, json: []const u8) !ThesisManifest {
 test "golden lifecycle: write 3 → fork at idx1 → switchActive → recover torn tail" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     // Seed empty main + branches.json.
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = "" });
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
         .sub_path = "branches.json",
         .data =
         \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
@@ -1187,7 +1239,7 @@ test "golden lifecycle: write 3 → fork at idx1 → switchActive → recover to
     // 1. Write 3 entries on main.
     var fork_at_hash: Hash = undefined;
     {
-        var h = try openForWrite(std.testing.allocator, tmp.dir, "main");
+        var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
         defer h.deinit();
         _ = try h.append("{\"kind\":\"market.reality\",\"ts\":1,\"yes_bid_cents\":50}");
         const tx2 = try h.append("{\"kind\":\"market.reality\",\"ts\":2,\"yes_bid_cents\":55}");
@@ -1202,30 +1254,30 @@ test "golden lifecycle: write 3 → fork at idx1 → switchActive → recover to
     try branches_mod.switchActive(std.testing.allocator, tmp.dir, "exp-a");
 
     // 4. exp-a chain has 2 entries; main still has 3.
-    var exp_a = try openRead(std.testing.allocator, tmp.dir, "exp-a");
+    var exp_a = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
     defer exp_a.deinit();
     try std.testing.expectEqual(@as(usize, 2), exp_a.len());
 
-    var main_chain = try openRead(std.testing.allocator, tmp.dir, "main");
+    var main_chain = try openRead(std.testing.allocator, io, tmp.dir, "main");
     defer main_chain.deinit();
     try std.testing.expectEqual(@as(usize, 3), main_chain.len());
 
     // 5. Append a 3rd entry to exp-a, then simulate a torn write.
     {
-        var h = try openForWrite(std.testing.allocator, tmp.dir, "exp-a");
+        var h = try openForWrite(std.testing.allocator, io, tmp.dir, "exp-a");
         defer h.deinit();
         _ = try h.append("{\"kind\":\"market.reality\",\"ts\":4,\"yes_bid_cents\":58}");
     }
     {
-        var f = try tmp.dir.openFile("exp-a.jsonl", .{ .mode = .read_write });
-        defer f.close();
-        try f.seekFromEnd(0);
-        try f.writeAll("{\"tx_id\":\"tx_TORN_");
+        var f = try tmp.dir.openFile(io, "exp-a.jsonl", .{ .mode = .read_write });
+        defer f.close(io);
+        try f.seekFromEnd(io, 0);
+        try f.writeStreamingAll(io, "{\"tx_id\":\"tx_TORN_");
     }
 
-    try recoverTornTail(tmp.dir, "exp-a.jsonl");
+    try recoverTornTail(io, tmp.dir, "exp-a.jsonl");
 
-    var exp_a_recovered = try openRead(std.testing.allocator, tmp.dir, "exp-a");
+    var exp_a_recovered = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
     defer exp_a_recovered.deinit();
     try std.testing.expectEqual(@as(usize, 3), exp_a_recovered.len());
 }
@@ -1277,7 +1329,8 @@ pub const MarketSnapshot = struct {
 /// checkpoint was written.
 pub fn observeMarket(
     allocator: Allocator,
-    market_dir: std.fs.Dir,
+    io: std.Io,
+    market_dir: std.Io.Dir,
     snap: MarketSnapshot,
 ) !bool {
     _ = allocator;
@@ -1289,17 +1342,18 @@ pub fn observeMarket(
 test "observeMarket appends only when price moved past manifest threshold" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makeDir("reality");
+    const io = std.testing.io;
+    try tmp.dir.makeDir(io, "reality");
 
     // Seed market manifest with 1c threshold + empty reality chain + branches.json.
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(io, .{
         .sub_path = "manifest.json",
         .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}",
     });
-    var reality_dir = try tmp.dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try tmp.dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
-    try reality_dir.writeFile(.{ .sub_path = "main.jsonl", .data = "" });
-    try reality_dir.writeFile(.{
+    try reality_dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try reality_dir.writeFile(io, .{
         .sub_path = "branches.json",
         .data =
         \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
@@ -1336,7 +1390,7 @@ test "observeMarket appends only when price moved past manifest threshold" {
     });
     try std.testing.expect(wrote3);
 
-    var chain = try chain_mod.openRead(std.testing.allocator, reality_dir, "main");
+    var chain = try chain_mod.openRead(std.testing.allocator, io, reality_dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 2), chain.len());
 }
@@ -1349,23 +1403,24 @@ test "observeMarket appends only when price moved past manifest threshold" {
 ```zig
 pub fn observeMarket(
     allocator: Allocator,
-    market_dir: std.fs.Dir,
+    io: std.Io,
+    market_dir: std.Io.Dir,
     snap: MarketSnapshot,
 ) !bool {
     // Load manifest.
-    const manifest_buf = try market_dir.readFileAlloc(allocator, "manifest.json", 1 << 14);
+    const manifest_buf = try market_dir.readFileAlloc(io, "manifest.json", allocator, .unlimited);
     defer allocator.free(manifest_buf);
     var manifest = try manifest_mod.parseMarket(allocator, manifest_buf);
     defer manifest.deinit();
 
     // Open reality chain for write under flock.
-    var reality_dir = try market_dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
 
     // Peek the current head's payload to extract prev_yes_bid for trigger comparison.
     var prev_yes_bid: ?u32 = null;
     {
-        var read = chain_mod.openRead(allocator, reality_dir, "main") catch |err| switch (err) {
+        var read = chain_mod.openRead(allocator, io, io, io, reality_dir, "main") catch |err| switch (err) {
             error.BranchNotFound => null_chain: {
                 break :null_chain return error.BranchNotFound;
             },
@@ -1395,7 +1450,7 @@ pub fn observeMarket(
         .{ snap.last_trade_cents, prev_yes_bid, snap.ts_ms, snap.volume, snap.yes_ask_cents, snap.yes_bid_cents },
     );
 
-    var h = try chain_mod.openForWrite(allocator, reality_dir, "main");
+    var h = try chain_mod.openForWrite(allocator, io, io, io, reality_dir, "main");
     defer h.deinit();
     _ = try h.append(aw.written());
     return true;
@@ -1429,7 +1484,8 @@ pub const Resolution = struct {
 
 pub fn observeResolution(
     allocator: Allocator,
-    market_dir: std.fs.Dir,
+    io: std.Io,
+    market_dir: std.Io.Dir,
     res: Resolution,
 ) !void {
     _ = allocator;
@@ -1441,19 +1497,20 @@ pub fn observeResolution(
 test "observeResolution appends a terminal record" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makeDir("reality");
+    const io = std.testing.io;
+    try tmp.dir.makeDir(io, "reality");
 
-    try tmp.dir.writeFile(.{ .sub_path = "manifest.json",
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifest.json",
         .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}" });
-    var reality_dir = try tmp.dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try tmp.dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
-    try reality_dir.writeFile(.{ .sub_path = "main.jsonl", .data = "" });
-    try reality_dir.writeFile(.{ .sub_path = "branches.json",
+    try reality_dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try reality_dir.writeFile(io, .{ .sub_path = "branches.json",
         .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}" });
 
     try observeResolution(std.testing.allocator, tmp.dir, .{ .ts_ms = 999, .resolved_yes = true });
 
-    var chain = try chain_mod.openRead(std.testing.allocator, reality_dir, "main");
+    var chain = try chain_mod.openRead(std.testing.allocator, io, reality_dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
     try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"resolution\"") != null);
@@ -1468,10 +1525,11 @@ test "observeResolution appends a terminal record" {
 ```zig
 pub fn observeResolution(
     allocator: Allocator,
-    market_dir: std.fs.Dir,
+    io: std.Io,
+    market_dir: std.Io.Dir,
     res: Resolution,
 ) !void {
-    var reality_dir = try market_dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
@@ -1481,7 +1539,7 @@ pub fn observeResolution(
         .{ if (res.resolved_yes) "true" else "false", res.ts_ms },
     );
 
-    var h = try chain_mod.openForWrite(allocator, reality_dir, "main");
+    var h = try chain_mod.openForWrite(allocator, io, io, io, reality_dir, "main");
     defer h.deinit();
     _ = try h.append(aw.written());
 }
@@ -1503,7 +1561,8 @@ pub fn observeResolution(
 ```zig
 pub fn observeManual(
     allocator: Allocator,
-    chain_dir: std.fs.Dir,
+    io: std.Io,
+    chain_dir: std.Io.Dir,
     canonical_payload: []const u8,
 ) !void {
     _ = allocator;
@@ -1515,14 +1574,15 @@ pub fn observeManual(
 test "observeManual bypasses predicates and appends raw payload" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "main.jsonl", .data = "" });
-    try tmp.dir.writeFile(.{ .sub_path = "branches.json",
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "branches.json",
         .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}" });
 
     const payload = "{\"confidence_bp\":7200,\"kind\":\"market.prediction\",\"rationale\":\"manual override\",\"trigger\":{\"type\":\"manual_decision\"},\"ts\":42}";
     try observeManual(std.testing.allocator, tmp.dir, payload);
 
-    var chain = try chain_mod.openRead(std.testing.allocator, tmp.dir, "main");
+    var chain = try chain_mod.openRead(std.testing.allocator, io, tmp.dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
 }
@@ -1535,10 +1595,11 @@ test "observeManual bypasses predicates and appends raw payload" {
 ```zig
 pub fn observeManual(
     allocator: Allocator,
-    chain_dir: std.fs.Dir,
+    io: std.Io,
+    chain_dir: std.Io.Dir,
     canonical_payload: []const u8,
 ) !void {
-    var h = try chain_mod.openForWrite(allocator, chain_dir, "main");
+    var h = try chain_mod.openForWrite(allocator, io, io, io, chain_dir, "main");
     defer h.deinit();
     _ = try h.append(canonical_payload);
 }
@@ -1565,11 +1626,12 @@ test "kb_root hook: get() appends to market chain when kb_root is set" {
     // Kalshi request; instead it exercises the hook function directly.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("markets/KXTEST/reality");
-    try tmp.dir.writeFile(.{ .sub_path = "markets/KXTEST/manifest.json",
+    const io = std.testing.io;
+    try tmp.dir.makePath(io, "markets/KXTEST/reality");
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/manifest.json",
         .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}" });
-    try tmp.dir.writeFile(.{ .sub_path = "markets/KXTEST/reality/main.jsonl", .data = "" });
-    try tmp.dir.writeFile(.{ .sub_path = "markets/KXTEST/reality/branches.json",
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/reality/branches.json",
         .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}" });
 
     try kbHookMarket(std.testing.allocator, tmp.dir, "KXTEST", .{
@@ -1577,11 +1639,11 @@ test "kb_root hook: get() appends to market chain when kb_root is set" {
     });
 
     // The chain now has one entry.
-    var market_dir = try tmp.dir.openDir("markets/KXTEST", .{ .iterate = false });
+    var market_dir = try tmp.dir.openDir(io, "markets/KXTEST", .{ .iterate = false });
     defer market_dir.close();
-    var reality_dir = try market_dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
-    var chain = try @import("../kb/chain.zig").openRead(std.testing.allocator, reality_dir, "main");
+    var chain = try @import("../kb/chain.zig").openRead(std.testing.allocator, io, reality_dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
 }
@@ -1600,13 +1662,14 @@ const ingest = @import("../kb/ingest.zig");
 /// never called.
 pub fn kbHookMarket(
     allocator: std.mem.Allocator,
-    kb_root: std.fs.Dir,
+    io: std.Io,
+    kb_root: std.Io.Dir,
     ticker: []const u8,
     snap: ingest.MarketSnapshot,
 ) !void {
     var market_path_buf: [256]u8 = undefined;
     const market_path = try std.fmt.bufPrint(&market_path_buf, "markets/{s}", .{ticker});
-    var market_dir = try kb_root.openDir(market_path, .{ .iterate = false });
+    var market_dir = try kb_root.openDir(io, market_path, .{ .iterate = false });
     defer market_dir.close();
     _ = try ingest.observeMarket(allocator, market_dir, snap);
 }
@@ -1629,20 +1692,21 @@ pub fn kbHookMarket(
 test "kb_root hook: fill appends a new_trade reality record" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("markets/KXTEST/reality");
-    try tmp.dir.writeFile(.{ .sub_path = "markets/KXTEST/manifest.json",
+    const io = std.testing.io;
+    try tmp.dir.makePath(io, "markets/KXTEST/reality");
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/manifest.json",
         .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}" });
-    try tmp.dir.writeFile(.{ .sub_path = "markets/KXTEST/reality/main.jsonl", .data = "" });
-    try tmp.dir.writeFile(.{ .sub_path = "markets/KXTEST/reality/branches.json",
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/reality/branches.json",
         .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}" });
 
     try kbHookFill(std.testing.allocator, tmp.dir, "KXTEST", 1, 55, 100);
 
-    var market_dir = try tmp.dir.openDir("markets/KXTEST", .{ .iterate = false });
+    var market_dir = try tmp.dir.openDir(io, "markets/KXTEST", .{ .iterate = false });
     defer market_dir.close();
-    var reality_dir = try market_dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
-    var chain = try @import("../kb/chain.zig").openRead(std.testing.allocator, reality_dir, "main");
+    var chain = try @import("../kb/chain.zig").openRead(std.testing.allocator, io, reality_dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
     try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"new_trade\"") != null);
@@ -1659,7 +1723,8 @@ const chain_mod = @import("../kb/chain.zig");
 
 pub fn kbHookFill(
     allocator: std.mem.Allocator,
-    kb_root: std.fs.Dir,
+    io: std.Io,
+    kb_root: std.Io.Dir,
     ticker: []const u8,
     ts_ms: u64,
     trade_cents: u32,
@@ -1667,9 +1732,9 @@ pub fn kbHookFill(
 ) !void {
     var market_path_buf: [256]u8 = undefined;
     const market_path = try std.fmt.bufPrint(&market_path_buf, "markets/{s}", .{ticker});
-    var market_dir = try kb_root.openDir(market_path, .{ .iterate = false });
+    var market_dir = try kb_root.openDir(io, market_path, .{ .iterate = false });
     defer market_dir.close();
-    var reality_dir = try market_dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
@@ -1679,7 +1744,7 @@ pub fn kbHookFill(
         .{ trade_cents, quantity, ts_ms },
     );
 
-    var h = try chain_mod.openForWrite(allocator, reality_dir, "main");
+    var h = try chain_mod.openForWrite(allocator, io, io, io, reality_dir, "main");
     defer h.deinit();
     _ = try h.append(aw.written());
 }
@@ -1879,7 +1944,8 @@ const rollup_mod = @import("rollup.zig");
 
 pub fn recomputeThesisReality(
     allocator: Allocator,
-    kb_root: std.fs.Dir,
+    io: std.Io,
+    kb_root: std.Io.Dir,
     thesis_id: []const u8,
 ) !bool {
     _ = allocator;
@@ -1891,35 +1957,36 @@ pub fn recomputeThesisReality(
 test "recomputeThesisReality appends a thesis.reality entry when rollup crosses threshold" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
 
     // Two market chains with one entry each.
     inline for (.{ "A", "B" }) |t| {
         const market_path = "markets/" ++ t;
         try tmp.dir.makePath(market_path ++ "/reality");
-        try tmp.dir.writeFile(.{
+        try tmp.dir.writeFile(io, .{
             .sub_path = market_path ++ "/manifest.json",
             .data = "{\"kind\":\"market\",\"ticker\":\"" ++ t ++ "\",\"trigger\":{\"price_delta_cents\":1}}",
         });
-        try tmp.dir.writeFile(.{ .sub_path = market_path ++ "/reality/main.jsonl", .data = "" });
-        try tmp.dir.writeFile(.{ .sub_path = market_path ++ "/reality/branches.json",
+        try tmp.dir.writeFile(io, .{ .sub_path = market_path ++ "/reality/main.jsonl", .data = "" });
+        try tmp.dir.writeFile(io, .{ .sub_path = market_path ++ "/reality/branches.json",
             .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}" });
     }
     // Seed market A at 60c, B at 40c.
-    var a_dir = try tmp.dir.openDir("markets/A", .{ .iterate = false });
+    var a_dir = try tmp.dir.openDir(io, "markets/A", .{ .iterate = false });
     defer a_dir.close();
     _ = try observeMarket(std.testing.allocator, a_dir, .{ .ts_ms = 1, .yes_bid_cents = 60, .yes_ask_cents = 62, .volume = 1, .last_trade_cents = null });
-    var b_dir = try tmp.dir.openDir("markets/B", .{ .iterate = false });
+    var b_dir = try tmp.dir.openDir(io, "markets/B", .{ .iterate = false });
     defer b_dir.close();
     _ = try observeMarket(std.testing.allocator, b_dir, .{ .ts_ms = 1, .yes_bid_cents = 40, .yes_ask_cents = 42, .volume = 1, .last_trade_cents = null });
 
     // Thesis manifest + empty thesis reality chain.
-    try tmp.dir.makePath("theses/T/reality");
-    try tmp.dir.writeFile(.{ .sub_path = "theses/T/manifest.json",
+    try tmp.dir.makePath(io, "theses/T/reality");
+    try tmp.dir.writeFile(io, .{ .sub_path = "theses/T/manifest.json",
         .data =
         \\{"kind":"thesis","id":"T","description":"x","market_set":["A","B"],"rollup_fn":"weighted_avg_v1","weights":{"A":7000,"B":3000},"trigger":{"confidence_delta_bp":500}}
     });
-    try tmp.dir.writeFile(.{ .sub_path = "theses/T/reality/main.jsonl", .data = "" });
-    try tmp.dir.writeFile(.{ .sub_path = "theses/T/reality/branches.json",
+    try tmp.dir.writeFile(io, .{ .sub_path = "theses/T/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "theses/T/reality/branches.json",
         .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}" });
 
     try rollup_mod.registerAll(std.testing.allocator);
@@ -1928,9 +1995,9 @@ test "recomputeThesisReality appends a thesis.reality entry when rollup crosses 
     const wrote = try recomputeThesisReality(std.testing.allocator, tmp.dir, "T");
     try std.testing.expect(wrote);
 
-    var thesis_reality_dir = try tmp.dir.openDir("theses/T/reality", .{ .iterate = false });
+    var thesis_reality_dir = try tmp.dir.openDir(io, "theses/T/reality", .{ .iterate = false });
     defer thesis_reality_dir.close();
-    var chain = try chain_mod.openRead(std.testing.allocator, thesis_reality_dir, "main");
+    var chain = try chain_mod.openRead(std.testing.allocator, io, thesis_reality_dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
     try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"aggregate_yes_cents\":55") != null);
@@ -1944,15 +2011,16 @@ test "recomputeThesisReality appends a thesis.reality entry when rollup crosses 
 ```zig
 pub fn recomputeThesisReality(
     allocator: Allocator,
-    kb_root: std.fs.Dir,
+    io: std.Io,
+    kb_root: std.Io.Dir,
     thesis_id: []const u8,
 ) !bool {
     var thesis_path_buf: [256]u8 = undefined;
     const thesis_path = try std.fmt.bufPrint(&thesis_path_buf, "theses/{s}", .{thesis_id});
-    var thesis_dir = try kb_root.openDir(thesis_path, .{ .iterate = false });
+    var thesis_dir = try kb_root.openDir(io, thesis_path, .{ .iterate = false });
     defer thesis_dir.close();
 
-    const manifest_buf = try thesis_dir.readFileAlloc(allocator, "manifest.json", 1 << 14);
+    const manifest_buf = try thesis_dir.readFileAlloc(io, "manifest.json", allocator, .unlimited);
     defer allocator.free(manifest_buf);
     var manifest = try manifest_mod.parseThesis(allocator, manifest_buf);
     defer manifest.deinit();
@@ -1969,10 +2037,10 @@ pub fn recomputeThesisReality(
     for (manifest.market_set, 0..) |ticker, i| {
         var market_path_buf: [256]u8 = undefined;
         const market_path = try std.fmt.bufPrint(&market_path_buf, "markets/{s}/reality", .{ticker});
-        var reality_dir = try kb_root.openDir(market_path, .{ .iterate = false });
+        var reality_dir = try kb_root.openDir(io, market_path, .{ .iterate = false });
         defer reality_dir.close();
 
-        var read = try chain_mod.openRead(allocator, reality_dir, "main");
+        var read = try chain_mod.openRead(allocator, io, io, io, reality_dir, "main");
         defer read.deinit();
         if (read.len() == 0) return false;
         const last = read.log.items.items[read.len() - 1];
@@ -1996,11 +2064,11 @@ pub fn recomputeThesisReality(
     const result = rollup_fn(.{ .sources = snaps, .weights_bp = manifest.weights_bp });
 
     // Compare against current thesis reality head (only emit if delta > threshold or first entry).
-    var reality_dir = try thesis_dir.openDir("reality", .{ .iterate = false });
+    var reality_dir = try thesis_dir.openDir(io, "reality", .{ .iterate = false });
     defer reality_dir.close();
     var prev_agg: ?u32 = null;
     {
-        var read = try chain_mod.openRead(allocator, reality_dir, "main");
+        var read = try chain_mod.openRead(allocator, io, io, io, reality_dir, "main");
         defer read.deinit();
         if (read.len() > 0) {
             const last = read.log.items.items[read.len() - 1];
@@ -2027,10 +2095,10 @@ pub fn recomputeThesisReality(
     }
     try aw.writer.print(
         "}},\"trigger\":{{\"type\":\"source_delta\"}},\"ts\":{d}}}",
-        .{@as(u64, @intCast(std.time.milliTimestamp()))},
+        .{@as(u64, @intCast(@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)))},
     );
 
-    var h = try chain_mod.openForWrite(allocator, reality_dir, "main");
+    var h = try chain_mod.openForWrite(allocator, io, io, io, reality_dir, "main");
     defer h.deinit();
     _ = try h.append(aw.written());
     return true;
@@ -2085,6 +2153,7 @@ pub fn temporalDivergence(
 test "temporalDivergence finds first prediction whose belief diverges from reality past threshold" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    const io = std.testing.io;
     // ... seed prediction chain with [50, 55, 70 cents] and reality with [50, 55, 55 cents].
     // Expect first_drift_idx = 2.
     // (Concrete seeding omitted for brevity — match the pattern from prior tasks.)
