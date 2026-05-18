@@ -31,7 +31,34 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "divergence", .description = "Temporal divergence between a prediction and reality chain", .run = cmdDivergence },
         .{ .name = "init", .description = "Bootstrap a fresh kb_root directory tree (--with-sample for skeleton data)", .run = cmdInit },
         .{ .name = "predict", .description = "Append a thesis prediction (--confidence-bp=N, optional --rationale=)", .run = cmdPredict },
+        .{ .name = "add-market", .description = "Register a new market (--price-delta-cents=N, default 1)", .run = cmdAddMarket },
     });
+}
+
+fn cmdAddMarket(ctx: *common.Context) !u8 {
+    const ticker = ctx.positional(0) orelse {
+        try ctx.stderr.print("usage: praescientia-kb add-market <ticker> [--price-delta-cents=N]\n", .{});
+        return 2;
+    };
+    const pd_str = ctx.flagValue("--price-delta-cents") orelse "1";
+    const price_delta = std.fmt.parseInt(u32, pd_str, 10) catch {
+        try ctx.stderr.print("--price-delta-cents must be an integer\n", .{});
+        return 2;
+    };
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    init_mod.addMarket(ctx.io, kb_root, ticker, price_delta) catch |err| {
+        try ctx.stderr.print("add-market failed: {t}\n", .{err});
+        return 1;
+    };
+    try ctx.stdout.print("created markets/{s} (price_delta_cents={d})\n", .{ ticker, price_delta });
+    return 0;
 }
 
 fn cmdPredict(ctx: *common.Context) !u8 {
