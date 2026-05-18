@@ -74,6 +74,13 @@ praescientia/
 │   ├── state_chain.zig          # Merkle-accumulator chain
 │   ├── txlog.zig                # JSONL persistence + ULID tx_ids
 │   ├── canonical_json.zig       # Hash-stable JSON (sorted object keys, no whitespace)
+│   ├── kb/                      # Knowledge base — per-market + per-thesis chains on top of txlog
+│   │   ├── chain.zig            # Open/read/append/fork chains; flock single-writer; torn-tail recovery
+│   │   ├── branches.zig         # branches.json + fork + switchActive
+│   │   ├── manifest.zig         # market.manifest + thesis.manifest parsers
+│   │   ├── ingest.zig           # observeMarket/Resolution/Manual + recomputeThesisReality
+│   │   ├── rollup.zig           # Compile-time registry of rollup fns (weighted_avg_v1)
+│   │   └── divergence.zig       # temporalDivergence + outcomeDivergence
 │   └── kalshi/                  # Library wrappers — one file per Kalshi endpoint group
 │       ├── auth.zig             # RSA-PSS signing (mbedTLS-backed)
 │       ├── client.zig           # HTTP transport, env switching, auth headers
@@ -102,6 +109,7 @@ praescientia/
 │   ├── order_groups.zig         # praescientia-order-groups CLI
 │   ├── live_data.zig            # praescientia-live-data CLI
 │   ├── search.zig               # praescientia-search CLI
+│   ├── kb.zig                   # praescientia-kb CLI (inspect, branches, fork, divergence)
 │   ├── poll_resolved_markets.zig  # praescientia-poll-resolved-markets (CoinGecko prices only)
 │   ├── test_conn.zig            # End-to-end demo-API smoke harness
 │   ├── signtest.zig             # RSA-PSS sign one-off
@@ -171,11 +179,47 @@ All Kalshi CLIs accept `--demo` (default), `--live`, `--verbose`, and `--help`.
 | `zig build run-order-groups -- list` | Order group lifecycle |
 | `zig build run-live-data -- milestones` | `/milestones`, `/live_data/*` |
 | `zig build run-search -- series KXBTCD` | `/series/{ticker}`, `/search/*` |
+| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence` |
 | `zig build run-poll -- prices` | CoinGecko BTC/ETH/SOL spot |
 | `zig build run-server -- --port=8080` | Dashboard at `http://localhost:<port>/` |
 | `./zig-out/bin/praescientia-test-conn` | End-to-end demo smoke (every endpoint, exit 0/1) |
 | `./zig-out/bin/praescientia-signtest` | One-shot RSA-PSS signer |
 | `./zig-out/bin/praescientia-verifytest` | One-shot RSA-PSS verifier |
+
+## Knowledge Base
+
+`src/kb/` builds a Git-like chain substrate on top of `txlog.zig` + `state_chain.zig`. Each market and each thesis owns its own append-only chain in a `kb_root` directory; branches enable forked "what-if" exploration without touching the canonical history.
+
+```
+<kb_root>/
+├── markets/<TICKER>/
+│   ├── manifest.json            # {kind, ticker, trigger.price_delta_cents}
+│   └── reality/
+│       ├── main.jsonl           # Hash-chained observations from Kalshi
+│       └── branches.json        # Fork metadata
+└── theses/<id>/
+    ├── manifest.json            # {kind, market_set, rollup_fn, weights, trigger.confidence_delta_bp}
+    ├── reality/                 # Reduced from market reality via rollup_fn
+    └── prediction/              # Author's belief checkpoints
+```
+
+The `praescientia-kb` CLI inspects chains, lists branches, forks, and computes temporal divergence:
+
+```bash
+zig build run-kb -- inspect    <kb_root>/markets/KXBTC/reality
+zig build run-kb -- branches   <kb_root>/markets/KXBTC/reality
+zig build run-kb -- divergence <kb_root>/theses/T/prediction <kb_root>/theses/T/reality --threshold-bp=1000
+```
+
+When the dashboard server is started with `--kb-root=PATH`, three read-only routes become available:
+
+| Route | Returns |
+|---|---|
+| `GET /api/kb/markets/{ticker}/head` | Active branch head + last 3 payloads |
+| `GET /api/kb/theses/{id}/branches` | branches.json for the thesis reality chain |
+| `GET /api/kb/theses/{id}/divergence?threshold_bp=N` | First divergence between prediction and reality |
+
+The full design and rationale lives in `docs/plans/2026-05-17-state-chain-knowledge-base-design.md`.
 
 ## Philosophy
 

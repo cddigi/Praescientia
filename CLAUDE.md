@@ -26,6 +26,13 @@ praescientia/
 │   ├── state_chain.zig          # Merkle-accumulator hashed chain (Hopper core)
 │   ├── txlog.zig                # JSONL transaction log + ULID tx_ids
 │   ├── canonical_json.zig       # Hash-stable JSON (sorted keys, no whitespace)
+│   ├── kb/                      # Knowledge-base substrate on top of state_chain + txlog
+│   │   ├── chain.zig            # Open/read/append/fork with flock + torn-tail recovery
+│   │   ├── branches.zig         # branches.json metadata + fork + switchActive
+│   │   ├── manifest.zig         # market.manifest + thesis.manifest parsers
+│   │   ├── ingest.zig           # observeMarket/Resolution/Manual + recomputeThesisReality
+│   │   ├── rollup.zig           # Compile-time registry (weighted_avg_v1)
+│   │   └── divergence.zig       # temporalDivergence + outcomeDivergence
 │   └── kalshi/                  # One file per Kalshi endpoint group
 │       ├── auth.zig             # RSA-PSS signing via vendored mbedTLS
 │       ├── client.zig           # HTTP transport, env switching, auth-header signing
@@ -54,6 +61,7 @@ praescientia/
 │   ├── order_groups.zig         # praescientia-order-groups
 │   ├── live_data.zig            # praescientia-live-data
 │   ├── search.zig               # praescientia-search
+│   ├── kb.zig                   # praescientia-kb (inspect/branches/fork/divergence)
 │   ├── poll_resolved_markets.zig# praescientia-poll-resolved-markets (CoinGecko spot)
 │   ├── test_conn.zig            # End-to-end demo-API smoke harness
 │   ├── signtest.zig             # RSA-PSS sign one-off (Stage 1)
@@ -132,7 +140,7 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 
 | Surface | CLI | Backing library module |
 |---------|-----|------------------------|
-| Dashboard server | `zig build run-server -- --port=8080` | `server/{main,handlers}.zig` |
+| Dashboard server | `zig build run-server -- --port=8080 [--kb-root=PATH]` | `server/{main,handlers}.zig` |
 | Exchange | `zig build run-exchange -- status\|schedule\|announcements` | `src/kalshi/exchange.zig` |
 | Markets | `zig build run-markets -- list\|get TICKER\|orderbook TICKER\|trades\|candlesticks\|orderbooks` | `src/kalshi/markets.zig` |
 | Events | `zig build run-events -- list\|multivariate\|get\|metadata\|candlesticks\|forecast\|collection` | `src/kalshi/events.zig` |
@@ -144,6 +152,7 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Account | `zig build run-account -- list_keys\|create_key\|generate_key\|delete_key\|limits\|incentives\|fcm_*` | `src/kalshi/account.zig` |
 | Search | `zig build run-search -- tags\|sport_filters\|targets\|target\|series TICKER` | `src/kalshi/search.zig` |
 | Live Data | `zig build run-live-data -- milestones\|milestone\|live\|live_legacy\|batch\|game_stats` | `src/kalshi/live_data.zig` |
+| Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence` | `src/kb/*` |
 | CoinGecko spot | `zig build run-poll -- prices` | `tools/poll_resolved_markets.zig` |
 | Smoke harness | `./zig-out/bin/praescientia-test-conn [--env=demo\|live] [--capture-dir=PATH]` | exercises every above CLI |
 | RSA-PSS sign/verify | `./zig-out/bin/praescientia-{signtest,verifytest}` | `src/kalshi/auth.zig` |

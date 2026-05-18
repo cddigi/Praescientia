@@ -57,6 +57,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "praescientia-order-groups", .src = "tools/order_groups.zig", .step = "run-order-groups" },
         .{ .name = "praescientia-live-data", .src = "tools/live_data.zig", .step = "run-live-data" },
         .{ .name = "praescientia-search", .src = "tools/search.zig", .step = "run-search" },
+        .{ .name = "praescientia-kb", .src = "tools/kb.zig", .step = "run-kb" },
     };
     for (stage4_tools) |t| {
         const exe = addToolReturn(b, target, optimize, praescientia, tool_common, t.name, t.src, t.step, "Stage 4 CLI");
