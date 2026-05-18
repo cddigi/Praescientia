@@ -595,6 +595,12 @@ test "match: kb routes are wired up and capture path params" {
     try std.testing.expectEqualStrings("fed-cuts-jun", params[0]);
 }
 
+test "dashboard.html exposes the Knowledge Base sidebar markers" {
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "data-page=\"kb-markets\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "data-page=\"kb-theses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "Knowledge Base") != null);
+}
+
 test "appendIso8601Now produces YYYY-MM-DDTHH:MM:SSZ" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
