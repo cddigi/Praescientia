@@ -438,3 +438,57 @@ test "fork errors when fork_at_hash is absent" {
         fork(std.testing.allocator, io, tmp.dir, "main", missing, "exp-a"),
     );
 }
+
+pub fn switchActive(
+    allocator: Allocator,
+    io: std.Io,
+    dir: std.Io.Dir,
+    branch_name: []const u8,
+) !void {
+    const buf = try dir.readFileAlloc(io, "branches.json", allocator, .unlimited);
+    defer allocator.free(buf);
+    var bf = try parseSlice(allocator, buf);
+    defer bf.deinit();
+
+    var found = false;
+    for (bf.branches) |b| {
+        if (std.mem.eql(u8, b.name, branch_name)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) return error.UnknownBranch;
+
+    allocator.free(bf.active);
+    bf.active = try allocator.dupe(u8, branch_name);
+    try atomicWrite(dir, io, &bf, allocator);
+}
+
+test "switchActive flips branches.json.active and errors on unknown branch" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[
+        \\{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0},
+        \\{"name":"exp-a","head_hash":"abababababababababababababababababababababababababababababababab","parent_hash":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","parent_branch":"main","created_ts_ms":1}
+        \\]}
+        ,
+    });
+
+    try switchActive(std.testing.allocator, io, tmp.dir, "exp-a");
+
+    const buf = try tmp.dir.readFileAlloc(io, "branches.json", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(buf);
+    var bf = try parseSlice(std.testing.allocator, buf);
+    defer bf.deinit();
+    try std.testing.expectEqualStrings("exp-a", bf.active);
+
+    try std.testing.expectError(
+        error.UnknownBranch,
+        switchActive(std.testing.allocator, io, tmp.dir, "nope"),
+    );
+}
