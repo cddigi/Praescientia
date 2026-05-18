@@ -20,6 +20,7 @@ const chain_mod = kb.chain;
 const branches_mod = kb.branches;
 const divergence_mod = kb.divergence;
 const init_mod = kb.init;
+const predict_mod = kb.predict;
 const Hash = praescientia.state_chain.Hash;
 
 pub fn main(init: std.process.Init) !u8 {
@@ -29,7 +30,116 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "fork", .description = "Fork a branch at a given hash into a new branch", .run = cmdFork },
         .{ .name = "divergence", .description = "Temporal divergence between a prediction and reality chain", .run = cmdDivergence },
         .{ .name = "init", .description = "Bootstrap a fresh kb_root directory tree (--with-sample for skeleton data)", .run = cmdInit },
+        .{ .name = "predict", .description = "Append a thesis prediction (--confidence-bp=N, optional --rationale=)", .run = cmdPredict },
+        .{ .name = "add-market", .description = "Register a new market (--price-delta-cents=N, default 1)", .run = cmdAddMarket },
+        .{ .name = "add-thesis", .description = "Register a new thesis (--description, --weights, optional --rollup, --confidence-delta-bp)", .run = cmdAddThesis },
     });
+}
+
+fn cmdAddThesis(ctx: *common.Context) !u8 {
+    const thesis_id = ctx.positional(0) orelse {
+        try ctx.stderr.print(
+            "usage: praescientia-kb add-thesis <id> --description=\"...\" --weights='{{...}}' [--rollup=NAME] [--confidence-delta-bp=N]\n",
+            .{},
+        );
+        return 2;
+    };
+    const description = ctx.flagValue("--description") orelse {
+        try ctx.stderr.print("--description is required\n", .{});
+        return 2;
+    };
+    const weights_json = ctx.flagValue("--weights") orelse {
+        try ctx.stderr.print("--weights is required (JSON object literal)\n", .{});
+        return 2;
+    };
+    const rollup = ctx.flagValue("--rollup") orelse "weighted_avg_v1";
+    const cd_str = ctx.flagValue("--confidence-delta-bp") orelse "500";
+    const confidence_delta_bp = std.fmt.parseInt(u32, cd_str, 10) catch {
+        try ctx.stderr.print("--confidence-delta-bp must be an integer\n", .{});
+        return 2;
+    };
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    init_mod.addThesis(ctx.gpa, ctx.io, kb_root, .{
+        .id = thesis_id,
+        .description = description,
+        .rollup_fn = rollup,
+        .weights_json = weights_json,
+        .confidence_delta_bp = confidence_delta_bp,
+    }) catch |err| {
+        try ctx.stderr.print("add-thesis failed: {t}\n", .{err});
+        return 1;
+    };
+
+    try ctx.stdout.print("created theses/{s} (rollup={s}, confidence_delta_bp={d})\n", .{ thesis_id, rollup, confidence_delta_bp });
+    return 0;
+}
+
+fn cmdAddMarket(ctx: *common.Context) !u8 {
+    const ticker = ctx.positional(0) orelse {
+        try ctx.stderr.print("usage: praescientia-kb add-market <ticker> [--price-delta-cents=N]\n", .{});
+        return 2;
+    };
+    const pd_str = ctx.flagValue("--price-delta-cents") orelse "1";
+    const price_delta = std.fmt.parseInt(u32, pd_str, 10) catch {
+        try ctx.stderr.print("--price-delta-cents must be an integer\n", .{});
+        return 2;
+    };
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    init_mod.addMarket(ctx.io, kb_root, ticker, price_delta) catch |err| {
+        try ctx.stderr.print("add-market failed: {t}\n", .{err});
+        return 1;
+    };
+    try ctx.stdout.print("created markets/{s} (price_delta_cents={d})\n", .{ ticker, price_delta });
+    return 0;
+}
+
+fn cmdPredict(ctx: *common.Context) !u8 {
+    const thesis_id = ctx.positional(0) orelse {
+        try ctx.stderr.print("usage: praescientia-kb predict <thesis-id> --confidence-bp=N [--rationale=\"...\"]\n", .{});
+        return 2;
+    };
+    const conf_str = ctx.flagValue("--confidence-bp") orelse {
+        try ctx.stderr.print("--confidence-bp is required\n", .{});
+        return 2;
+    };
+    const confidence_bp = std.fmt.parseInt(u32, conf_str, 10) catch {
+        try ctx.stderr.print("--confidence-bp must be an integer\n", .{});
+        return 2;
+    };
+    if (confidence_bp == 0 or confidence_bp > 10000) {
+        try ctx.stderr.print("--confidence-bp must be in [1, 10000]\n", .{});
+        return 2;
+    }
+    const rationale = ctx.flagValue("--rationale") orelse "";
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    predict_mod.writePrediction(ctx.gpa, ctx.io, kb_root, thesis_id, confidence_bp, rationale) catch |err| {
+        try ctx.stderr.print("predict failed: {t}\n", .{err});
+        return 1;
+    };
+
+    try ctx.stdout.print("wrote prediction for thesis '{s}' at confidence={d} bp\n", .{ thesis_id, confidence_bp });
+    return 0;
 }
 
 fn cmdInit(ctx: *common.Context) !u8 {

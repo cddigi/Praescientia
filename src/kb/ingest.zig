@@ -316,8 +316,9 @@ pub fn recomputeThesisReality(
         }
     }
     if (prev_agg) |p| {
-        const delta = if (p > result.aggregate_yes_cents) p - result.aggregate_yes_cents else result.aggregate_yes_cents - p;
-        if (delta < 1) {
+        const delta_cents = if (p > result.aggregate_yes_cents) p - result.aggregate_yes_cents else result.aggregate_yes_cents - p;
+        const delta_bp = delta_cents * 100;
+        if (delta_bp < manifest.confidence_delta_bp) {
             @import("metrics.zig").bumpObserveSkipped(.aggregate_unchanged);
             return false;
         }
@@ -441,4 +442,75 @@ test "observeMarket rejects an invalid manifest" {
         .volume = 1,
         .last_trade_cents = null,
     }));
+}
+
+test "recomputeThesisReality skips when aggregate change is below manifest's confidence_delta_bp" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    // Two markets A=60/62, B=40/42 → first weighted_avg_v1 mid-price aggregate = 55c.
+    // After moving B to 38/40 → new aggregate = 0.7*61 + 0.3*39 = 54c (integer division).
+    // Delta = 1 cent = 100 bp. With confidence_delta_bp=500, the recompute must skip.
+    inline for (.{ "A", "B" }) |t| {
+        try tmp.dir.createDirPath(io, "markets/" ++ t ++ "/reality");
+        try tmp.dir.writeFile(io, .{
+            .sub_path = "markets/" ++ t ++ "/manifest.json",
+            .data = "{\"kind\":\"market\",\"ticker\":\"" ++ t ++ "\",\"trigger\":{\"price_delta_cents\":1}}",
+        });
+        try tmp.dir.writeFile(io, .{ .sub_path = "markets/" ++ t ++ "/reality/main.jsonl", .data = "" });
+        try tmp.dir.writeFile(io, .{
+            .sub_path = "markets/" ++ t ++ "/reality/branches.json",
+            .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}",
+        });
+    }
+
+    // Seed each market with one observation.
+    var a_dir = try tmp.dir.openDir(io, "markets/A", .{ .iterate = false });
+    defer a_dir.close(io);
+    _ = try observeMarket(std.testing.allocator, io, a_dir, .{
+        .ts_ms = 1,
+        .yes_bid_cents = 60,
+        .yes_ask_cents = 62,
+        .volume = 1,
+        .last_trade_cents = null,
+    });
+    var b_dir = try tmp.dir.openDir(io, "markets/B", .{ .iterate = false });
+    defer b_dir.close(io);
+    _ = try observeMarket(std.testing.allocator, io, b_dir, .{
+        .ts_ms = 1,
+        .yes_bid_cents = 40,
+        .yes_ask_cents = 42,
+        .volume = 1,
+        .last_trade_cents = null,
+    });
+
+    // Thesis with 500 bp threshold.
+    try tmp.dir.createDirPath(io, "theses/t/reality");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "theses/t/manifest.json",
+        .data = "{\"kind\":\"thesis\",\"id\":\"t\",\"description\":\"x\",\"market_set\":[\"A\",\"B\"],\"rollup_fn\":\"weighted_avg_v1\",\"weights\":{\"A\":7000,\"B\":3000},\"trigger\":{\"confidence_delta_bp\":500}}",
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "theses/t/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "theses/t/reality/branches.json",
+        .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}",
+    });
+
+    rollup_mod.registry = .empty;
+    defer rollup_mod.registry.deinit(std.testing.allocator);
+    try rollup_mod.registerAll(std.testing.allocator);
+
+    // First call writes the genesis (prev_agg is null, always emits).
+    try std.testing.expect(try recomputeThesisReality(std.testing.allocator, io, tmp.dir, "t"));
+
+    // Bump B from 40/42 to 38/40. Aggregate moves ~1c = 100 bp; below 500 bp threshold.
+    _ = try observeMarket(std.testing.allocator, io, b_dir, .{
+        .ts_ms = 2,
+        .yes_bid_cents = 38,
+        .yes_ask_cents = 40,
+        .volume = 1,
+        .last_trade_cents = null,
+    });
+    try std.testing.expect(!(try recomputeThesisReality(std.testing.allocator, io, tmp.dir, "t")));
 }
