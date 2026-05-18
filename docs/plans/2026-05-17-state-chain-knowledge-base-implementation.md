@@ -37,7 +37,7 @@
 | `file.seekFromEnd(n)` | `file.seekFromEnd(io, n)` |
 | `file.setEndPos(n)` (pre-0.16 name) | `file.setLength(io, n)` (Zig 0.16) |
 | `std.time.nanoTimestamp()` | `std.Io.Clock.awake.now(io).nanoseconds` |
-| `std.time.milliTimestamp()` | `@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)` |
+| `std.time.milliTimestamp()` | `@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000)` |
 | `std.posix.flock(fd, LOCK.EX \| LOCK.NB)` | `file.tryLock(io, .exclusive)` (returns `bool` instead of erroring) |
 
 Tests get the io handle from `std.testing.io`. Pass it through to any function that takes `io: std.Io`.
@@ -337,7 +337,7 @@ pub fn writeSlice(allocator: Allocator, bf: *const BranchesFile) ![]u8 {
 **Step 1: Write the failing test.**
 
 ```zig
-pub fn atomicWrite(io: std.Io, dir: std.Io.Dir, bf: *const BranchesFile, scratch: Allocator) !void {
+pub fn atomicWrite(dir: std.Io.Dir, io: std.Io, bf: *const BranchesFile, scratch: Allocator) !void {
     _ = dir;
     _ = bf;
     _ = scratch;
@@ -367,7 +367,7 @@ test "atomicWrite produces a parseable branches.json" {
         .branches = branches,
     };
 
-    try atomicWrite(tmp.dir, &bf, std.testing.allocator);
+    try atomicWrite(tmp.dir, io, &bf, std.testing.allocator);
 
     const buf = try tmp.dir.readFileAlloc(io, "branches.json", std.testing.allocator, .unlimited);
     defer std.testing.allocator.free(buf);
@@ -382,7 +382,7 @@ test "atomicWrite produces a parseable branches.json" {
 **Step 3: Implement.**
 
 ```zig
-pub fn atomicWrite(io: std.Io, dir: std.Io.Dir, bf: *const BranchesFile, scratch: Allocator) !void {
+pub fn atomicWrite(dir: std.Io.Dir, io: std.Io, bf: *const BranchesFile, scratch: Allocator) !void {
     const bytes = try writeSlice(scratch, bf);
     defer scratch.free(bytes);
 
@@ -966,14 +966,14 @@ pub fn fork(
         .head_hash = fork_at_hash,
         .parent_hash = fork_at_hash,
         .parent_branch = try allocator.dupe(u8, parent_branch),
-        .created_ts_ms = @intCast(@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)),
+        .created_ts_ms = @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000)),
     };
     // Take ownership of the existing slice entries by zeroing the old one so
     // bf.deinit doesn't double-free; replace pointers.
     allocator.free(bf.branches);
     bf.branches = new_list;
 
-    try atomicWrite(io, dir, &bf, allocator);
+    try atomicWrite(dir, io, &bf, allocator);
 }
 ```
 
@@ -1057,7 +1057,7 @@ pub fn switchActive(
 
     allocator.free(bf.active);
     bf.active = try allocator.dupe(u8, branch_name);
-    try atomicWrite(io, dir, &bf, allocator);
+    try atomicWrite(dir, io, &bf, allocator);
 }
 ```
 
@@ -2096,7 +2096,7 @@ pub fn recomputeThesisReality(
     }
     try aw.writer.print(
         "}},\"trigger\":{{\"type\":\"source_delta\"}},\"ts\":{d}}}",
-        .{@as(u64, @intCast(@divFloor(std.Io.Clock.wall.now(io).nanoseconds, 1_000_000)))},
+        .{@as(u64, @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000)))},
     );
 
     var h = try chain_mod.openForWrite(allocator, io, io, io, reality_dir, "main");

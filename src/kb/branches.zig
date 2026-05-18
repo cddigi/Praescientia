@@ -88,8 +88,11 @@ fn hexNibble(c: u8) !u8 {
 }
 
 fn validateBranchName(name: []const u8) !void {
+    if (name.len == 0) return error.InvalidBranchName;
+    if (std.mem.eql(u8, name, ".")) return error.InvalidBranchName;
+    if (std.mem.eql(u8, name, "..")) return error.InvalidBranchName;
     for (name) |c| {
-        if (c == '"' or c == '\\' or c < 0x20) return error.InvalidBranchName;
+        if (c == '"' or c == '\\' or c == '/' or c < 0x20) return error.InvalidBranchName;
     }
 }
 
@@ -97,7 +100,8 @@ pub fn writeSlice(allocator: Allocator, bf: *const BranchesFile) ![]u8 {
     try validateBranchName(bf.active);
     for (bf.branches) |b| {
         try validateBranchName(b.name);
-        try validateBranchName(b.parent_branch);
+        // Empty parent_branch is the root-branch sentinel; only validate when non-empty.
+        if (b.parent_branch.len > 0) try validateBranchName(b.parent_branch);
     }
 
     var aw: std.Io.Writer.Allocating = .init(allocator);
@@ -239,6 +243,20 @@ pub fn fork(
     fork_at_hash: Hash,
     new_branch_name: []const u8,
 ) !void {
+    // 0) Reject bad names before any I/O.
+    try validateBranchName(new_branch_name);
+
+    // 0a) Reject collision with an existing branch.
+    {
+        const meta_buf = try dir.readFileAlloc(io, "branches.json", allocator, .unlimited);
+        defer allocator.free(meta_buf);
+        var existing = try parseSlice(allocator, meta_buf);
+        defer existing.deinit();
+        for (existing.branches) |b| {
+            if (std.mem.eql(u8, b.name, new_branch_name)) return error.BranchExists;
+        }
+    }
+
     // 1) Open parent's JSONL, find fork_at_hash, slice entries up to (incl) that idx.
     var parent_chain = try chain_mod.openRead(allocator, io, dir, parent_branch);
     defer parent_chain.deinit();
@@ -275,26 +293,43 @@ pub fn fork(
     var bf = try parseSlice(allocator, meta_buf);
     defer bf.deinit();
 
+    // Hoist dupes with errdefer chain to close the OOM leak window in the
+    // aggregate-literal (mirrors openForWrite's pattern from Task 1.7).
     var new_list = try allocator.alloc(BranchInfo, bf.branches.len + 1);
+    errdefer allocator.free(new_list);
     @memcpy(new_list[0..bf.branches.len], bf.branches);
+
+    const new_name = try allocator.dupe(u8, new_branch_name);
+    errdefer allocator.free(new_name);
+    const new_parent_branch = try allocator.dupe(u8, parent_branch);
+    errdefer allocator.free(new_parent_branch);
+
     // `Clock.real` is the wall-clock (Unix epoch) — `Clock.wall` does not
     // exist in std.Io.Clock (variants: real, awake, boot, cpu_process,
     // cpu_thread). `real` is the human timestamp we want for created_ts_ms.
     const wall_ns = std.Io.Clock.real.now(io).nanoseconds;
     new_list[bf.branches.len] = .{
-        .name = try allocator.dupe(u8, new_branch_name),
+        .name = new_name,
         .head_hash = fork_at_hash,
         .parent_hash = fork_at_hash,
-        .parent_branch = try allocator.dupe(u8, parent_branch),
+        .parent_branch = new_parent_branch,
         .created_ts_ms = @intCast(@divFloor(wall_ns, 1_000_000)),
     };
-    // The existing BranchInfo entries' `name` and `parent_branch` strings are
-    // still owned by `bf` and will be freed by `bf.deinit()`. We only need to
-    // free and replace the slice container itself.
+
+    // Atomically persist BEFORE relinquishing ownership to bf. The errdefer
+    // chain above unwinds correctly on atomicWrite failure.
+    var pending: BranchesFile = .{
+        .allocator = bf.allocator,
+        .active = bf.active,
+        .branches = new_list,
+    };
+    try atomicWrite(dir, io, &pending, allocator);
+
+    // From here on, infallible. The existing BranchInfo entries' `name` and
+    // `parent_branch` strings are still owned by `bf` and will be freed by
+    // `bf.deinit()`. We only need to free and replace the slice container.
     allocator.free(bf.branches);
     bf.branches = new_list;
-
-    try atomicWrite(dir, io, &bf, allocator);
 }
 
 test "fork copies entries up to and including fork_at_hash into a new branch file" {
@@ -330,4 +365,76 @@ test "fork copies entries up to and including fork_at_hash into a new branch fil
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 2), parsed.len());
     try std.testing.expectEqualSlices(u8, &parsed.items.items[1].hash, &fork_at);
+}
+
+test "fork rejects an invalid branch name (path traversal)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+    const dummy_hash: Hash = @splat(0);
+    try std.testing.expectError(
+        error.InvalidBranchName,
+        fork(std.testing.allocator, io, tmp.dir, "main", dummy_hash, "../evil"),
+    );
+}
+
+test "fork rejects a name that collides with an existing branch" {
+    const txlog = @import("../txlog.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    var src: txlog.TxLog = .init(std.testing.allocator);
+    defer src.deinit();
+    _ = try src.append("{\"v\":1}");
+    const fork_at = src.items.items[0].hash;
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try src.writeAll(&aw.writer);
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = aw.written() });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[
+        \\{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0},
+        \\{"name":"taken","head_hash":"abababababababababababababababababababababababababababababababab","parent_hash":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","parent_branch":"main","created_ts_ms":1}
+        \\]}
+        ,
+    });
+    try std.testing.expectError(
+        error.BranchExists,
+        fork(std.testing.allocator, io, tmp.dir, "main", fork_at, "taken"),
+    );
+}
+
+test "fork errors when fork_at_hash is absent" {
+    const txlog = @import("../txlog.zig");
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    var src: txlog.TxLog = .init(std.testing.allocator);
+    defer src.deinit();
+    _ = try src.append("{\"v\":1}");
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try src.writeAll(&aw.writer);
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = aw.written() });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+    const missing: Hash = @splat(0xff);
+    try std.testing.expectError(
+        error.ForkHashNotFound,
+        fork(std.testing.allocator, io, tmp.dir, "main", missing, "exp-a"),
+    );
 }
