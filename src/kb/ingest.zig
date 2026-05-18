@@ -81,6 +81,64 @@ fn absDeltaU32(a: u32, b: u32) u32 {
     return if (a > b) a - b else b - a;
 }
 
+pub const Resolution = struct {
+    ts_ms: u64,
+    resolved_yes: bool,
+};
+
+/// Append a terminal `market.reality` record stamped with the market's
+/// resolution outcome. Bypasses the price_delta predicate — resolution
+/// always fires.
+pub fn observeResolution(
+    allocator: Allocator,
+    io: std.Io,
+    market_dir: std.Io.Dir,
+    res: Resolution,
+) !void {
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
+    defer reality_dir.close(io);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    try aw.writer.print(
+        "{{\"kind\":\"market.reality\",\"resolved_yes\":{s},\"trigger\":{{\"type\":\"resolution\"}},\"ts\":{d}}}",
+        .{ if (res.resolved_yes) "true" else "false", res.ts_ms },
+    );
+
+    var h = try chain_mod.openForWrite(allocator, io, reality_dir, "main");
+    defer h.deinit();
+    _ = try h.append(aw.written());
+}
+
+test "observeResolution appends a terminal record" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "reality");
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "manifest.json",
+        .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}",
+    });
+    var reality_dir = try tmp.dir.openDir(io, "reality", .{ .iterate = false });
+    defer reality_dir.close(io);
+    try reality_dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try reality_dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+
+    try observeResolution(std.testing.allocator, io, tmp.dir, .{ .ts_ms = 999, .resolved_yes = true });
+
+    var chain = try chain_mod.openRead(std.testing.allocator, io, reality_dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 1), chain.len());
+    try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"resolution\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"resolved_yes\":true") != null);
+}
+
 test "observeMarket appends only when price moved past manifest threshold" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
