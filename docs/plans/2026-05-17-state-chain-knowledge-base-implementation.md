@@ -735,8 +735,9 @@ pub fn append(self: *WriteHandle, canonical_json: []const u8) !*const txlog.Tx {
         .{ tx.tx_id, prev_hex, hash_hex, tx.payload },
     );
 
-    try self.file.seekFromEnd(self.io, 0);
-    try self.file.writeStreamingAll(self.io, line_buf.written());
+    // Zig 0.16: std.Io.File has no seekFromEnd; use length() + writePositionalAll().
+    const eof = try self.file.length(self.io);
+    try self.file.writePositionalAll(self.io, line_buf.written(), eof);
     try self.file.sync(self.io); // fdatasync on POSIX; fallback on others.
 
     return tx;

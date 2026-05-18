@@ -163,6 +163,11 @@ pub const WriteHandle = struct {
     file: std.Io.File, // holds the exclusive lock for the lifetime of the handle
     io: std.Io,
     branch_file_name: []u8,
+    /// Set to true when a file-write or sync fails after the in-memory chain
+    /// has already advanced. Once poisoned, further appends fail fast with
+    /// `error.HandlePoisoned` to prevent on-disk corruption from subsequent
+    /// entries chained against an unwritten predecessor.
+    poisoned: bool = false,
 
     pub fn deinit(self: *WriteHandle) void {
         // Closing the file releases the advisory lock (POSIX flock semantics).
@@ -172,6 +177,8 @@ pub const WriteHandle = struct {
     }
 
     pub fn append(self: *WriteHandle, canonical_json: []const u8) !*const txlog.Tx {
+        if (self.poisoned) return error.HandlePoisoned;
+
         const tx = try self.chain.log.append(canonical_json);
 
         var line_buf: std.Io.Writer.Allocating = .init(self.allocator);
@@ -187,12 +194,22 @@ pub const WriteHandle = struct {
             .{ tx.tx_id, prev_hex, hash_hex, tx.payload },
         );
 
-        // Append at end-of-file using positional writes (no seek-from-end on
-        // std.Io.File in Zig 0.16; positional writes also avoid races with
-        // any concurrent positioned readers we may add later).
-        const eof = try self.file.length(self.io);
-        try self.file.writePositionalAll(self.io, line_buf.written(), eof);
-        try self.file.sync(self.io); // fdatasync on POSIX; fallback on others.
+        // Persist to disk. On failure, mark the handle poisoned so subsequent
+        // appends fail fast (in-memory state and disk are now divergent).
+        // Positional writes (no seek-from-end on std.Io.File in Zig 0.16) also
+        // avoid races with any concurrent positioned readers we may add later.
+        const eof = self.file.length(self.io) catch |err| {
+            self.poisoned = true;
+            return err;
+        };
+        self.file.writePositionalAll(self.io, line_buf.written(), eof) catch |err| {
+            self.poisoned = true;
+            return err;
+        };
+        self.file.sync(self.io) catch |err| { // fdatasync on POSIX; fallback on others.
+            self.poisoned = true;
+            return err;
+        };
 
         return tx;
     }
@@ -236,6 +253,7 @@ pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: [
         .file = file,
         .io = io,
         .branch_file_name = branch_file_name_owned,
+        .poisoned = false,
     };
 }
 
@@ -268,6 +286,22 @@ test "openForWrite releases the lock on deinit" {
     // Second open must now succeed — the prior lock was released.
     var h2 = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
     defer h2.deinit();
+}
+
+test "append rejects further writes when WriteHandle is poisoned" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+
+    var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h.deinit();
+
+    _ = try h.append("{\"v\":1}");
+    try std.testing.expectEqual(@as(usize, 1), h.chain.len());
+
+    h.poisoned = true;
+    try std.testing.expectError(error.HandlePoisoned, h.append("{\"v\":2}"));
 }
 
 test "append writes a JSONL line, fdatasyncs, and updates the in-memory chain" {
