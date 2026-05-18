@@ -7,6 +7,13 @@ const txlog = @import("../txlog.zig");
 const branches_mod = @import("branches.zig");
 const Hash = @import("../state_chain.zig").Hash;
 
+/// In-memory knowledge-base chain. Wraps a `txlog.TxLog` with a branch identity.
+///
+/// **Lifetime contract:** Slices and pointers returned by `at`, `tail`,
+/// `rangeByHash`, `rangeByTime` reference the in-memory `TxLog`'s backing
+/// `array_list.Managed(Tx)`. Any subsequent mutation through a `WriteHandle`
+/// can reallocate that backing array and invalidate held references.
+/// Callers MUST NOT hold these references across an append.
 pub const Chain = struct {
     allocator: Allocator,
     log: txlog.TxLog,
@@ -26,6 +33,7 @@ pub const Chain = struct {
         return self.log.len();
     }
 
+    /// Returns a pointer to the entry with the given hash, or null. Zero-copy; see Chain lifetime contract.
     pub fn at(self: *const Chain, hash: Hash) ?*const txlog.Tx {
         for (self.log.items.items) |*tx| {
             if (std.mem.eql(u8, &tx.hash, &hash)) return tx;
@@ -33,12 +41,14 @@ pub const Chain = struct {
         return null;
     }
 
+    /// Returns the last `n` entries. Zero-copy slice; see Chain lifetime contract.
     pub fn tail(self: *const Chain, n: usize) []const txlog.Tx {
         const total = self.log.len();
         if (n >= total) return self.log.items.items;
         return self.log.items.items[total - n ..];
     }
 
+    /// Returns the inclusive range `[from, to]` by hash, or null if either is missing or `to` precedes `from`. Zero-copy slice; see Chain lifetime contract.
     pub fn rangeByHash(self: *const Chain, from: Hash, to: Hash) ?[]const txlog.Tx {
         var from_idx: ?usize = null;
         var to_idx: ?usize = null;
@@ -51,6 +61,7 @@ pub const Chain = struct {
         return self.log.items.items[from_idx.? .. to_idx.? + 1];
     }
 
+    /// Returns entries whose timestamp falls in `[from_ms, to_ms]`. Zero-copy slice; see Chain lifetime contract.
     pub fn rangeByTime(self: *const Chain, from_ms: u64, to_ms: u64) []const txlog.Tx {
         _ = self;
         _ = from_ms;
@@ -126,4 +137,21 @@ test "tail returns last N entries; rangeByHash bounds inclusive" {
     const h2 = src.items.items[2].hash;
     const r = chain.rangeByHash(h0, h2).?;
     try std.testing.expectEqual(@as(usize, 3), r.len);
+
+    // at: hit + miss
+    try std.testing.expect(chain.at(h0) != null);
+    try std.testing.expect(chain.at(@as(Hash, @splat(0xFF))) == null);
+
+    // tail edge cases
+    try std.testing.expectEqual(@as(usize, 0), chain.tail(0).len);
+    try std.testing.expectEqual(@as(usize, 3), chain.tail(99).len);
+
+    // rangeByHash edge cases
+    try std.testing.expect(chain.rangeByHash(h2, h0) == null); // inverted: to before from
+    try std.testing.expect(chain.rangeByHash(h0, @as(Hash, @splat(0xFF))) == null); // to missing
+    const single = chain.rangeByHash(h0, h0).?;
+    try std.testing.expectEqual(@as(usize, 1), single.len);
+
+    // rangeByTime is stubbed; assert empty for now
+    try std.testing.expectEqual(@as(usize, 0), chain.rangeByTime(0, 1).len);
 }
