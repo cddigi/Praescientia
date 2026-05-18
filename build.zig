@@ -94,6 +94,24 @@ pub fn build(b: *std.Build) void {
     const common_tests = b.addTest(.{ .root_module = tool_common });
     const run_common_tests = b.addRunArtifact(common_tests);
     test_step.dependOn(&run_common_tests.step);
+
+    // tools/poll_markets.zig has inline tests (pollerForTest etc.) that need to
+    // run through `zig build test`. Build a dedicated test target for the same
+    // module shape addToolReturn used.
+    const poll_markets_test_mod = b.createModule(.{
+        .root_source_file = b.path("tools/poll_markets.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+            .{ .name = "common", .module = tool_common },
+        },
+    });
+    const poll_markets_tests = b.addTest(.{ .root_module = poll_markets_test_mod });
+    const run_poll_markets_tests = b.addRunArtifact(poll_markets_tests);
+    test_step.dependOn(&run_poll_markets_tests.step);
+
     test_step.dependOn(smoke_step);
 }
 
