@@ -87,7 +87,19 @@ fn hexNibble(c: u8) !u8 {
     };
 }
 
+fn validateBranchName(name: []const u8) !void {
+    for (name) |c| {
+        if (c == '"' or c == '\\' or c < 0x20) return error.InvalidBranchName;
+    }
+}
+
 pub fn writeSlice(allocator: Allocator, bf: *const BranchesFile) ![]u8 {
+    try validateBranchName(bf.active);
+    for (bf.branches) |b| {
+        try validateBranchName(b.name);
+        try validateBranchName(b.parent_branch);
+    }
+
     var aw: std.Io.Writer.Allocating = .init(allocator);
     errdefer aw.deinit();
     const w = &aw.writer;
@@ -118,6 +130,8 @@ test "writeSlice + parseSlice round-trip is stable" {
     const round = try writeSlice(std.testing.allocator, &bf);
     defer std.testing.allocator.free(round);
 
+    try std.testing.expectEqualStrings(original_json, round);
+
     var bf2 = try parseSlice(std.testing.allocator, round);
     defer bf2.deinit();
 
@@ -143,4 +157,26 @@ test "parseSlice round-trips a two-branch file" {
     try std.testing.expectEqual(@as(usize, 2), bf.branches.len);
     try std.testing.expectEqualStrings("fork-a", bf.branches[1].name);
     try std.testing.expectEqualStrings("main", bf.branches[1].parent_branch);
+}
+
+test "writeSlice rejects branch names with JSON-special characters" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const sa = arena.allocator();
+
+    const branches = try sa.alloc(BranchInfo, 1);
+    branches[0] = .{
+        .name = try sa.dupe(u8, "evil\"name"),
+        .head_hash = @splat(0),
+        .parent_hash = @splat(0),
+        .parent_branch = try sa.dupe(u8, ""),
+        .created_ts_ms = 0,
+    };
+    const bf = BranchesFile{
+        .allocator = sa,
+        .active = try sa.dupe(u8, "main"),
+        .branches = branches,
+    };
+
+    try std.testing.expectError(error.InvalidBranchName, writeSlice(std.testing.allocator, &bf));
 }
