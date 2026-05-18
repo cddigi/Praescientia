@@ -22,8 +22,88 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn cmdRun(ctx: *common.Context) !u8 {
-    try ctx.stdout.print("stub: poll-markets\n", .{});
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = true }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    const summary = pollAll(ctx, kb_root) catch |err| {
+        try ctx.stderr.print("poll failed: {t}\n", .{err});
+        return 1;
+    };
+
+    try ctx.stdout.print(
+        "polled {d} markets, recomputed {d} theses, {d} errors\n",
+        .{ summary.markets, summary.theses, summary.errors },
+    );
+    // Exit 0 if anything succeeded; 1 if every iteration failed (cron-friendly).
+    if (summary.markets == 0 and summary.theses == 0 and summary.errors > 0) return 1;
     return 0;
+}
+
+pub const PollSummary = struct {
+    markets: usize,
+    theses: usize,
+    errors: usize,
+};
+
+/// Production poll. Walks `kb_root/markets/`, fetches each market via the
+/// live Kalshi client, writes through `kbHookMarket`, then walks
+/// `kb_root/theses/` and runs `recomputeThesisReality` on each.
+///
+/// Per the design: each iteration is failure-isolated — a bad market or bad
+/// thesis logs to stderr and the loop continues. Returns counts so the
+/// caller can decide on an exit code.
+pub fn pollAll(ctx: *common.Context, kb_root: std.Io.Dir) !PollSummary {
+    var summary: PollSummary = .{ .markets = 0, .theses = 0, .errors = 0 };
+
+    var markets_dir = try kb_root.openDir(ctx.io, "markets", .{ .iterate = true });
+    defer markets_dir.close(ctx.io);
+    var it = markets_dir.iterate();
+    while (try it.next(ctx.io)) |entry| {
+        if (entry.kind != .directory) continue;
+        // Dup ticker into the arena — iterator's buffer is reused per `next()`.
+        const ticker = ctx.arena.dupe(u8, entry.name) catch |err| {
+            try ctx.stderr.print("  ! {s}: alloc failed ({t})\n", .{ entry.name, err });
+            summary.errors += 1;
+            continue;
+        };
+        const market = common.kalshi.markets.get(ctx.client, ctx.arena, ticker) catch |err| {
+            try ctx.stderr.print("  ! {s}: fetch failed ({t})\n", .{ ticker, err });
+            summary.errors += 1;
+            continue;
+        };
+        const ts_ms: u64 = @intCast(@divFloor(std.Io.Clock.real.now(ctx.io).nanoseconds, 1_000_000));
+        const snap = toSnapshot(&market, ts_ms);
+        common.kalshi.markets.kbHookMarket(ctx.gpa, ctx.io, kb_root, ticker, snap) catch |err| {
+            try ctx.stderr.print("  ! {s}: kb write failed ({t})\n", .{ ticker, err });
+            summary.errors += 1;
+            continue;
+        };
+        summary.markets += 1;
+    }
+
+    var theses_dir = try kb_root.openDir(ctx.io, "theses", .{ .iterate = true });
+    defer theses_dir.close(ctx.io);
+    var t_it = theses_dir.iterate();
+    while (try t_it.next(ctx.io)) |entry| {
+        if (entry.kind != .directory) continue;
+        const thesis_id = ctx.arena.dupe(u8, entry.name) catch |err| {
+            try ctx.stderr.print("  ! thesis {s}: alloc failed ({t})\n", .{ entry.name, err });
+            summary.errors += 1;
+            continue;
+        };
+        _ = ingest.recomputeThesisReality(ctx.gpa, ctx.io, kb_root, thesis_id) catch |err| {
+            try ctx.stderr.print("  ! thesis {s}: recompute failed ({t})\n", .{ thesis_id, err });
+            summary.errors += 1;
+            continue;
+        };
+        summary.theses += 1;
+    }
+
+    return summary;
 }
 
 /// Callback shape used by `pollerForTest` so the iteration logic can be
