@@ -110,6 +110,41 @@ pub fn observeResolution(
     _ = try h.append(aw.written());
 }
 
+/// Append a fully pre-formed canonical-JSON payload to the active "main"
+/// branch in `chain_dir`. Bypasses all predicates — caller is responsible
+/// for canonical-JSON encoding. Used by prediction/thesis chains where the
+/// trigger logic lives elsewhere.
+pub fn observeManual(
+    allocator: Allocator,
+    io: std.Io,
+    chain_dir: std.Io.Dir,
+    canonical_payload: []const u8,
+) !void {
+    var h = try chain_mod.openForWrite(allocator, io, chain_dir, "main");
+    defer h.deinit();
+    _ = try h.append(canonical_payload);
+}
+
+test "observeManual bypasses predicates and appends raw payload" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+
+    const payload = "{\"confidence_bp\":7200,\"kind\":\"market.prediction\",\"rationale\":\"manual override\",\"trigger\":{\"type\":\"manual_decision\"},\"ts\":42}";
+    try observeManual(std.testing.allocator, io, tmp.dir, payload);
+
+    var chain = try chain_mod.openRead(std.testing.allocator, io, tmp.dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 1), chain.len());
+}
+
 test "observeResolution appends a terminal record" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
