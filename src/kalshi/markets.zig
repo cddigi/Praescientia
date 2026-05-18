@@ -204,3 +204,55 @@ test {
     _ = candlesticks;
     _ = orderbooks;
 }
+
+const ingest = @import("../kb/ingest.zig");
+
+/// Optional pass-through: callers that have a kb_root opened and a market
+/// directory inside it call this after every successful `get`/`list` to keep
+/// the reality chain current. If no kb_root is configured, this function is
+/// never called.
+pub fn kbHookMarket(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    kb_root: std.Io.Dir,
+    ticker: []const u8,
+    snap: ingest.MarketSnapshot,
+) !void {
+    var market_path_buf: [256]u8 = undefined;
+    const market_path = try std.fmt.bufPrint(&market_path_buf, "markets/{s}", .{ticker});
+    var market_dir = try kb_root.openDir(io, market_path, .{ .iterate = false });
+    defer market_dir.close(io);
+    _ = try ingest.observeMarket(allocator, io, market_dir, snap);
+}
+
+test "kb_root hook: get() appends to market chain when kb_root is set" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "markets/KXTEST/reality");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "markets/KXTEST/manifest.json",
+        .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}",
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "markets/KXTEST/reality/branches.json",
+        .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}",
+    });
+
+    try kbHookMarket(std.testing.allocator, io, tmp.dir, "KXTEST", .{
+        .ts_ms = 1,
+        .yes_bid_cents = 50,
+        .yes_ask_cents = 51,
+        .volume = 100,
+        .last_trade_cents = null,
+    });
+
+    var market_dir = try tmp.dir.openDir(io, "markets/KXTEST", .{ .iterate = false });
+    defer market_dir.close(io);
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
+    defer reality_dir.close(io);
+    var chain = try @import("../kb/chain.zig").openRead(std.testing.allocator, io, reality_dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 1), chain.len());
+}

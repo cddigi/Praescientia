@@ -194,3 +194,64 @@ test "CreateOrder serializes with type/yes_price/null elision" {
         aw.written(),
     );
 }
+
+const ingest = @import("../kb/ingest.zig");
+const chain_mod = @import("../kb/chain.zig");
+
+/// Optional pass-through: callers that have a kb_root and observe a fill on
+/// `ticker` call this to record a `new_trade`-triggered reality entry. This
+/// is independent of observeMarket's predicate; every fill is recorded.
+pub fn kbHookFill(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    kb_root: std.Io.Dir,
+    ticker: []const u8,
+    ts_ms: u64,
+    trade_cents: u32,
+    quantity: u64,
+) !void {
+    var market_path_buf: [256]u8 = undefined;
+    const market_path = try std.fmt.bufPrint(&market_path_buf, "markets/{s}", .{ticker});
+    var market_dir = try kb_root.openDir(io, market_path, .{ .iterate = false });
+    defer market_dir.close(io);
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
+    defer reality_dir.close(io);
+
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    try aw.writer.print(
+        "{{\"kind\":\"market.reality\",\"last_trade_cents\":{d},\"quantity\":{d},\"trigger\":{{\"type\":\"new_trade\"}},\"ts\":{d}}}",
+        .{ trade_cents, quantity, ts_ms },
+    );
+
+    var h = try chain_mod.openForWrite(allocator, io, reality_dir, "main");
+    defer h.deinit();
+    _ = try h.append(aw.written());
+}
+
+test "kb_root hook: fill appends a new_trade reality record" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "markets/KXTEST/reality");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "markets/KXTEST/manifest.json",
+        .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":1}}",
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "markets/KXTEST/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "markets/KXTEST/reality/branches.json",
+        .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}",
+    });
+
+    try kbHookFill(std.testing.allocator, io, tmp.dir, "KXTEST", 1, 55, 100);
+
+    var market_dir = try tmp.dir.openDir(io, "markets/KXTEST", .{ .iterate = false });
+    defer market_dir.close(io);
+    var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
+    defer reality_dir.close(io);
+    var chain = try chain_mod.openRead(std.testing.allocator, io, reality_dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 1), chain.len());
+    try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"new_trade\"") != null);
+}
