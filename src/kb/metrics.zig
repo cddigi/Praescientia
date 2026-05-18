@@ -62,6 +62,46 @@ pub fn bumpObserveSkipped(r: SkipReason) void {
     _ = observe_skipped[@intFromEnum(r)].fetchAdd(1, .monotonic);
 }
 
+/// Bounded enum so the route label space is closed. classifyPath maps
+/// incoming request paths to one of these slots.
+pub const Route = enum {
+    dashboard_root,
+    kalshi,
+    kb,
+    metrics,
+    other,
+
+    pub fn label(self: Route) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const route_count = @typeInfo(Route).@"enum".fields.len;
+
+pub var dashboard_requests: [route_count]std.atomic.Value(u64) = blk: {
+    var arr: [route_count]std.atomic.Value(u64) = undefined;
+    for (&arr) |*v| v.* = .{ .raw = 0 };
+    break :blk arr;
+};
+
+pub var kb_root_configured: std.atomic.Value(u64) = .{ .raw = 0 };
+
+pub fn bumpRequest(r: Route) void {
+    _ = dashboard_requests[@intFromEnum(r)].fetchAdd(1, .monotonic);
+}
+
+pub fn setKbRootConfigured(yes: bool) void {
+    kb_root_configured.store(if (yes) 1 else 0, .monotonic);
+}
+
+pub fn classifyPath(path: []const u8) Route {
+    if (std.mem.eql(u8, path, "/")) return .dashboard_root;
+    if (std.mem.eql(u8, path, "/metrics")) return .metrics;
+    if (std.mem.startsWith(u8, path, "/api/kb/")) return .kb;
+    if (std.mem.startsWith(u8, path, "/api/kalshi/")) return .kalshi;
+    return .other;
+}
+
 /// Zero every counter. Used by inline tests to isolate themselves from
 /// counters that earlier tests bumped (module-level state).
 pub fn resetAll() void {
@@ -69,6 +109,8 @@ pub fn resetAll() void {
     lock_contention.store(0, .monotonic);
     torn_tail_recovered.store(0, .monotonic);
     for (&observe_skipped) |*v| v.store(0, .monotonic);
+    for (&dashboard_requests) |*v| v.store(0, .monotonic);
+    kb_root_configured.store(0, .monotonic);
 }
 
 pub fn render(w: *std.Io.Writer) !void {
@@ -105,6 +147,23 @@ pub fn render(w: *std.Io.Writer) !void {
         const v = observe_skipped[@intFromEnum(r)].load(.monotonic);
         try w.print("praescientia_kb_observe_skipped_total{{reason=\"{s}\"}} {d}\n", .{ r.label(), v });
     }
+
+    try w.writeAll(
+        \\# HELP praescientia_dashboard_requests_total HTTP requests served, by route bucket.
+        \\# TYPE praescientia_dashboard_requests_total counter
+        \\
+    );
+    for (std.enums.values(Route)) |r| {
+        const v = dashboard_requests[@intFromEnum(r)].load(.monotonic);
+        try w.print("praescientia_dashboard_requests_total{{route=\"{s}\"}} {d}\n", .{ r.label(), v });
+    }
+
+    try w.writeAll(
+        \\# HELP praescientia_kb_root_configured 1 when the server was started with --kb-root, 0 otherwise.
+        \\# TYPE praescientia_kb_root_configured gauge
+        \\
+    );
+    try w.print("praescientia_kb_root_configured {d}\n", .{kb_root_configured.load(.monotonic)});
 }
 
 test "bumpAppend + render produces a parseable line" {
