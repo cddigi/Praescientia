@@ -37,8 +37,13 @@ fn dummyV1(input: RollupInput) RollupResult {
 }
 
 test "register + lookup round-trip" {
-    try register(std.testing.allocator, "dummy_v1", &dummyV1);
+    // Module-level `registry` may be in `undefined` state from a prior test's
+    // deinit. Reset before use; deinit before scope exit so the next test sees
+    // a known state.
+    registry = .empty;
     defer registry.deinit(std.testing.allocator);
+
+    try register(std.testing.allocator, "dummy_v1", &dummyV1);
 
     const f = lookup("dummy_v1").?;
     const r = f(.{ .sources = &.{}, .weights_bp = &.{} });
@@ -59,6 +64,20 @@ pub fn weightedAvgV1(input: RollupInput) RollupResult {
     }
     if (weight_total == 0) return .{ .aggregate_yes_cents = 0 };
     return .{ .aggregate_yes_cents = @intCast(total / weight_total) };
+}
+
+/// Register every v1 rollup function under its canonical name. Call once at
+/// boot, before any thesis recomputation.
+pub fn registerAll(allocator: std.mem.Allocator) !void {
+    try register(allocator, "weighted_avg_v1", &weightedAvgV1);
+}
+
+test "registerAll wires up weighted_avg_v1" {
+    registry = .empty;
+    defer registry.deinit(std.testing.allocator);
+
+    try registerAll(std.testing.allocator);
+    try std.testing.expect(lookup("weighted_avg_v1") != null);
 }
 
 test "weighted_avg_v1 averages by basis-point weights" {
