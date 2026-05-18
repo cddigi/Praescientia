@@ -60,6 +60,97 @@ fn sampleSnapFn(_: []const u8) ingest.MarketSnapshot {
     };
 }
 
+/// Convert a Kalshi dollar-string ("0.5000", "1.0000", "") to cents. Empty
+/// strings become 0 — Kalshi returns "" for fields that aren't applicable
+/// (e.g. no last trade yet).
+fn dollarsToCents(s: []const u8) u32 {
+    if (s.len == 0) return 0;
+    var int_part: u32 = 0;
+    var frac_part: u32 = 0;
+    var frac_digits: u32 = 0;
+    var saw_dot = false;
+    for (s) |c| {
+        if (c == '.') {
+            saw_dot = true;
+            continue;
+        }
+        if (c < '0' or c > '9') return 0;
+        const d: u32 = c - '0';
+        if (!saw_dot) {
+            int_part = int_part * 10 + d;
+        } else if (frac_digits < 2) {
+            frac_part = frac_part * 10 + d;
+            frac_digits += 1;
+        }
+        // Extra fractional digits beyond 2 are silently truncated (Kalshi
+        // ticks to whole cents in `linear_cent` markets).
+    }
+    while (frac_digits < 2) : (frac_digits += 1) frac_part *= 10;
+    return int_part * 100 + frac_part;
+}
+
+/// Parse a Kalshi volume-fp string ("123.00", "1500", "") to a whole-unit count.
+/// Volume is contracts, integer; fractional part is dropped.
+fn volumeFpToInt(s: []const u8) u64 {
+    if (s.len == 0) return 0;
+    var v: u64 = 0;
+    for (s) |c| {
+        if (c == '.') break;
+        if (c < '0' or c > '9') return v;
+        v = v * 10 + (c - '0');
+    }
+    return v;
+}
+
+/// Build a MarketSnapshot from a Kalshi `Market` and a wall-clock ts.
+pub fn toSnapshot(m: *const markets_mod.Market, ts_ms: u64) ingest.MarketSnapshot {
+    const last_cents = if (m.last_price_dollars.len == 0) null else @as(?u32, dollarsToCents(m.last_price_dollars));
+    return .{
+        .ts_ms = ts_ms,
+        .yes_bid_cents = dollarsToCents(m.yes_bid_dollars),
+        .yes_ask_cents = dollarsToCents(m.yes_ask_dollars),
+        .volume = volumeFpToInt(m.volume_fp),
+        .last_trade_cents = last_cents,
+    };
+}
+
+test "toSnapshot maps dollar-strings into cents" {
+    const m: markets_mod.Market = .{
+        .ticker = "KXTEST",
+        .yes_bid_dollars = "0.5000",
+        .yes_ask_dollars = "0.5100",
+        .last_price_dollars = "0.4800",
+        .volume_fp = "1500.00",
+    };
+    const snap = toSnapshot(&m, 1234);
+    try std.testing.expectEqual(@as(u64, 1234), snap.ts_ms);
+    try std.testing.expectEqual(@as(u32, 50), snap.yes_bid_cents);
+    try std.testing.expectEqual(@as(u32, 51), snap.yes_ask_cents);
+    try std.testing.expectEqual(@as(u64, 1500), snap.volume);
+    try std.testing.expectEqual(@as(?u32, 48), snap.last_trade_cents);
+}
+
+test "toSnapshot leaves last_trade null when last_price_dollars is empty" {
+    const m: markets_mod.Market = .{
+        .ticker = "KXTEST",
+        .yes_bid_dollars = "0.0000",
+        .yes_ask_dollars = "0.0000",
+        .last_price_dollars = "",
+        .volume_fp = "0.00",
+    };
+    const snap = toSnapshot(&m, 0);
+    try std.testing.expectEqual(@as(?u32, null), snap.last_trade_cents);
+    try std.testing.expectEqual(@as(u32, 0), snap.yes_bid_cents);
+    try std.testing.expectEqual(@as(u64, 0), snap.volume);
+}
+
+test "dollarsToCents truncates beyond 2 fractional digits" {
+    try std.testing.expectEqual(@as(u32, 50), dollarsToCents("0.5000"));
+    try std.testing.expectEqual(@as(u32, 100), dollarsToCents("1.0000"));
+    try std.testing.expectEqual(@as(u32, 50), dollarsToCents("0.5"));
+    try std.testing.expectEqual(@as(u32, 12345), dollarsToCents("123.45"));
+}
+
 test "pollerForTest bumps chain_appends for every market in kb_root" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
