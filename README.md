@@ -181,7 +181,8 @@ All Kalshi CLIs accept `--demo` (default), `--live`, `--verbose`, and `--help`.
 | `zig build run-order-groups -- list` | Order group lifecycle |
 | `zig build run-live-data -- milestones` | `/milestones`, `/live_data/*` |
 | `zig build run-search -- series KXBTCD` | `/series/{ticker}`, `/search/*` |
-| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence`, `init` |
+| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence`, `init`, `predict`, `add-market`, `add-thesis` |
+| `zig build run-poll-markets -- --kb-root=./kb` | Poll Kalshi for every market under `--kb-root`; recompute every thesis |
 | `zig build run-poll -- prices` | CoinGecko BTC/ETH/SOL spot |
 | `zig build run-server -- --port=8080` | Dashboard at `http://localhost:<port>/` |
 | `./zig-out/bin/praescientia-test-conn` | End-to-end demo smoke (every endpoint, exit 0/1) |
@@ -230,7 +231,36 @@ When the dashboard server is started with `--kb-root=PATH`, four routes become a
 
 The dashboard sidebar exposes "KB Markets" and "KB Theses" panels backed by these routes.
 
-The full design and rationale lives in `docs/plans/done/2026-05-17-state-chain-knowledge-base-design.md`.
+### Demo Loop
+
+Walk a fresh operator from zero to a running prediction-vs-reality chain in six commands. The loop is one-shot per invocation — wrap step 4 in `while sleep 60; do …; done` (or cron) to keep the reality chain current.
+
+```bash
+# 1. Bootstrap a fresh kb_root.
+zig build run-kb -- init ./kb
+
+# 2. Register a market. --price-delta-cents controls the observation-firing threshold.
+zig build run-kb -- add-market KXBTC-26 --price-delta-cents=1 --kb-root=./kb
+
+# 3. Register a thesis over that market. Weights are basis points; market_set is derived from the keys.
+zig build run-kb -- add-thesis fed-jun \
+    --description="Fed cuts in June FOMC" \
+    --weights='{"KXBTC-26":10000}' \
+    --confidence-delta-bp=500 --kb-root=./kb
+
+# 4. Poll Kalshi once. Refreshes every market under ./kb/markets/ then recomputes every thesis.
+zig build run-poll-markets -- --kb-root=./kb
+
+# 5. Record your prediction. confidence_bp = how strongly you believe the thesis (1..10000).
+zig build run-kb -- predict fed-jun --confidence-bp=7200 --rationale="initial belief" --kb-root=./kb
+
+# 6. Inspect divergence between belief and reality.
+zig build run-kb -- divergence ./kb/theses/fed-jun/prediction ./kb/theses/fed-jun/reality
+```
+
+Step 4 honors `manifest.confidence_delta_bp`: thesis reality only grows when the aggregate moves by at least that many basis points. Auth is loaded from `.secret/kalshi_api_key_id.txt` + `.secret/kalshi_api_key_private.txt`; without them the poller exits with the Kalshi 401.
+
+The full design and rationale lives in `docs/plans/done/2026-05-17-state-chain-knowledge-base-design.md`. The demo loop spec lives in `docs/plans/2026-05-18-kalshi-demo-loop-design.md`.
 
 ## Philosophy
 
