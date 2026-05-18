@@ -601,6 +601,11 @@ test "dashboard.html exposes the Knowledge Base sidebar markers" {
     try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "Knowledge Base") != null);
 }
 
+test "dashboard.html has KB markets fetch wired" {
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/api/kb/markets/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "kb-market-inspect") != null);
+}
+
 test "appendIso8601Now produces YYYY-MM-DDTHH:MM:SSZ" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();

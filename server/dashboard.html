@@ -750,6 +750,16 @@
                 <h2>KB Markets</h2>
                 <p>Inspect the active reality chain for a market.</p>
             </div>
+            <div class="card">
+                <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 16px;">
+                    <label style="flex: 1;">
+                        Ticker
+                        <input type="text" id="kb-market-ticker" placeholder="KXBTC-26APR10-T100000" style="width: 100%; padding: 8px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                    </label>
+                    <button class="btn btn-primary" id="kb-market-inspect">Inspect</button>
+                </div>
+                <pre id="kb-market-out" style="background: var(--bg-input); padding: 12px; border-radius: 4px; overflow-x: auto; color: var(--text-primary); white-space: pre-wrap;">enter a ticker and click Inspect</pre>
+            </div>
         </div>
 
         <!-- ============================================================ -->
@@ -1245,6 +1255,23 @@ async function loadFills() {
         body.innerHTML = '<tr><td colspan="6" class="loading-row">Failed to load fills</td></tr>';
     }
 }
+
+// =============================================================================
+// Knowledge Base
+// =============================================================================
+document.getElementById('kb-market-inspect').addEventListener('click', async () => {
+    const ticker = document.getElementById('kb-market-ticker').value.trim();
+    const out = document.getElementById('kb-market-out');
+    if (!ticker) { out.textContent = 'enter a ticker'; return; }
+    out.textContent = 'loading…';
+    try {
+        const resp = await fetch(`/api/kb/markets/${encodeURIComponent(ticker)}/head`);
+        const json = await resp.json();
+        out.textContent = JSON.stringify(json, null, 2);
+    } catch (e) {
+        out.textContent = `error: ${e.message}`;
+    }
+});
 
 // =============================================================================
 // Init
