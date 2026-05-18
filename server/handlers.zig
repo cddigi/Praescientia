@@ -606,6 +606,13 @@ test "dashboard.html has KB markets fetch wired" {
     try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "kb-market-inspect") != null);
 }
 
+test "dashboard.html has KB theses fetch wired" {
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/api/kb/theses/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/branches") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/divergence") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "threshold_bp") != null);
+}
+
 test "appendIso8601Now produces YYYY-MM-DDTHH:MM:SSZ" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
