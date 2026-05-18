@@ -29,10 +29,12 @@ praescientia/
 │   ├── kb/                      # Knowledge-base substrate on top of state_chain + txlog
 │   │   ├── chain.zig            # Open/read/append/fork with flock + torn-tail recovery
 │   │   ├── branches.zig         # branches.json metadata + fork + switchActive
-│   │   ├── manifest.zig         # market.manifest + thesis.manifest parsers
+│   │   ├── manifest.zig         # market.manifest + thesis.manifest parsers + validators
 │   │   ├── ingest.zig           # observeMarket/Resolution/Manual + recomputeThesisReality
 │   │   ├── rollup.zig           # Compile-time registry (weighted_avg_v1)
-│   │   └── divergence.zig       # temporalDivergence + outcomeDivergence
+│   │   ├── divergence.zig       # temporalDivergence + outcomeDivergence
+│   │   ├── metrics.zig          # Prometheus counters (appends, contention, requests, gauge)
+│   │   └── init.zig             # initTree(io, root, with_sample) — kb_root bootstrap
 │   └── kalshi/                  # One file per Kalshi endpoint group
 │       ├── auth.zig             # RSA-PSS signing via vendored mbedTLS
 │       ├── client.zig           # HTTP transport, env switching, auth-header signing
@@ -152,7 +154,8 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Account | `zig build run-account -- list_keys\|create_key\|generate_key\|delete_key\|limits\|incentives\|fcm_*` | `src/kalshi/account.zig` |
 | Search | `zig build run-search -- tags\|sport_filters\|targets\|target\|series TICKER` | `src/kalshi/search.zig` |
 | Live Data | `zig build run-live-data -- milestones\|milestone\|live\|live_legacy\|batch\|game_stats` | `src/kalshi/live_data.zig` |
-| Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence` | `src/kb/*` |
+| Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence\|init` | `src/kb/*` |
+| Metrics | `GET /metrics` on the dashboard server | `src/kb/metrics.zig` |
 | CoinGecko spot | `zig build run-poll -- prices` | `tools/poll_resolved_markets.zig` |
 | Smoke harness | `./zig-out/bin/praescientia-test-conn [--env=demo\|live] [--capture-dir=PATH]` | exercises every above CLI |
 | RSA-PSS sign/verify | `./zig-out/bin/praescientia-{signtest,verifytest}` | `src/kalshi/auth.zig` |

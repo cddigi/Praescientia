@@ -94,6 +94,8 @@ pub const routes = [_]Route{
     .{ .method = .GET, .pattern = "/api/kb/markets/{ticker}/head", .handler = kbMarketHead },
     .{ .method = .GET, .pattern = "/api/kb/theses/{id}/divergence", .handler = kbThesisDivergence },
     .{ .method = .GET, .pattern = "/api/kb/theses/{id}/branches", .handler = kbThesisBranches },
+    // Metrics
+    .{ .method = .GET, .pattern = "/metrics", .handler = metricsHandler },
 };
 
 /// Look up the request method + path against `routes`. Returns null on miss.
@@ -228,6 +230,22 @@ fn searchTags(ctx: *RequestCtx) !void {
 fn seriesGet(ctx: *RequestCtx) !void {
     const path = try std.fmt.allocPrint(ctx.arena, "/series/{s}", .{ctx.param(0)});
     return proxyGet(ctx, path);
+}
+
+// ----- Metrics --------------------------------------------------------------
+
+fn metricsHandler(ctx: *RequestCtx) !void {
+    var aw: std.Io.Writer.Allocating = .init(ctx.arena);
+    defer aw.deinit();
+    try kb.metrics.render(&aw.writer);
+    try ctx.request.respond(aw.written(), .{
+        .status = .ok,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "text/plain; version=0.0.4" },
+            .{ .name = "access-control-allow-origin", .value = "*" },
+        },
+        .keep_alive = true,
+    });
 }
 
 // ----- Knowledge-base handlers ----------------------------------------------
@@ -554,6 +572,12 @@ test "match: every Julia route in the docstring has a Zig handler" {
     }
 }
 
+test "match: /metrics route is wired" {
+    var params: [max_path_params][]const u8 = undefined;
+    const hit = match(.GET, "/metrics", &params).?;
+    try std.testing.expectEqualStrings("/metrics", hit.route.pattern);
+}
+
 test "match: kb routes are wired up and capture path params" {
     var params: [max_path_params][]const u8 = undefined;
 
@@ -569,6 +593,24 @@ test "match: kb routes are wired up and capture path params" {
     const br = match(.GET, "/api/kb/theses/fed-cuts-jun/branches", &params).?;
     try std.testing.expectEqualStrings("/api/kb/theses/{id}/branches", br.route.pattern);
     try std.testing.expectEqualStrings("fed-cuts-jun", params[0]);
+}
+
+test "dashboard.html exposes the Knowledge Base sidebar markers" {
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "data-page=\"kb-markets\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "data-page=\"kb-theses\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "Knowledge Base") != null);
+}
+
+test "dashboard.html has KB markets fetch wired" {
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/api/kb/markets/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "kb-market-inspect") != null);
+}
+
+test "dashboard.html has KB theses fetch wired" {
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/api/kb/theses/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/branches") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "/divergence") != null);
+    try std.testing.expect(std.mem.indexOf(u8, dashboard_html, "threshold_bp") != null);
 }
 
 test "appendIso8601Now produces YYYY-MM-DDTHH:MM:SSZ" {

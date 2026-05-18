@@ -19,6 +19,7 @@ const kb = praescientia.kb;
 const chain_mod = kb.chain;
 const branches_mod = kb.branches;
 const divergence_mod = kb.divergence;
+const init_mod = kb.init;
 const Hash = praescientia.state_chain.Hash;
 
 pub fn main(init: std.process.Init) !u8 {
@@ -27,7 +28,39 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "branches", .description = "List all branches in a chain directory", .run = cmdBranches },
         .{ .name = "fork", .description = "Fork a branch at a given hash into a new branch", .run = cmdFork },
         .{ .name = "divergence", .description = "Temporal divergence between a prediction and reality chain", .run = cmdDivergence },
+        .{ .name = "init", .description = "Bootstrap a fresh kb_root directory tree (--with-sample for skeleton data)", .run = cmdInit },
     });
+}
+
+fn cmdInit(ctx: *common.Context) !u8 {
+    const root_path = ctx.positional(0) orelse {
+        try ctx.stderr.print("usage: praescientia-kb init <kb_root> [--with-sample]\n", .{});
+        return 2;
+    };
+    var with_sample = false;
+    for (ctx.args[1..]) |a| {
+        if (std.mem.eql(u8, a, "--with-sample")) with_sample = true;
+    }
+
+    std.Io.Dir.cwd().createDirPath(ctx.io, root_path) catch |err| {
+        try ctx.stderr.print("create {s}: {t}\n", .{ root_path, err });
+        return 1;
+    };
+    var root = std.Io.Dir.cwd().openDir(ctx.io, root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ root_path, err });
+        return 1;
+    };
+    defer root.close(ctx.io);
+
+    init_mod.initTree(ctx.io, root, with_sample) catch |err| {
+        try ctx.stderr.print("init failed: {t}\n", .{err});
+        return 1;
+    };
+    try ctx.stdout.print(
+        "initialized kb_root at {s}{s}\n",
+        .{ root_path, if (with_sample) " (with sample)" else "" },
+    );
+    return 0;
 }
 
 fn cmdInspect(ctx: *common.Context) !u8 {

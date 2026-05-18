@@ -212,9 +212,20 @@ pub const WriteHandle = struct {
             return err;
         };
 
+        metrics.bumpAppend(classifyKind(canonical_json));
         return tx;
     }
 };
+
+const metrics = @import("metrics.zig");
+
+/// Cheap substring sniff over the canonical-JSON payload to bucket the metric.
+/// Canonical JSON has "kind" alphabetized, so the substring is stable.
+fn classifyKind(payload: []const u8) metrics.ChainKind {
+    if (std.mem.indexOf(u8, payload, "\"kind\":\"market.reality\"") != null) return .market_reality;
+    if (std.mem.indexOf(u8, payload, "\"kind\":\"thesis.reality\"") != null) return .thesis_reality;
+    return .other;
+}
 
 pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
     try branches_mod.validateBranchName(branch);
@@ -229,7 +240,10 @@ pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: [
 
     // Advisory exclusive lock, non-blocking. tryLock returns false on contention;
     // surface that as error.AlreadyLocked so callers can fail fast.
-    if (!try file.tryLock(io, .exclusive)) return error.AlreadyLocked;
+    if (!try file.tryLock(io, .exclusive)) {
+        metrics.bumpLockContention();
+        return error.AlreadyLocked;
+    }
 
     // Self-heal a torn tail from a prior crashed writer.
     try recoverTornTail(allocator, io, dir, file_name);
@@ -377,11 +391,13 @@ pub fn recoverTornTail(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch
     if (last_nl == null) {
         // No newline at all — the entire file is a torn partial line.
         try file.setLength(io, 0);
+        metrics.bumpTornTail();
         return;
     }
     const valid_len = last_nl.? + 1;
     if (valid_len < data.len) {
         try file.setLength(io, valid_len);
+        metrics.bumpTornTail();
     }
 
     // Additionally, validate the truncated chain — if the LAST complete line
@@ -394,6 +410,7 @@ pub fn recoverTornTail(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch
             const prior_nl = std.mem.lastIndexOfScalar(u8, trimmed[0 .. valid_len - 1], '\n');
             const new_len: usize = if (prior_nl) |i| i + 1 else 0;
             try file.setLength(io, new_len);
+            metrics.bumpTornTail();
             return;
         },
         else => return err,
@@ -518,4 +535,20 @@ test "golden lifecycle: write 3 -> fork at idx1 -> switchActive -> recover torn 
     var exp_a_recovered = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
     defer exp_a_recovered.deinit();
     try std.testing.expectEqual(@as(usize, 3), exp_a_recovered.len());
+}
+
+test "WriteHandle.append bumps kb.metrics.chain_appends" {
+    metrics.resetAll();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+
+    var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h.deinit();
+    _ = try h.append("{\"kind\":\"market.reality\",\"ts\":1,\"yes_bid_cents\":50}");
+
+    const v = metrics.chain_appends[@intFromEnum(metrics.ChainKind.market_reality)].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), v);
 }

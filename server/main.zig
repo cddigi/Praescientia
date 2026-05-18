@@ -81,6 +81,8 @@ pub fn main(init: std.process.Init) !u8 {
     });
     defer client.deinit();
 
+    praescientia.kb.metrics.setKbRootConfigured(kb_root_path != null);
+
     const bind_addr = std.Io.net.IpAddress{ .ip4 = .{ .bytes = .{ 0, 0, 0, 0 }, .port = port } };
     var listener = bind_addr.listen(io, .{}) catch |e| {
         try stderr.print("failed to listen on 0.0.0.0:{d}: {s}\n", .{ port, @errorName(e) });
@@ -168,6 +170,8 @@ fn handleRequest(
     const query = if (path_end < target.len) target[path_end + 1 ..] else "";
 
     if (verbose) std.debug.print("{s} {s}\n", .{ @tagName(method), target });
+
+    praescientia.kb.metrics.bumpRequest(praescientia.kb.metrics.classifyPath(path));
 
     // Preflight CORS short-circuits before the route table.
     if (method == .OPTIONS) {

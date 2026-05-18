@@ -402,6 +402,13 @@
             <a class="nav-item" data-page="portfolio">
                 <span class="nav-icon">&#9673;</span> Portfolio
             </a>
+            <div class="nav-section">Knowledge Base</div>
+            <a class="nav-item" data-page="kb-markets">
+                <span class="nav-icon">&#9650;</span> KB Markets
+            </a>
+            <a class="nav-item" data-page="kb-theses">
+                <span class="nav-icon">&#9700;</span> KB Theses
+            </a>
         </nav>
         <div class="sidebar-footer">
             <span id="exchange-status-dot"></span>
@@ -732,6 +739,51 @@
                         <tr><td colspan="6" class="loading-row"><span class="spinner"></span></td></tr>
                     </tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- KB MARKETS PAGE -->
+        <!-- ============================================================ -->
+        <div class="page" id="page-kb-markets">
+            <div class="page-header">
+                <h2>KB Markets</h2>
+                <p>Inspect the active reality chain for a market.</p>
+            </div>
+            <div class="card">
+                <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 16px;">
+                    <label style="flex: 1;">
+                        Ticker
+                        <input type="text" id="kb-market-ticker" placeholder="KXBTC-26APR10-T100000" style="width: 100%; padding: 8px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                    </label>
+                    <button class="btn btn-primary" id="kb-market-inspect">Inspect</button>
+                </div>
+                <pre id="kb-market-out" style="background: var(--bg-input); padding: 12px; border-radius: 4px; overflow-x: auto; color: var(--text-primary); white-space: pre-wrap;">enter a ticker and click Inspect</pre>
+            </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- KB THESES PAGE -->
+        <!-- ============================================================ -->
+        <div class="page" id="page-kb-theses">
+            <div class="page-header">
+                <h2>KB Theses</h2>
+                <p>List branches and compute prediction-vs-reality divergence.</p>
+            </div>
+            <div class="card">
+                <div style="display: flex; gap: 8px; align-items: flex-end; margin-bottom: 16px; flex-wrap: wrap;">
+                    <label style="flex: 2; min-width: 180px;">
+                        Thesis ID
+                        <input type="text" id="kb-thesis-id" placeholder="fed-cuts-june-2026" style="width: 100%; padding: 8px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                    </label>
+                    <label style="flex: 1; min-width: 120px;">
+                        Threshold (bp)
+                        <input type="number" id="kb-thesis-threshold" value="1000" min="1" style="width: 100%; padding: 8px; background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                    </label>
+                    <button class="btn btn-primary" id="kb-thesis-branches">Branches</button>
+                    <button class="btn btn-primary" id="kb-thesis-divergence">Divergence</button>
+                </div>
+                <pre id="kb-thesis-out" style="background: var(--bg-input); padding: 12px; border-radius: 4px; overflow-x: auto; color: var(--text-primary); white-space: pre-wrap;">enter a thesis id and click Branches or Divergence</pre>
             </div>
         </div>
 
@@ -1218,6 +1270,43 @@ async function loadFills() {
         body.innerHTML = '<tr><td colspan="6" class="loading-row">Failed to load fills</td></tr>';
     }
 }
+
+// =============================================================================
+// Knowledge Base
+// =============================================================================
+document.getElementById('kb-market-inspect').addEventListener('click', async () => {
+    const ticker = document.getElementById('kb-market-ticker').value.trim();
+    const out = document.getElementById('kb-market-out');
+    if (!ticker) { out.textContent = 'enter a ticker'; return; }
+    out.textContent = 'loading…';
+    try {
+        const resp = await fetch(`/api/kb/markets/${encodeURIComponent(ticker)}/head`);
+        const json = await resp.json();
+        out.textContent = JSON.stringify(json, null, 2);
+    } catch (e) {
+        out.textContent = `error: ${e.message}`;
+    }
+});
+
+async function loadThesis(suffix) {
+    const id = document.getElementById('kb-thesis-id').value.trim();
+    const out = document.getElementById('kb-thesis-out');
+    if (!id) { out.textContent = 'enter a thesis id'; return; }
+    out.textContent = 'loading…';
+    try {
+        const resp = await fetch(`/api/kb/theses/${encodeURIComponent(id)}${suffix}`);
+        const json = await resp.json();
+        out.textContent = JSON.stringify(json, null, 2);
+    } catch (e) {
+        out.textContent = `error: ${e.message}`;
+    }
+}
+
+document.getElementById('kb-thesis-branches').addEventListener('click', () => loadThesis('/branches'));
+document.getElementById('kb-thesis-divergence').addEventListener('click', () => {
+    const t = document.getElementById('kb-thesis-threshold').value || '1000';
+    loadThesis(`/divergence?threshold_bp=${encodeURIComponent(t)}`);
+});
 
 // =============================================================================
 // Init
