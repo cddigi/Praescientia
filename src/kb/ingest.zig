@@ -29,6 +29,7 @@ pub fn observeMarket(
     defer allocator.free(manifest_buf);
     var manifest = try manifest_mod.parseMarket(allocator, manifest_buf);
     defer manifest.deinit();
+    try manifest_mod.validateMarket(&manifest);
 
     // Open the reality chain directory.
     var reality_dir = try market_dir.openDir(io, "reality", .{ .iterate = false });
@@ -250,6 +251,7 @@ pub fn recomputeThesisReality(
     defer allocator.free(manifest_buf);
     var manifest = try manifest_mod.parseThesis(allocator, manifest_buf);
     defer manifest.deinit();
+    try manifest_mod.validateThesis(&manifest);
 
     const rollup_fn = rollup_mod.lookup(manifest.rollup_fn) orelse return error.UnknownRollupFn;
 
@@ -377,16 +379,16 @@ test "recomputeThesisReality appends a thesis.reality entry when rollup crosses 
         .last_trade_cents = null,
     });
 
-    try tmp.dir.createDirPath(io, "theses/T/reality");
+    try tmp.dir.createDirPath(io, "theses/t/reality");
     try tmp.dir.writeFile(io, .{
-        .sub_path = "theses/T/manifest.json",
+        .sub_path = "theses/t/manifest.json",
         .data =
-        \\{"kind":"thesis","id":"T","description":"x","market_set":["A","B"],"rollup_fn":"weighted_avg_v1","weights":{"A":7000,"B":3000},"trigger":{"confidence_delta_bp":500}}
+        \\{"kind":"thesis","id":"t","description":"x","market_set":["A","B"],"rollup_fn":"weighted_avg_v1","weights":{"A":7000,"B":3000},"trigger":{"confidence_delta_bp":500}}
         ,
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = "theses/T/reality/main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "theses/t/reality/main.jsonl", .data = "" });
     try tmp.dir.writeFile(io, .{
-        .sub_path = "theses/T/reality/branches.json",
+        .sub_path = "theses/t/reality/branches.json",
         .data = "{\"active\":\"main\",\"branches\":[{\"name\":\"main\",\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"parent_branch\":\"\",\"created_ts_ms\":0}]}",
     });
 
@@ -394,13 +396,43 @@ test "recomputeThesisReality appends a thesis.reality entry when rollup crosses 
     defer rollup_mod.registry.deinit(std.testing.allocator);
     try rollup_mod.registerAll(std.testing.allocator);
 
-    const wrote = try recomputeThesisReality(std.testing.allocator, io, tmp.dir, "T");
+    const wrote = try recomputeThesisReality(std.testing.allocator, io, tmp.dir, "t");
     try std.testing.expect(wrote);
 
-    var thesis_reality_dir = try tmp.dir.openDir(io, "theses/T/reality", .{ .iterate = false });
+    var thesis_reality_dir = try tmp.dir.openDir(io, "theses/t/reality", .{ .iterate = false });
     defer thesis_reality_dir.close(io);
     var chain = try chain_mod.openRead(std.testing.allocator, io, thesis_reality_dir, "main");
     defer chain.deinit();
     try std.testing.expectEqual(@as(usize, 1), chain.len());
     try std.testing.expect(std.mem.indexOf(u8, chain.log.items.items[0].payload, "\"aggregate_yes_cents\":55") != null);
+}
+
+test "observeMarket rejects an invalid manifest" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.createDirPath(io, "reality");
+
+    // price_delta_cents = 0 is invalid per validateMarket.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "manifest.json",
+        .data = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{\"price_delta_cents\":0}}",
+    });
+    var reality_dir = try tmp.dir.openDir(io, "reality", .{ .iterate = false });
+    defer reality_dir.close(io);
+    try reality_dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try reality_dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+
+    try std.testing.expectError(error.PriceDeltaOutOfRange, observeMarket(std.testing.allocator, io, tmp.dir, .{
+        .ts_ms = 1,
+        .yes_bid_cents = 50,
+        .yes_ask_cents = 51,
+        .volume = 1,
+        .last_trade_cents = null,
+    }));
 }
