@@ -77,10 +77,12 @@ praescientia/
 │   ├── kb/                      # Knowledge base — per-market + per-thesis chains on top of txlog
 │   │   ├── chain.zig            # Open/read/append/fork chains; flock single-writer; torn-tail recovery
 │   │   ├── branches.zig         # branches.json + fork + switchActive
-│   │   ├── manifest.zig         # market.manifest + thesis.manifest parsers
+│   │   ├── manifest.zig         # market.manifest + thesis.manifest parsers + validators
 │   │   ├── ingest.zig           # observeMarket/Resolution/Manual + recomputeThesisReality
 │   │   ├── rollup.zig           # Compile-time registry of rollup fns (weighted_avg_v1)
-│   │   └── divergence.zig       # temporalDivergence + outcomeDivergence
+│   │   ├── divergence.zig       # temporalDivergence + outcomeDivergence
+│   │   ├── metrics.zig          # Prometheus counters: appends, contention, recoveries, requests
+│   │   └── init.zig             # Bootstrap a fresh kb_root tree (with optional sample manifests)
 │   └── kalshi/                  # Library wrappers — one file per Kalshi endpoint group
 │       ├── auth.zig             # RSA-PSS signing (mbedTLS-backed)
 │       ├── client.zig           # HTTP transport, env switching, auth headers
@@ -179,7 +181,7 @@ All Kalshi CLIs accept `--demo` (default), `--live`, `--verbose`, and `--help`.
 | `zig build run-order-groups -- list` | Order group lifecycle |
 | `zig build run-live-data -- milestones` | `/milestones`, `/live_data/*` |
 | `zig build run-search -- series KXBTCD` | `/series/{ticker}`, `/search/*` |
-| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence` |
+| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence`, `init` |
 | `zig build run-poll -- prices` | CoinGecko BTC/ETH/SOL spot |
 | `zig build run-server -- --port=8080` | Dashboard at `http://localhost:<port>/` |
 | `./zig-out/bin/praescientia-test-conn` | End-to-end demo smoke (every endpoint, exit 0/1) |
@@ -211,13 +213,22 @@ zig build run-kb -- branches   <kb_root>/markets/KXBTC/reality
 zig build run-kb -- divergence <kb_root>/theses/T/prediction <kb_root>/theses/T/reality --threshold-bp=1000
 ```
 
-When the dashboard server is started with `--kb-root=PATH`, three read-only routes become available:
+Bootstrap a fresh `kb_root` (optionally with a sample market + thesis):
+
+```bash
+zig build run-kb -- init ./kb --with-sample
+```
+
+When the dashboard server is started with `--kb-root=PATH`, four routes become available:
 
 | Route | Returns |
 |---|---|
 | `GET /api/kb/markets/{ticker}/head` | Active branch head + last 3 payloads |
 | `GET /api/kb/theses/{id}/branches` | branches.json for the thesis reality chain |
 | `GET /api/kb/theses/{id}/divergence?threshold_bp=N` | First divergence between prediction and reality |
+| `GET /metrics` | Prometheus text exposition: appends, lock contention, torn-tail recoveries, observe skips, per-route request counts, kb_root_configured gauge |
+
+The dashboard sidebar exposes "KB Markets" and "KB Theses" panels backed by these routes.
 
 The full design and rationale lives in `docs/plans/2026-05-17-state-chain-knowledge-base-design.md`.
 
