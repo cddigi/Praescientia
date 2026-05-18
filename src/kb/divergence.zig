@@ -65,6 +65,7 @@ pub fn temporalDivergence(
 const PayloadView = struct {
     ts: u64,
     yes_bid_cents: ?u32,
+    confidence_bp: ?u32,
     resolved_yes: ?bool,
 };
 
@@ -77,8 +78,47 @@ fn parsePayload(allocator: Allocator, payload: []const u8) !PayloadView {
         @intCast(v.integer)
     else
         null;
+    const conf: ?u32 = if (obj.get("confidence_bp")) |v|
+        @intCast(v.integer)
+    else
+        null;
     const resolved: ?bool = if (obj.get("resolved_yes")) |v| v.bool else null;
-    return .{ .ts = ts, .yes_bid_cents = yes_bid, .resolved_yes = resolved };
+    return .{
+        .ts = ts,
+        .yes_bid_cents = yes_bid,
+        .confidence_bp = conf,
+        .resolved_yes = resolved,
+    };
+}
+
+pub const OutcomeDivergence = struct {
+    /// Index of the last prediction (within `prediction.log.items.items`) that
+    /// disagreed with the eventual outcome. `null` when every prediction agreed.
+    /// Predictions without `confidence_bp` are skipped.
+    first_wrong_idx: ?usize,
+    /// Echoed back so the caller can format a one-liner.
+    resolved_yes: bool,
+};
+
+/// Given a market's terminal outcome (`resolved_yes`), find the most-recent
+/// prediction that disagreed with that outcome. A prediction agrees with
+/// `yes` when `confidence_bp > 5000`, with `no` when `confidence_bp < 5000`.
+/// Exactly 5000 is treated as undecided — disagreement.
+pub fn outcomeDivergence(
+    allocator: Allocator,
+    prediction: *const chain_mod.Chain,
+    resolved_yes: bool,
+) !OutcomeDivergence {
+    var i: usize = prediction.log.items.items.len;
+    while (i > 0) {
+        i -= 1;
+        const tx = prediction.log.items.items[i];
+        const v = try parsePayload(allocator, tx.payload);
+        const conf = v.confidence_bp orelse continue;
+        const agrees = if (resolved_yes) conf > 5000 else conf < 5000;
+        if (!agrees) return .{ .first_wrong_idx = i, .resolved_yes = resolved_yes };
+    }
+    return .{ .first_wrong_idx = null, .resolved_yes = resolved_yes };
 }
 
 // --- tests ---------------------------------------------------------------
@@ -120,6 +160,63 @@ test "temporalDivergence finds first prediction whose belief diverges from reali
     try std.testing.expectEqual(@as(?usize, 2), d.first_drift_idx);
     try std.testing.expectEqual(@as(u32, 1500), d.drift_amount_bp);
     try std.testing.expectEqual(@as(u32, 1000), d.threshold_bp);
+}
+
+test "outcomeDivergence finds last wrong prediction before settling" {
+    // Predictions: 4000, 5500, 6500, 7000 bp confidence on yes; resolution=yes.
+    // 4000 < 5000 → disagrees; the next three all agree. Last wrong = idx 0.
+    var pred_log: txlog.TxLog = .init(std.testing.allocator);
+    defer pred_log.deinit();
+    try appendCanonical(&pred_log, "{\"confidence_bp\":4000,\"ts\":100}");
+    try appendCanonical(&pred_log, "{\"confidence_bp\":5500,\"ts\":200}");
+    try appendCanonical(&pred_log, "{\"confidence_bp\":6500,\"ts\":300}");
+    try appendCanonical(&pred_log, "{\"confidence_bp\":7000,\"ts\":400}");
+
+    const pred_chain: chain_mod.Chain = .{
+        .allocator = std.testing.allocator,
+        .log = pred_log,
+        .branch_name = try std.testing.allocator.dupe(u8, "main"),
+    };
+    defer std.testing.allocator.free(pred_chain.branch_name);
+
+    const d = try outcomeDivergence(std.testing.allocator, &pred_chain, true);
+    try std.testing.expectEqual(@as(?usize, 0), d.first_wrong_idx);
+    try std.testing.expectEqual(true, d.resolved_yes);
+}
+
+test "outcomeDivergence returns null when every prediction agrees with outcome" {
+    var pred_log: txlog.TxLog = .init(std.testing.allocator);
+    defer pred_log.deinit();
+    try appendCanonical(&pred_log, "{\"confidence_bp\":5500,\"ts\":100}");
+    try appendCanonical(&pred_log, "{\"confidence_bp\":7000,\"ts\":200}");
+
+    const pred_chain: chain_mod.Chain = .{
+        .allocator = std.testing.allocator,
+        .log = pred_log,
+        .branch_name = try std.testing.allocator.dupe(u8, "main"),
+    };
+    defer std.testing.allocator.free(pred_chain.branch_name);
+
+    const d = try outcomeDivergence(std.testing.allocator, &pred_chain, true);
+    try std.testing.expectEqual(@as(?usize, null), d.first_wrong_idx);
+}
+
+test "outcomeDivergence with resolved_no flips the agreement direction" {
+    var pred_log: txlog.TxLog = .init(std.testing.allocator);
+    defer pred_log.deinit();
+    try appendCanonical(&pred_log, "{\"confidence_bp\":8000,\"ts\":100}"); // wrong: predicted yes, resolved no
+    try appendCanonical(&pred_log, "{\"confidence_bp\":3000,\"ts\":200}"); // right
+    try appendCanonical(&pred_log, "{\"confidence_bp\":2000,\"ts\":300}"); // right
+
+    const pred_chain: chain_mod.Chain = .{
+        .allocator = std.testing.allocator,
+        .log = pred_log,
+        .branch_name = try std.testing.allocator.dupe(u8, "main"),
+    };
+    defer std.testing.allocator.free(pred_chain.branch_name);
+
+    const d = try outcomeDivergence(std.testing.allocator, &pred_chain, false);
+    try std.testing.expectEqual(@as(?usize, 0), d.first_wrong_idx);
 }
 
 test "temporalDivergence returns null when chains agree within threshold" {
