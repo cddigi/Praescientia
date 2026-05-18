@@ -61,28 +61,36 @@ pub fn parseThesis(allocator: Allocator, json: []const u8) !ThesisManifest {
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
     defer parsed.deinit();
     const root = parsed.value.object;
-    if (!std.mem.eql(u8, root.get("kind").?.string, "thesis")) return error.WrongManifestKind;
+    const kind = (root.get("kind") orelse return error.MissingKind).string;
+    if (!std.mem.eql(u8, kind, "thesis")) return error.WrongManifestKind;
 
-    const market_arr = root.get("market_set").?.array;
+    const id_v = root.get("id") orelse return error.MissingId;
+    const description_v = root.get("description") orelse return error.MissingDescription;
+    const rollup_fn_v = root.get("rollup_fn") orelse return error.MissingRollupFn;
+    const market_arr = (root.get("market_set") orelse return error.MissingMarketSet).array;
+    const weights_obj = (root.get("weights") orelse return error.MissingWeights).object;
+    const trigger = (root.get("trigger") orelse return error.MissingTrigger).object;
+    const cd = trigger.get("confidence_delta_bp") orelse return error.MissingConfidenceDelta;
+
     const market_set = try allocator.alloc([]u8, market_arr.items.len);
     errdefer allocator.free(market_set);
     const weights = try allocator.alloc(u32, market_arr.items.len);
     errdefer allocator.free(weights);
 
-    const weights_obj = root.get("weights").?.object;
     for (market_arr.items, 0..) |item, i| {
         market_set[i] = try allocator.dupe(u8, item.string);
-        weights[i] = @intCast(weights_obj.get(item.string).?.integer);
+        const w = weights_obj.get(item.string) orelse return error.MissingTickerWeight;
+        weights[i] = @intCast(w.integer);
     }
 
     return .{
         .allocator = allocator,
-        .id = try allocator.dupe(u8, root.get("id").?.string),
-        .description = try allocator.dupe(u8, root.get("description").?.string),
-        .rollup_fn = try allocator.dupe(u8, root.get("rollup_fn").?.string),
+        .id = try allocator.dupe(u8, id_v.string),
+        .description = try allocator.dupe(u8, description_v.string),
+        .rollup_fn = try allocator.dupe(u8, rollup_fn_v.string),
         .market_set = market_set,
         .weights_bp = weights,
-        .confidence_delta_bp = @intCast(root.get("trigger").?.object.get("confidence_delta_bp").?.integer),
+        .confidence_delta_bp = @intCast(cd.integer),
     };
 }
 
@@ -109,6 +117,38 @@ test "parseMarket returns MissingTrigger when trigger is absent" {
 test "parseMarket returns MissingPriceDelta when trigger.price_delta_cents is absent" {
     const json = "{\"kind\":\"market\",\"ticker\":\"KXTEST\",\"trigger\":{}}";
     try std.testing.expectError(error.MissingPriceDelta, parseMarket(std.testing.allocator, json));
+}
+
+test "parseThesis returns MissingId when id is absent" {
+    const json =
+        \\{"kind":"thesis","description":"x","market_set":["A"],"rollup_fn":"f",
+        \\"weights":{"A":10000},"trigger":{"confidence_delta_bp":500}}
+    ;
+    try std.testing.expectError(error.MissingId, parseThesis(std.testing.allocator, json));
+}
+
+test "parseThesis returns MissingMarketSet when market_set is absent" {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x","rollup_fn":"f",
+        \\"weights":{},"trigger":{"confidence_delta_bp":500}}
+    ;
+    try std.testing.expectError(error.MissingMarketSet, parseThesis(std.testing.allocator, json));
+}
+
+test "parseThesis returns MissingWeights when weights is absent" {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x","market_set":["A"],
+        \\"rollup_fn":"f","trigger":{"confidence_delta_bp":500}}
+    ;
+    try std.testing.expectError(error.MissingWeights, parseThesis(std.testing.allocator, json));
+}
+
+test "parseThesis returns MissingConfidenceDelta when trigger.confidence_delta_bp is absent" {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x","market_set":["A"],
+        \\"rollup_fn":"f","weights":{"A":10000},"trigger":{}}
+    ;
+    try std.testing.expectError(error.MissingConfidenceDelta, parseThesis(std.testing.allocator, json));
 }
 
 test "parseThesis reads market_set + weights in parallel" {
