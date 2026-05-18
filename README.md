@@ -230,7 +230,7 @@ When the dashboard server is started with `--kb-root=PATH`, four routes become a
 
 The dashboard sidebar exposes "KB Markets" and "KB Theses" panels backed by these routes.
 
-The full design and rationale lives in `docs/plans/2026-05-17-state-chain-knowledge-base-design.md`.
+The full design and rationale lives in `docs/plans/done/2026-05-17-state-chain-knowledge-base-design.md`.
 
 ## Philosophy
 
