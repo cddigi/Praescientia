@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Ship the four deferred items from the KB plan — manifest schema validation, `/metrics`, `praescientia-kb init`, and a dashboard KB tab. Companion design at `docs/plans/2026-05-18-kb-followups-design.md`.
+**Goal:** Ship the four deferred items from the KB plan — manifest schema validation, `/metrics`, `praescientia-kb init`, and a dashboard KB tab. Companion design at `2026-05-18-kb-followups-design.md` (sibling in `docs/plans/done/`).
 
 **Architecture:** Two new modules (`src/kb/metrics.zig`, hand-rolled validators in `src/kb/manifest.zig`) plus call-site instrumentation in `src/kb/*` and `server/handlers.zig`. The CLI gains an `init` subcommand on `tools/kb.zig`. The dashboard grows two pages inline in `server/dashboard.html`. The `portfolios/` migration is explicitly out of scope per the design doc.
 
