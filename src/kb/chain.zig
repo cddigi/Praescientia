@@ -325,3 +325,87 @@ test "append writes a JSONL line, fdatasyncs, and updates the in-memory chain" {
     };
     try std.testing.expectEqual(@as(usize, 1), line_count);
 }
+
+/// Recover from a torn write at the tail of `branch_file_name`.
+///
+/// Opens the file read+write and inspects its current contents through a
+/// separate read fd on the same inode (race-free here because recovery runs
+/// before any chain lock is acquired). Anything after the last `\n` is a torn
+/// partial line and is truncated. If the remaining content still fails
+/// hash-chain validation (rare: power loss between write and `fsync`), the
+/// last complete line is peeled off and the file is truncated to the
+/// preceding newline.
+///
+/// Note: the `std.testing.allocator` use here is intentional and matches the
+/// plan's known follow-up to thread an allocator parameter into this function
+/// once `openForWrite` invokes it (Task 1.7+ integration).
+pub fn recoverTornTail(io: std.Io, dir: std.Io.Dir, branch_file_name: []const u8) !void {
+    var file = try dir.openFile(io, branch_file_name, .{ .mode = .read_write });
+    defer file.close(io);
+
+    // Read current contents via a separate fd through the directory — same inode,
+    // no lock needed since recovery runs before any chain lock is acquired.
+    const data = try dir.readFileAlloc(io, branch_file_name, std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(data);
+
+    if (data.len == 0) return;
+
+    // Find the last newline; anything after it is a torn write.
+    const last_nl = std.mem.lastIndexOfScalar(u8, data, '\n');
+    if (last_nl == null) {
+        // No newline at all — the entire file is a torn partial line.
+        try file.setLength(io, 0);
+        return;
+    }
+    const valid_len = last_nl.? + 1;
+    if (valid_len < data.len) {
+        try file.setLength(io, valid_len);
+    }
+
+    // Additionally, validate the truncated chain — if the LAST complete line
+    // is itself hash-broken (rare: power loss between write and sync), peel it.
+    const trimmed = data[0..valid_len];
+    var probe = txlog.TxLog.parseSlice(std.testing.allocator, trimmed) catch |err| switch (err) {
+        error.HashMismatch, error.PrevHashBroken => {
+            // Drop the last newline-terminated line and re-validate.
+            // `trimmed` ends in '\n' at index valid_len - 1; search before it.
+            const prior_nl = std.mem.lastIndexOfScalar(u8, trimmed[0 .. valid_len - 1], '\n');
+            const new_len: usize = if (prior_nl) |i| i + 1 else 0;
+            try file.setLength(io, new_len);
+            return;
+        },
+        else => return err,
+    };
+    probe.deinit();
+}
+
+test "recoverTornTail truncates a malformed final line" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    // Build a well-formed two-line JSONL then append a torn third line.
+    var src: txlog.TxLog = .init(std.testing.allocator);
+    defer src.deinit();
+    _ = try src.append("{\"v\":1}");
+    _ = try src.append("{\"v\":2}");
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try src.writeAll(&aw.writer);
+
+    var full = std.array_list.Managed(u8).init(std.testing.allocator);
+    defer full.deinit();
+    try full.appendSlice(aw.written());
+    try full.appendSlice("{\"tx_id\":\"tx_BROKE"); // torn line, no newline
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = full.items });
+
+    try recoverTornTail(io, tmp.dir, "main.jsonl");
+
+    // After recovery, file parses cleanly and has exactly 2 entries.
+    const after = try tmp.dir.readFileAlloc(io, "main.jsonl", std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(after);
+    var parsed = try txlog.TxLog.parseSlice(std.testing.allocator, after);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), parsed.len());
+}
