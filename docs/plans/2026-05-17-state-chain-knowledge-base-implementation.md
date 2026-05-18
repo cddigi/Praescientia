@@ -1249,10 +1249,10 @@ test "golden lifecycle: write 3 → fork at idx1 → switchActive → recover to
     }
 
     // 2. Fork at idx 1 → exp-a.
-    try branches_mod.fork(std.testing.allocator, tmp.dir, "main", fork_at_hash, "exp-a");
+    try branches_mod.fork(std.testing.allocator, io, tmp.dir, "main", fork_at_hash, "exp-a");
 
     // 3. Switch active to exp-a.
-    try branches_mod.switchActive(std.testing.allocator, tmp.dir, "exp-a");
+    try branches_mod.switchActive(std.testing.allocator, io, tmp.dir, "exp-a");
 
     // 4. exp-a chain has 2 entries; main still has 3.
     var exp_a = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
@@ -1272,8 +1272,9 @@ test "golden lifecycle: write 3 → fork at idx1 → switchActive → recover to
     {
         var f = try tmp.dir.openFile(io, "exp-a.jsonl", .{ .mode = .read_write });
         defer f.close(io);
-        try f.seekFromEnd(io, 0);
-        try f.writeStreamingAll(io, "{\"tx_id\":\"tx_TORN_");
+        // std.Io.File has no seekFromEnd in 0.16 — use length() + writePositionalAll.
+        const eof = try f.length(io);
+        try f.writePositionalAll(io, "{\"tx_id\":\"tx_TORN_", eof);
     }
 
     try recoverTornTail(io, tmp.dir, "exp-a.jsonl");

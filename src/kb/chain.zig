@@ -409,3 +409,64 @@ test "recoverTornTail truncates a malformed final line" {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 2), parsed.len());
 }
+
+test "golden lifecycle: write 3 -> fork at idx1 -> switchActive -> recover torn tail" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+
+    // Seed empty main + branches.json.
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "branches.json",
+        .data =
+        \\{"active":"main","branches":[{"name":"main","head_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_hash":"0000000000000000000000000000000000000000000000000000000000000000","parent_branch":"","created_ts_ms":0}]}
+        ,
+    });
+
+    // 1. Write 3 entries on main.
+    var fork_at_hash: Hash = undefined;
+    {
+        var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+        defer h.deinit();
+        _ = try h.append("{\"kind\":\"market.reality\",\"ts\":1,\"yes_bid_cents\":50}");
+        const tx2 = try h.append("{\"kind\":\"market.reality\",\"ts\":2,\"yes_bid_cents\":55}");
+        fork_at_hash = tx2.hash;
+        _ = try h.append("{\"kind\":\"market.reality\",\"ts\":3,\"yes_bid_cents\":60}");
+    }
+
+    // 2. Fork at idx 1 -> exp-a.
+    try branches_mod.fork(std.testing.allocator, io, tmp.dir, "main", fork_at_hash, "exp-a");
+
+    // 3. Switch active to exp-a.
+    try branches_mod.switchActive(std.testing.allocator, io, tmp.dir, "exp-a");
+
+    // 4. exp-a chain has 2 entries; main still has 3.
+    var exp_a = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
+    defer exp_a.deinit();
+    try std.testing.expectEqual(@as(usize, 2), exp_a.len());
+
+    var main_chain = try openRead(std.testing.allocator, io, tmp.dir, "main");
+    defer main_chain.deinit();
+    try std.testing.expectEqual(@as(usize, 3), main_chain.len());
+
+    // 5. Append a 3rd entry to exp-a, then simulate a torn write.
+    {
+        var h = try openForWrite(std.testing.allocator, io, tmp.dir, "exp-a");
+        defer h.deinit();
+        _ = try h.append("{\"kind\":\"market.reality\",\"ts\":4,\"yes_bid_cents\":58}");
+    }
+    {
+        var f = try tmp.dir.openFile(io, "exp-a.jsonl", .{ .mode = .read_write });
+        defer f.close(io);
+        // std.Io.File has no seekFromEnd in 0.16 - use length() + writePositionalAll.
+        const eof = try f.length(io);
+        try f.writePositionalAll(io, "{\"tx_id\":\"tx_TORN_", eof);
+    }
+
+    try recoverTornTail(io, tmp.dir, "exp-a.jsonl");
+
+    var exp_a_recovered = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
+    defer exp_a_recovered.deinit();
+    try std.testing.expectEqual(@as(usize, 3), exp_a_recovered.len());
+}
