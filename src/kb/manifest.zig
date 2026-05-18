@@ -157,6 +157,76 @@ test "parseMarket returns MissingPriceDelta when trigger.price_delta_cents is ab
     try std.testing.expectError(error.MissingPriceDelta, parseMarket(std.testing.allocator, json));
 }
 
+/// Semantic checks on top of parseThesis. Length/charset on id and description,
+/// non-empty market_set with weights summing to 10000 bp, range on confidence_delta_bp.
+pub fn validateThesis(t: *const ThesisManifest) !void {
+    if (t.id.len == 0 or t.id.len > 64) return error.ThesisIdInvalid;
+    for (t.id) |c| {
+        const ok = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-';
+        if (!ok) return error.ThesisIdInvalid;
+    }
+    if (t.description.len == 0 or t.description.len > 512) return error.DescriptionLengthOutOfRange;
+    if (t.market_set.len == 0) return error.EmptyMarketSet;
+    if (t.market_set.len != t.weights_bp.len) return error.WeightSetMismatch;
+    var sum: u64 = 0;
+    for (t.weights_bp) |w| sum += w;
+    if (sum != 10000) return error.WeightSumMismatch;
+    if (t.confidence_delta_bp == 0 or t.confidence_delta_bp > 10000) return error.ConfidenceDeltaOutOfRange;
+    if (t.rollup_fn.len == 0) return error.MissingRollupFn;
+}
+
+test "validateThesis accepts a well-formed manifest" {
+    const json =
+        \\{"kind":"thesis","id":"fed-cuts","description":"x","market_set":["A","B"],
+        \\"rollup_fn":"weighted_avg_v1","weights":{"A":7000,"B":3000},
+        \\"trigger":{"confidence_delta_bp":500}}
+    ;
+    var t = try parseThesis(std.testing.allocator, json);
+    defer t.deinit();
+    try validateThesis(&t);
+}
+
+test "validateThesis rejects weights that don't sum to 10000" {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x","market_set":["A","B"],
+        \\"rollup_fn":"f","weights":{"A":7000,"B":2000},
+        \\"trigger":{"confidence_delta_bp":500}}
+    ;
+    var t = try parseThesis(std.testing.allocator, json);
+    defer t.deinit();
+    try std.testing.expectError(error.WeightSumMismatch, validateThesis(&t));
+}
+
+test "validateThesis rejects an empty market_set" {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x","market_set":[],
+        \\"rollup_fn":"f","weights":{},"trigger":{"confidence_delta_bp":500}}
+    ;
+    var t = try parseThesis(std.testing.allocator, json);
+    defer t.deinit();
+    try std.testing.expectError(error.EmptyMarketSet, validateThesis(&t));
+}
+
+test "validateThesis rejects id with uppercase" {
+    const json =
+        \\{"kind":"thesis","id":"FED","description":"x","market_set":["A"],
+        \\"rollup_fn":"f","weights":{"A":10000},"trigger":{"confidence_delta_bp":500}}
+    ;
+    var t = try parseThesis(std.testing.allocator, json);
+    defer t.deinit();
+    try std.testing.expectError(error.ThesisIdInvalid, validateThesis(&t));
+}
+
+test "validateThesis rejects confidence_delta_bp = 0" {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x","market_set":["A"],
+        \\"rollup_fn":"f","weights":{"A":10000},"trigger":{"confidence_delta_bp":0}}
+    ;
+    var t = try parseThesis(std.testing.allocator, json);
+    defer t.deinit();
+    try std.testing.expectError(error.ConfidenceDeltaOutOfRange, validateThesis(&t));
+}
+
 test "parseThesis returns MissingId when id is absent" {
     const json =
         \\{"kind":"thesis","description":"x","market_set":["A"],"rollup_fn":"f",
