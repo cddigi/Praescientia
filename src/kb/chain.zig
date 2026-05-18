@@ -212,9 +212,20 @@ pub const WriteHandle = struct {
             return err;
         };
 
+        metrics.bumpAppend(classifyKind(canonical_json));
         return tx;
     }
 };
+
+const metrics = @import("metrics.zig");
+
+/// Cheap substring sniff over the canonical-JSON payload to bucket the metric.
+/// Canonical JSON has "kind" alphabetized, so the substring is stable.
+fn classifyKind(payload: []const u8) metrics.ChainKind {
+    if (std.mem.indexOf(u8, payload, "\"kind\":\"market.reality\"") != null) return .market_reality;
+    if (std.mem.indexOf(u8, payload, "\"kind\":\"thesis.reality\"") != null) return .thesis_reality;
+    return .other;
+}
 
 pub fn openForWrite(allocator: Allocator, io: std.Io, dir: std.Io.Dir, branch: []const u8) !WriteHandle {
     try branches_mod.validateBranchName(branch);
@@ -518,4 +529,20 @@ test "golden lifecycle: write 3 -> fork at idx1 -> switchActive -> recover torn 
     var exp_a_recovered = try openRead(std.testing.allocator, io, tmp.dir, "exp-a");
     defer exp_a_recovered.deinit();
     try std.testing.expectEqual(@as(usize, 3), exp_a_recovered.len());
+}
+
+test "WriteHandle.append bumps kb.metrics.chain_appends" {
+    metrics.resetAll();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try tmp.dir.writeFile(io, .{ .sub_path = "main.jsonl", .data = "" });
+
+    var h = try openForWrite(std.testing.allocator, io, tmp.dir, "main");
+    defer h.deinit();
+    _ = try h.append("{\"kind\":\"market.reality\",\"ts\":1,\"yes_bid_cents\":50}");
+
+    const v = metrics.chain_appends[@intFromEnum(metrics.ChainKind.market_reality)].load(.monotonic);
+    try std.testing.expectEqual(@as(u64, 1), v);
 }
