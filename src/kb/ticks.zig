@@ -310,6 +310,69 @@ pub fn validateOrderIntent(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Client order ids
+// ---------------------------------------------------------------------------
+
+/// Kalshi accepts up to 64 bytes in `client_order_id`. The format we ship
+/// below is 35 bytes wide so we never need to worry in practice.
+pub const client_order_id_max_bytes: usize = 64;
+
+pub const ClientOrderIdError = error{
+    /// One of `tick_id`, `thesis`, or `ticker` was empty. The format
+    /// requires all three to produce a sensible hash input.
+    EmptyComponent,
+    /// The caller's `out` buffer is smaller than the format requires.
+    BufferTooSmall,
+    /// The composed id exceeded `client_order_id_max_bytes` (would happen
+    /// only if `tick_id` itself is pathological — kept as a defensive
+    /// guard so a future tick_id shape change doesn't silently overflow).
+    ClientOrderIdOverflow,
+};
+
+/// Build a deterministic, replay-safe `client_order_id` for a Kalshi
+/// order. Format: `"{tick_id}-{8-hex-fnv1a32(thesis|ticker|side|action)}"`.
+///
+/// The format diverges from the design's literal `"tick-{tick_id}-{thesis}
+/// -{ticker}-{side}-{action}"` because realistic Kalshi tickers (e.g.
+/// `KXNBASPREAD-26MAY20SASOKC-SAS13`) push the readable form past the 64-byte
+/// API cap. The 8-hex discriminator preserves replay-safety
+/// (same tuple → same hash → same id) and per-tick uniqueness; readable
+/// thesis/ticker grep-ability moves to the orchestrator's sidecar
+/// `kb/.ticks/{tick_id}.order_map.json`, which maps id → readable tuple.
+pub fn clientOrderId(
+    out: []u8,
+    tick_id: []const u8,
+    thesis: []const u8,
+    ticker: []const u8,
+    side: Side,
+    action: Action,
+) ClientOrderIdError![]u8 {
+    if (tick_id.len == 0 or thesis.len == 0 or ticker.len == 0) {
+        return ClientOrderIdError.EmptyComponent;
+    }
+
+    // FNV-1a 32-bit over thesis|ticker|side|action. The `|` separators
+    // prevent ambiguity like "ab"+"c" hashing identically to "a"+"bc".
+    var hasher = std.hash.Fnv1a_32.init();
+    hasher.update(thesis);
+    hasher.update("|");
+    hasher.update(ticker);
+    hasher.update("|");
+    hasher.update(@tagName(side));
+    hasher.update("|");
+    hasher.update(@tagName(action));
+    const digest: u32 = hasher.final();
+
+    const result = std.fmt.bufPrint(out, "{s}-{x:0>8}", .{ tick_id, digest }) catch {
+        return ClientOrderIdError.BufferTooSmall;
+    };
+    if (result.len > client_order_id_max_bytes) {
+        return ClientOrderIdError.ClientOrderIdOverflow;
+    }
+    return result;
+}
+
 /// Write a canonical-JSON encoding of a snapshot slice. Top-level shape:
 ///
 ///   {"entries":[
@@ -558,6 +621,88 @@ test "validateOrderIntent skips bankroll check for cancels and sells" {
         &t,
         .{ .bankroll_cap_cents = 100, .bankroll_used_cents = 100 },
     );
+}
+
+// --- clientOrderId tests ---
+
+test "clientOrderId composes {tick_id}-{8-hex} for a standard order" {
+    var buf: [client_order_id_max_bytes]u8 = undefined;
+    const id = try clientOrderId(
+        &buf,
+        "01ABCDEFGHJKMNPQRSTVWXYZ12",
+        "sas-okc-spread-ladder",
+        "KXNBASPREAD-26MAY20SASOKC-SAS13",
+        .yes,
+        .buy,
+    );
+    // 26 (tick_id) + 1 ("-") + 8 (hex) = 35.
+    try std.testing.expectEqual(@as(usize, 35), id.len);
+    try std.testing.expect(std.mem.startsWith(u8, id, "01ABCDEFGHJKMNPQRSTVWXYZ12-"));
+    // Hex portion is lowercase 0-9a-f.
+    for (id[27..]) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+        try std.testing.expect(ok);
+    }
+}
+
+test "clientOrderId is deterministic for identical inputs" {
+    var a: [client_order_id_max_bytes]u8 = undefined;
+    var b: [client_order_id_max_bytes]u8 = undefined;
+    const id_a = try clientOrderId(&a, "TID", "thesis", "ticker", .yes, .buy);
+    const id_b = try clientOrderId(&b, "TID", "thesis", "ticker", .yes, .buy);
+    try std.testing.expectEqualStrings(id_a, id_b);
+}
+
+test "clientOrderId discriminates side and action" {
+    var a: [client_order_id_max_bytes]u8 = undefined;
+    var b: [client_order_id_max_bytes]u8 = undefined;
+    var c: [client_order_id_max_bytes]u8 = undefined;
+    const yes_buy = try clientOrderId(&a, "TID", "t", "k", .yes, .buy);
+    const no_buy = try clientOrderId(&b, "TID", "t", "k", .no, .buy);
+    const yes_sell = try clientOrderId(&c, "TID", "t", "k", .yes, .sell);
+    try std.testing.expect(!std.mem.eql(u8, yes_buy, no_buy));
+    try std.testing.expect(!std.mem.eql(u8, yes_buy, yes_sell));
+    try std.testing.expect(!std.mem.eql(u8, no_buy, yes_sell));
+}
+
+test "clientOrderId rejects empty components" {
+    var buf: [client_order_id_max_bytes]u8 = undefined;
+    try std.testing.expectError(ClientOrderIdError.EmptyComponent, clientOrderId(
+        &buf,
+        "",
+        "thesis",
+        "ticker",
+        .yes,
+        .buy,
+    ));
+    try std.testing.expectError(ClientOrderIdError.EmptyComponent, clientOrderId(
+        &buf,
+        "TID",
+        "",
+        "ticker",
+        .yes,
+        .buy,
+    ));
+    try std.testing.expectError(ClientOrderIdError.EmptyComponent, clientOrderId(
+        &buf,
+        "TID",
+        "thesis",
+        "",
+        .yes,
+        .buy,
+    ));
+}
+
+test "clientOrderId errors when output buffer is too small" {
+    var tiny: [10]u8 = undefined;
+    try std.testing.expectError(ClientOrderIdError.BufferTooSmall, clientOrderId(
+        &tiny,
+        "01ABCDEFGHJKMNPQRSTVWXYZ12",
+        "t",
+        "k",
+        .yes,
+        .buy,
+    ));
 }
 
 test "writeSnapshot emits canonical JSON with alphabetical keys" {
