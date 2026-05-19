@@ -40,6 +40,7 @@ pub fn main(init: std.process.Init) !u8 {
     var env: kalshi.client.Env = .demo;
     var verbose = false;
     var kb_root_path: ?[]const u8 = null;
+    var commentary_query_url: ?[]const u8 = null;
 
     for (argv[1..]) |a| {
         if (std.mem.startsWith(u8, a, "--port=")) {
@@ -49,6 +50,8 @@ pub fn main(init: std.process.Init) !u8 {
             };
         } else if (std.mem.startsWith(u8, a, "--kb-root=")) {
             kb_root_path = a["--kb-root=".len..];
+        } else if (std.mem.startsWith(u8, a, "--commentary-query-url=")) {
+            commentary_query_url = a["--commentary-query-url=".len..];
         } else if (std.mem.eql(u8, a, "--live")) {
             env = .live;
         } else if (std.mem.eql(u8, a, "--demo")) {
@@ -57,12 +60,14 @@ pub fn main(init: std.process.Init) !u8 {
             verbose = true;
         } else if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
             try stderr.print(
-                \\Usage: praescientia-server [--port=N] [--demo|--live] [--kb-root=PATH] [--verbose]
+                \\Usage: praescientia-server [--port=N] [--demo|--live] [--kb-root=PATH] [--commentary-query-url=URL] [--verbose]
                 \\
                 \\Defaults: --port=8080 --demo  (kb routes disabled until --kb-root is set)
                 \\
                 \\Dashboard is served at http://localhost:<port>/.
                 \\API routes live under /api/kalshi/* and /api/kb/* (when --kb-root is set).
+                \\/api/kb/commentary/similar proxies to --commentary-query-url (the Python
+                \\indexer's --serve port) when set; returns 503 otherwise.
                 \\
             , .{});
             return 0;
@@ -100,6 +105,7 @@ pub fn main(init: std.process.Init) !u8 {
         \\  Dashboard:    http://localhost:{d}/
         \\  Credentials:  {s}
         \\  KB root:      {s}
+        \\  Commentary:   {s}
         \\============================================================
         \\
     , .{
@@ -108,6 +114,7 @@ pub fn main(init: std.process.Init) !u8 {
         port,
         if (key_id != null and pem != null) "yes" else "public-only",
         kb_root_path orelse "(disabled)",
+        commentary_query_url orelse "(no proxy)",
     });
     try stdout.flush();
 
@@ -119,7 +126,7 @@ pub fn main(init: std.process.Init) !u8 {
             try stderr.flush();
             continue;
         };
-        _ = Io.async(io, handleConnection, .{ gpa, io, &client, stream, verbose, kb_root_path });
+        _ = Io.async(io, handleConnection, .{ gpa, io, &client, stream, verbose, kb_root_path, commentary_query_url });
     }
 }
 
@@ -130,6 +137,7 @@ fn handleConnection(
     stream: std.Io.net.Stream,
     verbose: bool,
     kb_root_path: ?[]const u8,
+    commentary_query_url: ?[]const u8,
 ) void {
     defer stream.close(io);
 
@@ -145,7 +153,7 @@ fn handleConnection(
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
 
-        handleRequest(arena.allocator(), io, client, &request, verbose, kb_root_path) catch |e| {
+        handleRequest(arena.allocator(), io, client, &request, verbose, kb_root_path, commentary_query_url) catch |e| {
             if (verbose) std.debug.print("handler error: {s}\n", .{@errorName(e)});
             // Bail on this connection; client will reconnect.
             break;
@@ -162,6 +170,7 @@ fn handleRequest(
     request: *std.http.Server.Request,
     verbose: bool,
     kb_root_path: ?[]const u8,
+    commentary_query_url: ?[]const u8,
 ) !void {
     const target = request.head.target;
     const method = request.head.method;
@@ -210,6 +219,7 @@ fn handleRequest(
         .params = params,
         .param_count = hit.param_count,
         .kb_root_path = kb_root_path,
+        .commentary_query_url = commentary_query_url,
     };
     try hit.route.handler(&ctx);
 }

@@ -35,6 +35,9 @@ pub const RequestCtx = struct {
     /// Root of the knowledge-base directory tree (containing `markets/` and
     /// `theses/`). `null` disables /api/kb/* — those routes return 503.
     kb_root_path: ?[]const u8 = null,
+    /// Base URL of the Python indexer's `--serve` port, e.g.
+    /// `http://localhost:8002`. `null` disables /api/kb/commentary/similar.
+    commentary_query_url: ?[]const u8 = null,
 
     pub fn param(self: *const RequestCtx, i: usize) []const u8 {
         std.debug.assert(i < self.param_count);
@@ -98,6 +101,8 @@ pub const routes = [_]Route{
     .{ .method = .POST, .pattern = "/api/kb/theses/{id}/commentary", .handler = kbThesisCommentaryWrite },
     .{ .method = .POST, .pattern = "/api/kb/markets/{ticker}/commentary", .handler = kbMarketCommentaryWrite },
     .{ .method = .POST, .pattern = "/api/kb/commentary/global", .handler = kbGlobalCommentaryWrite },
+    // Commentary retrieval — pass-through to Python query service
+    .{ .method = .POST, .pattern = "/api/kb/commentary/similar", .handler = kbCommentarySimilar },
     // Metrics
     .{ .method = .GET, .pattern = "/metrics", .handler = metricsHandler },
 };
@@ -518,6 +523,68 @@ fn commentaryWriteImpl(ctx: *RequestCtx, scope: kb.commentary.Scope) !void {
     return respondOk(ctx, body.items);
 }
 
+/// Thin pass-through to the Python indexer's POST /similar. The dashboard
+/// server doesn't know or care about LanceDB's wire format — the indexer
+/// owns it. We forward the request body, copy the response body+status back.
+fn kbCommentarySimilar(ctx: *RequestCtx) !void {
+    const base = ctx.commentary_query_url orelse {
+        return respondError(
+            ctx,
+            "commentary retrieval is not configured (start praescientia-server with --commentary-query-url=URL)",
+            .service_unavailable,
+        );
+    };
+
+    // Read the request body (cap to 4 KB — request shapes are tiny).
+    var body_buf: [4 * 1024]u8 = undefined;
+    const body_reader = ctx.request.readerExpectContinue(&body_buf) catch |e|
+        return respondError(ctx, @errorName(e), .bad_request);
+
+    var collected: std.array_list.Managed(u8) = .init(ctx.arena);
+    while (true) {
+        const chunk = body_reader.peek(1) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return respondError(ctx, @errorName(err), .bad_request),
+        };
+        if (chunk.len == 0) break;
+        if (collected.items.len + chunk.len > 4 * 1024) {
+            return respondError(ctx, "request body exceeds 4 KB cap", .payload_too_large);
+        }
+        try collected.appendSlice(chunk);
+        body_reader.toss(chunk.len);
+    }
+
+    const url = try std.fmt.allocPrint(ctx.arena, "{s}/similar", .{base});
+
+    var resp_body: std.Io.Writer.Allocating = .init(ctx.arena);
+    var http: std.http.Client = .{ .allocator = ctx.arena, .io = ctx.io };
+    defer http.deinit();
+
+    const fetch_result = http.fetch(.{
+        .location = .{ .url = url },
+        .method = .POST,
+        .payload = collected.items,
+        .response_writer = &resp_body.writer,
+        .headers = .{
+            .content_type = .{ .override = "application/json" },
+            .accept_encoding = .{ .override = "application/json" },
+        },
+    }) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "proxy to {s} failed: {t}", .{ url, err });
+        return respondError(ctx, msg, .bad_gateway);
+    };
+
+    // Forward the Python service's response verbatim — let it own the envelope shape.
+    try ctx.request.respond(resp_body.written(), .{
+        .status = fetch_result.status,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "application/json" },
+            .{ .name = "access-control-allow-origin", .value = "*" },
+        },
+        .keep_alive = true,
+    });
+}
+
 /// Pluck an optional string-array JSON field. Returns &.{} for null/missing.
 /// Returns an error response upstream on type mismatch.
 fn jsonStringArray(arena: Allocator, maybe_val: ?std.json.Value, field_name: []const u8) ![]const []const u8 {
@@ -770,6 +837,12 @@ test "match: commentary write routes are wired up" {
 
     const global = match(.POST, "/api/kb/commentary/global", &params).?;
     try std.testing.expectEqualStrings("/api/kb/commentary/global", global.route.pattern);
+}
+
+test "match: commentary similar route is wired up" {
+    var params: [max_path_params][]const u8 = undefined;
+    const hit = match(.POST, "/api/kb/commentary/similar", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/commentary/similar", hit.route.pattern);
 }
 
 test "dashboard.html exposes the Knowledge Base sidebar markers" {
