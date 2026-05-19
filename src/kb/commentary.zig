@@ -72,6 +72,44 @@ pub const Scope = union(enum) {
     global,
 };
 
+/// Write a scope's chain-directory path (relative to kb_root) into `buf` and
+/// return a slice pointing into it. Validates the embedded id/ticker against
+/// the same charset rules that the manifest validators use, so a malformed
+/// scope is refused before any IO happens.
+pub fn scopeRelativePath(buf: []u8, scope: Scope) ![]const u8 {
+    return switch (scope) {
+        .thesis => |id| blk: {
+            try validateThesisId(id);
+            break :blk std.fmt.bufPrint(buf, "theses/{s}/commentary", .{id});
+        },
+        .market => |ticker| blk: {
+            try validateMarketTicker(ticker);
+            break :blk std.fmt.bufPrint(buf, "markets/{s}/commentary", .{ticker});
+        },
+        .global => std.fmt.bufPrint(buf, "commentary/global", .{}),
+    };
+}
+
+/// Match `manifest.validateThesis` charset rules: lowercase + digits + hyphen,
+/// 1..64 chars.
+fn validateThesisId(id: []const u8) !void {
+    if (id.len == 0 or id.len > 64) return error.InvalidThesisId;
+    for (id) |c| {
+        const ok = (c >= 'a' and c <= 'z') or (c >= '0' and c <= '9') or c == '-';
+        if (!ok) return error.InvalidThesisId;
+    }
+}
+
+/// Match `manifest.validateMarket` charset rules: uppercase + digits + hyphen
+/// + dot (for threshold suffixes), 1..64 chars.
+fn validateMarketTicker(ticker: []const u8) !void {
+    if (ticker.len == 0 or ticker.len > 64) return error.InvalidMarketTicker;
+    for (ticker) |c| {
+        const ok = (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '-' or c == '.';
+        if (!ok) return error.InvalidMarketTicker;
+    }
+}
+
 /// Encode the payload to canonical JSON. Keys emitted in strict alphabetical
 /// order: agent, body, inputs, kind, parent_hash, references, tags, ts.
 pub fn encodePayload(writer: *std.Io.Writer, payload: CommentaryPayload) !void {
@@ -283,4 +321,34 @@ test "validatePayload rejects malformed parent_hash" {
     var p = validPayload();
     p.parent_hash = "abc";
     try std.testing.expectError(error.InvalidHashFormat, validatePayload(&p));
+}
+
+test "scopeRelativePath maps each scope to the right chain dir" {
+    var buf: [256]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "theses/fed-jun/commentary",
+        try scopeRelativePath(&buf, .{ .thesis = "fed-jun" }),
+    );
+    try std.testing.expectEqualStrings(
+        "markets/KXBTC-26/commentary",
+        try scopeRelativePath(&buf, .{ .market = "KXBTC-26" }),
+    );
+    try std.testing.expectEqualStrings(
+        "commentary/global",
+        try scopeRelativePath(&buf, .global),
+    );
+}
+
+test "scopeRelativePath rejects malformed thesis ids" {
+    var buf: [256]u8 = undefined;
+    try std.testing.expectError(error.InvalidThesisId, scopeRelativePath(&buf, .{ .thesis = "" }));
+    try std.testing.expectError(error.InvalidThesisId, scopeRelativePath(&buf, .{ .thesis = "Uppercase" }));
+    try std.testing.expectError(error.InvalidThesisId, scopeRelativePath(&buf, .{ .thesis = "../evil" }));
+}
+
+test "scopeRelativePath rejects malformed market tickers" {
+    var buf: [256]u8 = undefined;
+    try std.testing.expectError(error.InvalidMarketTicker, scopeRelativePath(&buf, .{ .market = "" }));
+    try std.testing.expectError(error.InvalidMarketTicker, scopeRelativePath(&buf, .{ .market = "kx-bad" }));
+    try std.testing.expectError(error.InvalidMarketTicker, scopeRelativePath(&buf, .{ .market = "../evil" }));
 }
