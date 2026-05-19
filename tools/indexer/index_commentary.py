@@ -72,3 +72,33 @@ def tail(jsonl_path: Path, after_hash: Optional[str]) -> Iterator[dict]:
         # Cursor hash isn't on the chain — replay from the beginning to avoid
         # silent stalls when a branch has been forked underneath us.
         yield from entries
+
+
+class Cursors:
+    """Per-scope `last indexed hash` persistence.
+
+    File shape (`<kb_root>/.commentary_index/cursors.json`):
+
+      {
+        "theses/sample/commentary":   "abc...64-hex",
+        "markets/KXBTC/commentary":   "def...64-hex",
+        "commentary/global":          "012...64-hex"
+      }
+
+    Missing file == empty dict. Writes are atomic (temp-file + rename) so a
+    crash mid-write can't leave a half-written cursors.json on disk.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def read(self) -> dict[str, str]:
+        if not self.path.exists():
+            return {}
+        return json.loads(self.path.read_text())
+
+    def write(self, cursors: dict[str, str]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(json.dumps(cursors, sort_keys=True))
+        tmp.replace(self.path)

@@ -79,3 +79,36 @@ def test_tail_returns_empty_when_chain_missing(tmp_path: Path) -> None:
     # Not an error — newly admitted scope, no writes yet.
     entries = list(ic.tail(tmp_path / "nope.jsonl", after_hash=None))
     assert entries == []
+
+
+def test_cursors_read_missing_returns_empty(tmp_path: Path) -> None:
+    c = ic.Cursors(tmp_path / ".commentary_index" / "cursors.json")
+    assert c.read() == {}
+
+
+def test_cursors_write_then_read(tmp_path: Path) -> None:
+    path = tmp_path / ".commentary_index" / "cursors.json"
+    c = ic.Cursors(path)
+    c.write({"theses/sample/commentary": "a" * 64, "commentary/global": "b" * 64})
+    assert c.read() == {"theses/sample/commentary": "a" * 64, "commentary/global": "b" * 64}
+
+
+def test_cursors_write_is_atomic(tmp_path: Path) -> None:
+    """The write must not leave a half-written cursors.json under any failure mode.
+
+    We can't easily fault-inject here, so we just assert that no .tmp file
+    survives a successful write — proves the rename happened.
+    """
+    path = tmp_path / ".commentary_index" / "cursors.json"
+    c = ic.Cursors(path)
+    c.write({"k": "v"})
+    leftover = list(path.parent.glob("*.tmp"))
+    assert leftover == []
+
+
+def test_cursors_overwrites_prior_value(tmp_path: Path) -> None:
+    path = tmp_path / "cursors.json"
+    c = ic.Cursors(path)
+    c.write({"k": "v1"})
+    c.write({"k": "v2"})
+    assert c.read() == {"k": "v2"}
