@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 import httpx
+import lancedb
+import pyarrow as pa
+
+
+VECTOR_DIM = 1024  # BGE-M3 dense output
 
 
 class EmbedderUnavailable(RuntimeError):
@@ -162,3 +167,48 @@ class LlamaServerEmbedder:
             else:
                 raise EmbedderUnavailable(f"unexpected /embedding row shape: {type(item)}")
         return vectors
+
+
+# ----- LanceDB ---------------------------------------------------------------
+
+LANCE_TABLE_NAME = "commentary"
+
+LANCE_SCHEMA = pa.schema(
+    [
+        pa.field("hash", pa.string()),
+        pa.field("vector", pa.list_(pa.float32(), VECTOR_DIM)),
+        pa.field("scope_path", pa.string()),
+        pa.field("agent_run_id", pa.string()),
+        pa.field("tags", pa.list_(pa.string())),
+        pa.field("ts", pa.int64()),
+    ]
+)
+
+
+def open_or_create_table(lance_dir: Path):
+    """Open the commentary Lance table, creating an empty one with the right
+    schema if it doesn't exist yet.
+
+    LanceDB's sync `list_tables()` is async-only in some versions, so we
+    `open_table` first and fall back to `create_table` on miss.
+    """
+    lance_dir = Path(lance_dir)
+    lance_dir.mkdir(parents=True, exist_ok=True)
+    db = lancedb.connect(str(lance_dir))
+    try:
+        return db.open_table(LANCE_TABLE_NAME)
+    except (FileNotFoundError, ValueError):
+        empty = pa.Table.from_pylist([], schema=LANCE_SCHEMA)
+        return db.create_table(LANCE_TABLE_NAME, data=empty, schema=LANCE_SCHEMA)
+
+
+def insert_rows(table, rows: list[dict]) -> None:
+    """Append rows to the table. No-op on empty input.
+
+    Rows must have all six columns: hash, vector (1024-len list), scope_path,
+    agent_run_id, tags (list of strings), ts (int64 ms).
+    """
+    if not rows:
+        return
+    arrow_table = pa.Table.from_pylist(rows, schema=LANCE_SCHEMA)
+    table.add(arrow_table)

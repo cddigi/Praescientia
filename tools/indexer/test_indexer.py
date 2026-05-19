@@ -183,3 +183,44 @@ def test_embed_batch_raises_embedder_unavailable_on_network_error() -> None:
     embedder = ic.LlamaServerEmbedder("http://localhost:8001", client=fake)
     with pytest.raises(ic.EmbedderUnavailable):
         embedder.embed_batch(["x"])
+
+
+def _make_row(hash_: str, *, scope_path="theses/sample/commentary", agent_run_id="r", tags=None, ts=1779000000000, vec_value=0.5):
+    return {
+        "hash": hash_,
+        "vector": [vec_value] * 1024,
+        "scope_path": scope_path,
+        "agent_run_id": agent_run_id,
+        "tags": list(tags) if tags else [],
+        "ts": ts,
+    }
+
+
+def test_insert_rows_then_read_back(tmp_path: Path) -> None:
+    table = ic.open_or_create_table(tmp_path / "lance")
+    rows = [_make_row("a" * 64, vec_value=0.1), _make_row("b" * 64, vec_value=0.2)]
+    ic.insert_rows(table, rows)
+
+    arr = table.to_arrow()
+    assert arr.num_rows == 2
+    hashes = set(arr.column("hash").to_pylist())
+    assert hashes == {"a" * 64, "b" * 64}
+    # Vector column comes back as a list of float32 per row.
+    by_hash = {row["hash"]: row for row in arr.to_pylist()}
+    a_vec = by_hash["a" * 64]["vector"]
+    assert len(a_vec) == 1024
+    assert float(a_vec[0]) == pytest.approx(0.1)
+
+
+def test_insert_rows_skips_empty(tmp_path: Path) -> None:
+    table = ic.open_or_create_table(tmp_path / "lance")
+    ic.insert_rows(table, [])
+    assert table.to_arrow().num_rows == 0
+
+
+def test_open_or_create_table_reuses_existing(tmp_path: Path) -> None:
+    table_a = ic.open_or_create_table(tmp_path / "lance")
+    ic.insert_rows(table_a, [_make_row("a" * 64)])
+
+    table_b = ic.open_or_create_table(tmp_path / "lance")
+    assert table_b.to_arrow().num_rows == 1
