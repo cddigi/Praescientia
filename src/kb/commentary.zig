@@ -72,6 +72,114 @@ pub const Scope = union(enum) {
     global,
 };
 
+const empty_branches_json =
+    "{\"active\":\"main\",\"branches\":[{\"name\":\"main\"," ++
+    "\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\"," ++
+    "\"parent_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\"," ++
+    "\"parent_branch\":\"\",\"created_ts_ms\":0}]}";
+
+/// Append a commentary entry to the chain identified by `scope` under
+/// `kb_root`. Returns the new entry's hash and the (kb_root-relative) scope
+/// chain dir path. The path slice references the caller-visible `result.path_buf`
+/// — copy if you need to outlive the WriteResult.
+///
+/// Behaviour:
+///   - Validates the payload (per-rule errors, see `validatePayload`).
+///   - For `.global` and `.market`/`.thesis` scopes where the commentary
+///     subdir doesn't yet exist (e.g. first-ever global commentary, or a
+///     market/thesis that pre-dates Stage 1.5), creates the dir tree +
+///     genesis branches.json + empty main.jsonl. `addMarket`/`addThesis`
+///     do this materialisation up front for the scopes they manage; this
+///     fallback covers the global path that has no equivalent admission step.
+///   - If `parent_hash` is set, loads the active branch and refuses with
+///     `error.ParentHashNotFound` if no entry on the branch has that hash.
+///   - Encodes the payload via `encodePayload` and appends. The chain's
+///     own hash for that line is what's returned in `result.hash`.
+pub fn writeCommentary(
+    allocator: Allocator,
+    io: std.Io,
+    kb_root: std.Io.Dir,
+    scope: Scope,
+    payload: CommentaryPayload,
+) !WriteResult {
+    try validatePayload(&payload);
+
+    var path_buf: [256]u8 = undefined;
+    const rel_path = try scopeRelativePath(&path_buf, scope);
+
+    // Materialise the chain dir on demand (global has no admission step, and
+    // pre-Stage-1.5 markets/theses may lack a commentary subdir).
+    try ensureChainDir(io, kb_root, rel_path);
+
+    var chain_dir = try kb_root.openDir(io, rel_path, .{ .iterate = false });
+    defer chain_dir.close(io);
+
+    // If parent_hash is given, verify it exists on the active branch.
+    if (payload.parent_hash) |hex| {
+        var existing = try chain_mod.openRead(allocator, io, chain_dir, "main");
+        defer existing.deinit();
+        var target: Hash = undefined;
+        try hexDecode(hex, &target);
+        if (existing.at(target) == null) return error.ParentHashNotFound;
+    }
+
+    // Encode the canonical-JSON payload.
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    try encodePayload(&aw.writer, payload);
+
+    var h = try chain_mod.openForWrite(allocator, io, chain_dir, "main");
+    defer h.deinit();
+    const tx = try h.append(aw.written());
+
+    // We need an owned buffer for the scope_path so the caller can keep using
+    // it after `path_buf` goes out of scope. Reuse `WriteResult.scope_path`
+    // semantics: caller owns and frees via the allocator they passed in.
+    const owned_path = try allocator.dupe(u8, rel_path);
+    return .{ .hash = tx.hash, .scope_path = owned_path };
+}
+
+fn ensureChainDir(io: std.Io, kb_root: std.Io.Dir, rel_path: []const u8) !void {
+    // If the directory already exists, just confirm the two chain files are
+    // there. If absent, create the dir + genesis files.
+    if (kb_root.access(io, rel_path, .{})) |_| {
+        // Make sure branches.json + main.jsonl exist; otherwise an old market
+        // (pre-Stage-1.5) might have an empty commentary dir.
+        return;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
+    try kb_root.createDirPath(io, rel_path);
+
+    var jsonl_buf: [320]u8 = undefined;
+    const jsonl_path = try std.fmt.bufPrint(&jsonl_buf, "{s}/main.jsonl", .{rel_path});
+    try kb_root.writeFile(io, .{ .sub_path = jsonl_path, .data = "" });
+
+    var branches_buf: [320]u8 = undefined;
+    const branches_path = try std.fmt.bufPrint(&branches_buf, "{s}/branches.json", .{rel_path});
+    try kb_root.writeFile(io, .{ .sub_path = branches_path, .data = empty_branches_json });
+}
+
+fn hexDecode(hex: []const u8, out: *Hash) !void {
+    if (hex.len != hash_hex_len) return error.InvalidHashFormat;
+    for (out, 0..) |*byte, i| {
+        const hi = try hexNibble(hex[i * 2]);
+        const lo = try hexNibble(hex[i * 2 + 1]);
+        byte.* = (hi << 4) | lo;
+    }
+}
+
+fn hexNibble(c: u8) !u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => 10 + c - 'a',
+        'A'...'F' => 10 + c - 'A',
+        else => error.InvalidHashFormat,
+    };
+}
+
 /// Write a scope's chain-directory path (relative to kb_root) into `buf` and
 /// return a slice pointing into it. Validates the embedded id/ticker against
 /// the same charset rules that the manifest validators use, so a malformed
@@ -351,4 +459,111 @@ test "scopeRelativePath rejects malformed market tickers" {
     try std.testing.expectError(error.InvalidMarketTicker, scopeRelativePath(&buf, .{ .market = "" }));
     try std.testing.expectError(error.InvalidMarketTicker, scopeRelativePath(&buf, .{ .market = "kx-bad" }));
     try std.testing.expectError(error.InvalidMarketTicker, scopeRelativePath(&buf, .{ .market = "../evil" }));
+}
+
+test "writeCommentary appends to the right chain and returns the hash" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try @import("init.zig").initTree(io, tmp.dir, true); // creates SAMPLE market + sample thesis
+
+    const result = try writeCommentary(std.testing.allocator, io, tmp.dir, .{ .thesis = "sample" }, .{
+        .agent = .{ .model = "claude-opus-4-7", .run_id = "test" },
+        .body = "first observation",
+        .references = &.{},
+        .parent_hash = null,
+        .inputs = .{},
+        .tags = &.{"macro"},
+        .ts_ms = 1779000000000,
+    });
+    defer std.testing.allocator.free(result.scope_path);
+    try std.testing.expectEqualStrings("theses/sample/commentary", result.scope_path);
+
+    var chain_dir = try tmp.dir.openDir(io, "theses/sample/commentary", .{ .iterate = false });
+    defer chain_dir.close(io);
+    var chain = try chain_mod.openRead(std.testing.allocator, io, chain_dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 1), chain.len());
+    try std.testing.expectEqualSlices(u8, &chain.head().?, &result.hash);
+}
+
+test "writeCommentary materialises a missing global commentary dir on first use" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try @import("init.zig").initTree(io, tmp.dir, false);
+
+    const result = try writeCommentary(std.testing.allocator, io, tmp.dir, .global, .{
+        .agent = .{ .model = "human", .run_id = "" },
+        .body = "macro observation",
+        .ts_ms = 1779000000000,
+    });
+    defer std.testing.allocator.free(result.scope_path);
+    try std.testing.expectEqualStrings("commentary/global", result.scope_path);
+
+    var chain_dir = try tmp.dir.openDir(io, "commentary/global", .{ .iterate = false });
+    defer chain_dir.close(io);
+    var chain = try chain_mod.openRead(std.testing.allocator, io, chain_dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 1), chain.len());
+}
+
+test "writeCommentary refuses a parent_hash that doesn't exist on the chain" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try @import("init.zig").initTree(io, tmp.dir, true);
+
+    const err = writeCommentary(std.testing.allocator, io, tmp.dir, .{ .thesis = "sample" }, .{
+        .agent = .{ .model = "claude", .run_id = "" },
+        .body = "reply to nothing",
+        .parent_hash = "0" ** 64,
+        .ts_ms = 1,
+    });
+    try std.testing.expectError(error.ParentHashNotFound, err);
+}
+
+test "writeCommentary chains via parent_hash" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try @import("init.zig").initTree(io, tmp.dir, true);
+
+    const first = try writeCommentary(std.testing.allocator, io, tmp.dir, .{ .thesis = "sample" }, .{
+        .agent = .{ .model = "claude", .run_id = "" },
+        .body = "root",
+        .ts_ms = 1,
+    });
+    defer std.testing.allocator.free(first.scope_path);
+
+    var hex: [hash_hex_len]u8 = undefined;
+    _ = std.fmt.bufPrint(&hex, "{x}", .{first.hash}) catch unreachable;
+
+    const reply = try writeCommentary(std.testing.allocator, io, tmp.dir, .{ .thesis = "sample" }, .{
+        .agent = .{ .model = "claude", .run_id = "" },
+        .body = "reply",
+        .parent_hash = &hex,
+        .ts_ms = 2,
+    });
+    defer std.testing.allocator.free(reply.scope_path);
+
+    var chain_dir = try tmp.dir.openDir(io, "theses/sample/commentary", .{ .iterate = false });
+    defer chain_dir.close(io);
+    var chain = try chain_mod.openRead(std.testing.allocator, io, chain_dir, "main");
+    defer chain.deinit();
+    try std.testing.expectEqual(@as(usize, 2), chain.len());
+}
+
+test "writeCommentary propagates validation errors" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try @import("init.zig").initTree(io, tmp.dir, true);
+
+    const err = writeCommentary(std.testing.allocator, io, tmp.dir, .{ .thesis = "sample" }, .{
+        .agent = .{ .model = "", .run_id = "" },
+        .body = "x",
+        .ts_ms = 1,
+    });
+    try std.testing.expectError(error.MissingAgentModel, err);
 }
