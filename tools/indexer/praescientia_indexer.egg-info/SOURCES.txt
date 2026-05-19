@@ -1,0 +1,7 @@
+index_commentary.py
+pyproject.toml
+praescientia_indexer.egg-info/PKG-INFO
+praescientia_indexer.egg-info/SOURCES.txt
+praescientia_indexer.egg-info/dependency_links.txt
+praescientia_indexer.egg-info/requires.txt
+praescientia_indexer.egg-info/top_level.txt

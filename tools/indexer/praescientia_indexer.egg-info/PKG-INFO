@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: praescientia-indexer
+Version: 0.1.0
+Summary: Commentary chain indexer + query service (LanceDB + llama-server BGE-M3)
+Requires-Python: >=3.11
+Requires-Dist: lancedb>=0.13
+Requires-Dist: httpx>=0.27
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn>=0.32
+Requires-Dist: pyarrow>=17
+Requires-Dist: numpy>=1.26
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
