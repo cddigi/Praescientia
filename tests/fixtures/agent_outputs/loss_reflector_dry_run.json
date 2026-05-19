@@ -1,0 +1,36 @@
+{
+  "_dry_run_meta": {
+    "captured_at": "2026-05-19",
+    "agent": "praescientia-loss-reflector",
+    "model": "haiku",
+    "input_fixture": "tests/fixtures/agent_outputs/loss_reflector_input_sas_okc.json",
+    "agent_invocation_duration_ms": 31202,
+    "tool_uses_observed": 3,
+    "total_tokens": 19125,
+    "findings": [
+      "PROTOCOL VIOLATION: Agent emitted ~1500 chars of markdown-formatted prose (six-step diagnostic audit) BEFORE the JSON object. The output protocol explicitly forbids prose-before-JSON; same failure mode observed in the thesis-analyst dry-run. The Stage 5 orchestrator parser MUST strip leading non-{ characters until it finds the first '{' before json.parse, OR extract the last fenced/unfenced JSON object in the response.",
+      "CAP OVERRUN — what_we_believed: 203 chars (cap 200, +3).",
+      "CAP OVERRUN — what_actually_happened: 204 chars (cap 200, +4).",
+      "CAP OVERRUN — why_we_were_wrong: 545 chars (cap 500, +45). Diagnostic content is dense and specific; the 500-char cap may need raising to ~768 (parallel to thesis-analyst rationale bump 500→1024 in PR #50).",
+      "CAP OVERRUN — decision_pattern_to_avoid: 278 chars (cap 200, +78). The transferable rule's wording was good but verbose; either tighten agent guidance to favor one-sentence rules or raise cap to 320.",
+      "POSITIVE — Diagnostic quality: agent correctly identified the volume-at-22c moment as the missed signal, named the responsible commentary entry by hash, distinguished framework-failure from framework-override-by-hand-waving (clause 6 self-check).",
+      "POSITIVE — Tags: emitted four specific failure-mode tags ('illiquidity-edge-invalidation', 'ignored-volume-signal', 'static-interpretation-over-live-drift', 'confidence-stale-after-repricing'); none are generic.",
+      "POSITIVE — Stoplist clean: no substring matches against loss_reflection_stoplist. The 'not noise' phrasing in decision_pattern_to_avoid is fine because the stoplist requires 'was noise' / 'just noise'.",
+      "ARCHITECTURE NOTE — The agent used 3 tool calls (likely Bash/Read despite all input being pre-loaded). Confirms the prompt's framing of these as 'escape hatches' is interpreted loosely; consider whether to tighten the prompt or accept this as normal Haiku behavior."
+    ],
+    "raw_response_prefix_first_200_chars": "Good. Now let me perform the diagnostic audit systematically.\n\n## Diagnostic Audit\n\n**Step 1: Prediction Recap**\n\nThe prediction history shows:\n- **ts 1779166392000**: 2000 bp (20%) confidence",
+    "raw_response_suffix_last_100_chars": "ringing\",\"confidence-stale-after-repricing\"]}\n```",
+    "extracted_json_below_is_the_canonical_output": true
+  },
+  "tick_id": "01XYZRESOLUTIONTICKABC123",
+  "what_we_believed": "At ts 1779166607 we recorded 1800bp confidence (18% for NO on SAS+1.5) based on illiquidity-cap reasoning: market mean 25c but 30c quote is pricing, not probability. Held this flat through ts 1779240000.",
+  "what_actually_happened": "At ts 1779210000 the yes_bid fell to 22c with 1200 volume (after months of flat 28c quotes). By ts 1779240000 the bid was 35c/40c ask with 2100 volume. Resolved YES at 95c; we lost 150c on 5 NO contracts.",
+  "why_we_were_wrong": "Our thesis predicated the edge on illiquidity-driven tail mispricing. At ts 1779210000, the arrival of 1200 contracts of real YES volume invalidated the illiquidity assumption, yet we treated the move as 'quote-maker recalibration' and held the 1800bp confidence unchanged. We had commentary explicitly framing the edge as illiquidity-dependent, and we did not re-evaluate when liquidity arrived. The framework permitted a 100bp update per tick; we never issued one because we applied a static interpretation of what the order-book motion meant.",
+  "decision_pattern_to_avoid": "Do not build a thesis on a market condition (thin liquidity, tight spread, cap-driven pricing) and then fail to re-evaluate when that condition demonstrably changes. Volume appearing in size on the opposite side is a red flag for repricing, not noise. Force a prediction update.",
+  "tags": [
+    "illiquidity-edge-invalidation",
+    "ignored-volume-signal",
+    "static-interpretation-over-live-drift",
+    "confidence-stale-after-repricing"
+  ]
+}
