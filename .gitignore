@@ -20,6 +20,9 @@ zig-cache/
 # Stage 3 parity captures
 parity/
 
+# Runtime knowledge-base data
+kb/
+
 # Compiled
 *.o
 *.a
