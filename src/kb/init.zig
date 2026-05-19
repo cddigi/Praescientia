@@ -40,6 +40,10 @@ pub fn addMarket(io: std.Io, root: std.Io.Dir, ticker: []const u8, price_delta_c
     const reality_path = try std.fmt.bufPrint(&reality_path_buf, "markets/{s}/reality", .{ticker});
     try root.createDirPath(io, reality_path);
 
+    var commentary_path_buf: [256]u8 = undefined;
+    const commentary_path = try std.fmt.bufPrint(&commentary_path_buf, "markets/{s}/commentary", .{ticker});
+    try root.createDirPath(io, commentary_path);
+
     var manifest_path_buf: [256]u8 = undefined;
     const manifest_path = try std.fmt.bufPrint(&manifest_path_buf, "markets/{s}/manifest.json", .{ticker});
 
@@ -60,6 +64,17 @@ pub fn addMarket(io: std.Io, root: std.Io.Dir, ticker: []const u8, price_delta_c
     var branches_path_buf: [256]u8 = undefined;
     const branches_path = try std.fmt.bufPrint(&branches_path_buf, "markets/{s}/reality/branches.json", .{ticker});
     try root.writeFile(io, .{ .sub_path = branches_path, .data = empty_branches_json });
+
+    // Commentary chain — same empty-jsonl + genesis-branches.json shape as
+    // reality. Materialised up front so first-write doesn't have to fall back
+    // to commentary.ensureChainDir.
+    var commentary_jsonl_buf: [256]u8 = undefined;
+    const commentary_jsonl_path = try std.fmt.bufPrint(&commentary_jsonl_buf, "markets/{s}/commentary/main.jsonl", .{ticker});
+    try root.writeFile(io, .{ .sub_path = commentary_jsonl_path, .data = "" });
+
+    var commentary_branches_buf: [256]u8 = undefined;
+    const commentary_branches_path = try std.fmt.bufPrint(&commentary_branches_buf, "markets/{s}/commentary/branches.json", .{ticker});
+    try root.writeFile(io, .{ .sub_path = commentary_branches_path, .data = empty_branches_json });
 }
 
 fn writeSamples(io: std.Io, root: std.Io.Dir) !void {
@@ -69,13 +84,14 @@ fn writeSamples(io: std.Io, root: std.Io.Dir) !void {
     // sample thesis — one source (SAMPLE at 100% weight), weighted_avg_v1.
     try root.createDirPath(io, "theses/sample/reality");
     try root.createDirPath(io, "theses/sample/prediction");
+    try root.createDirPath(io, "theses/sample/commentary");
     try root.writeFile(io, .{
         .sub_path = "theses/sample/manifest.json",
         .data = "{\"kind\":\"thesis\",\"id\":\"sample\",\"description\":\"sample thesis\"," ++
             "\"market_set\":[\"SAMPLE\"],\"rollup_fn\":\"weighted_avg_v1\"," ++
             "\"weights\":{\"SAMPLE\":10000},\"trigger\":{\"confidence_delta_bp\":500}}",
     });
-    inline for (.{ "reality", "prediction" }) |sub| {
+    inline for (.{ "reality", "prediction", "commentary" }) |sub| {
         try root.writeFile(io, .{ .sub_path = "theses/sample/" ++ sub ++ "/main.jsonl", .data = "" });
         try root.writeFile(io, .{ .sub_path = "theses/sample/" ++ sub ++ "/branches.json", .data = empty_branches_json });
     }
@@ -172,13 +188,18 @@ pub fn addThesis(
     const prediction_path = try std.fmt.bufPrint(&prediction_path_buf, "theses/{s}/prediction", .{opts.id});
     try root.createDirPath(io, prediction_path);
 
+    var commentary_path_buf: [256]u8 = undefined;
+    const commentary_path = try std.fmt.bufPrint(&commentary_path_buf, "theses/{s}/commentary", .{opts.id});
+    try root.createDirPath(io, commentary_path);
+
     // Write manifest.
     var manifest_path_buf: [256]u8 = undefined;
     const manifest_path = try std.fmt.bufPrint(&manifest_path_buf, "theses/{s}/manifest.json", .{opts.id});
     try root.writeFile(io, .{ .sub_path = manifest_path, .data = aw.written() });
 
-    // Write empty main.jsonl + genesis branches.json for both reality and prediction.
-    inline for (.{ "reality", "prediction" }) |sub| {
+    // Write empty main.jsonl + genesis branches.json for reality, prediction,
+    // and commentary chains.
+    inline for (.{ "reality", "prediction", "commentary" }) |sub| {
         var jsonl_buf: [256]u8 = undefined;
         const jsonl_path = try std.fmt.bufPrint(&jsonl_buf, "theses/{s}/" ++ sub ++ "/main.jsonl", .{opts.id});
         try root.writeFile(io, .{ .sub_path = jsonl_path, .data = "" });
@@ -271,6 +292,43 @@ test "addMarket refuses to overwrite an existing market" {
     try initTree(io, tmp.dir, false);
     try addMarket(io, tmp.dir, "KXBTC", 1);
     try std.testing.expectError(error.MarketExists, addMarket(io, tmp.dir, "KXBTC", 2));
+}
+
+test "addMarket creates a commentary subdir" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try initTree(io, tmp.dir, false);
+    try addMarket(io, tmp.dir, "KXBTC", 1);
+    try tmp.dir.access(io, "markets/KXBTC/commentary/main.jsonl", .{});
+    try tmp.dir.access(io, "markets/KXBTC/commentary/branches.json", .{});
+}
+
+test "addThesis creates a commentary subdir" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try initTree(io, tmp.dir, false);
+    try addMarket(io, tmp.dir, "KXFED", 1);
+    try addMarket(io, tmp.dir, "KXRECESSION", 1);
+    try addThesis(std.testing.allocator, io, tmp.dir, .{
+        .id = "fed-cuts",
+        .description = "Fed cuts in June",
+        .weights_json = "{\"KXFED\":7000,\"KXRECESSION\":3000}",
+    });
+    try tmp.dir.access(io, "theses/fed-cuts/commentary/main.jsonl", .{});
+    try tmp.dir.access(io, "theses/fed-cuts/commentary/branches.json", .{});
+}
+
+test "initTree --with-sample materialises commentary subdirs" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try initTree(io, tmp.dir, true);
+    try tmp.dir.access(io, "markets/SAMPLE/commentary/main.jsonl", .{});
+    try tmp.dir.access(io, "markets/SAMPLE/commentary/branches.json", .{});
+    try tmp.dir.access(io, "theses/sample/commentary/main.jsonl", .{});
+    try tmp.dir.access(io, "theses/sample/commentary/branches.json", .{});
 }
 
 test "initTree --with-sample produces parseable + valid manifests" {
