@@ -17,6 +17,16 @@ import json
 from pathlib import Path
 from typing import Iterator, Optional
 
+import httpx
+
+
+class EmbedderUnavailable(RuntimeError):
+    """Raised when the llama-server HTTP call fails for any transport reason.
+
+    Caller decides whether to back off + retry — for the indexer loop, the
+    cursor stays put and we sleep until the next pass.
+    """
+
 
 def tail(jsonl_path: Path, after_hash: Optional[str]) -> Iterator[dict]:
     """Stream chain entries newer than `after_hash` from a single .jsonl file.
@@ -102,3 +112,53 @@ class Cursors:
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps(cursors, sort_keys=True))
         tmp.replace(self.path)
+
+
+class LlamaServerEmbedder:
+    """Posts to a long-lived llama-server `--embeddings` daemon.
+
+    Endpoint contract — llama.cpp's /embedding accepts `{"input": ["text1", ...]}`
+    and returns either:
+      - the OpenAI-compatible shape: `[{"embedding": [...]}, ...]`
+      - the legacy shape:            `[[...vec...], ...]`
+
+    Both are handled.
+    """
+
+    def __init__(self, base_url: str, *, client=None, timeout: float = 60.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self._owns_client = client is None
+        self._client = client if client is not None else httpx.Client(timeout=timeout)
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        url = f"{self.base_url}/embedding"
+        try:
+            resp = self._client.post(url, json={"input": texts}, timeout=self.timeout)
+            resp.raise_for_status()
+            payload = resp.json()
+        except (httpx.TransportError, httpx.HTTPStatusError) as e:
+            raise EmbedderUnavailable(f"llama-server unreachable at {url}: {e}") from e
+
+        # Handle both response shapes. OpenAI-compatible has `data` wrapper too
+        # depending on build; tolerate it.
+        if isinstance(payload, dict) and "data" in payload:
+            payload = payload["data"]
+        if not isinstance(payload, list):
+            raise EmbedderUnavailable(f"unexpected /embedding response shape: {type(payload)}")
+
+        vectors: list[list[float]] = []
+        for item in payload:
+            if isinstance(item, dict) and "embedding" in item:
+                vectors.append(list(item["embedding"]))
+            elif isinstance(item, list):
+                vectors.append(list(item))
+            else:
+                raise EmbedderUnavailable(f"unexpected /embedding row shape: {type(item)}")
+        return vectors
