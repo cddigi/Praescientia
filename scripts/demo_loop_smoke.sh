@@ -33,17 +33,17 @@ fi
 echo "==> 1/7 baseline connectivity to demo-api.kalshi.co"
 "$BIN/praescientia-test-conn" --env=demo >/dev/null
 
-# 2) Pick a clean, actively-trading demo ticker. Some Kalshi tickers contain
-#    `.` characters (e.g. threshold suffixes like `T87.99`) which the current
-#    `validateMarket` rejects — filter to alphanumeric+hyphen only.
+# 2) Pick the first actively-trading demo ticker. validateMarket now accepts
+#    alphanumeric + `-` + `.`, which covers every Kalshi ticker shape observed
+#    so far (including threshold suffixes like `T87.99`).
 echo "==> 2/7 discover a demo market ticker"
 TICKER=$(
-    "$BIN/praescientia-markets" list --limit=50 --status=open --env=demo |
-    jq -r '.markets[] | select(.ticker | test("^[A-Z0-9-]+$")) | .ticker' |
+    "$BIN/praescientia-markets" list --limit=10 --status=open --env=demo |
+    jq -r '.markets[].ticker' |
     head -n1
 )
 if [ -z "$TICKER" ]; then
-    echo "FAIL: no clean demo ticker found in the first 50 open markets" >&2
+    echo "FAIL: no open demo market available" >&2
     exit 1
 fi
 echo "    using $TICKER"
@@ -64,7 +64,7 @@ echo "==> 3/7 init kb_root at $KB_ROOT"
 
 # 4) Poll the live demo API and write to the kb.
 echo "==> 4/7 poll demo API"
-"$BIN/praescientia-poll-markets" run --kb-root="$KB_ROOT" --env=demo
+"$BIN/praescientia-poll-markets" --kb-root="$KB_ROOT" --env=demo
 
 # 5) Verify both chains grew.
 MARKET_JSONL="$KB_ROOT/markets/$TICKER/reality/main.jsonl"

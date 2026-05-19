@@ -98,7 +98,10 @@ pub fn parseThesis(allocator: Allocator, json: []const u8) !ThesisManifest {
 pub fn validateMarket(m: *const MarketManifest) !void {
     if (m.ticker.len == 0 or m.ticker.len > 64) return error.TickerLengthOutOfRange;
     for (m.ticker) |c| {
-        const ok = (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '-';
+        // Real Kalshi tickers include `.` in numeric threshold suffixes
+        // (e.g. KXTEMPNYCH-26MAY1821-T87.99). Allow it alongside the
+        // alphanumeric + hyphen baseline.
+        const ok = (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '-' or c == '.';
         if (!ok) return error.TickerHasInvalidChar;
     }
     if (m.price_delta_cents == 0 or m.price_delta_cents > 100) return error.PriceDeltaOutOfRange;
@@ -123,6 +126,14 @@ test "validateMarket rejects a ticker with invalid characters" {
     var m = try parseMarket(std.testing.allocator, json);
     defer m.deinit();
     try std.testing.expectError(error.TickerHasInvalidChar, validateMarket(&m));
+}
+
+test "validateMarket accepts tickers with `.` in threshold suffixes" {
+    // Real Kalshi ticker shape — e.g. KXTEMPNYCH-26MAY1821-T87.99
+    const json = "{\"kind\":\"market\",\"ticker\":\"KXTEMPNYCH-26MAY1821-T87.99\",\"trigger\":{\"price_delta_cents\":1}}";
+    var m = try parseMarket(std.testing.allocator, json);
+    defer m.deinit();
+    try validateMarket(&m);
 }
 
 test "validateMarket rejects price_delta_cents = 0" {

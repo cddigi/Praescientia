@@ -156,7 +156,7 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Search | `zig build run-search -- tags\|sport_filters\|targets\|target\|series TICKER` | `src/kalshi/search.zig` |
 | Live Data | `zig build run-live-data -- milestones\|milestone\|live\|live_legacy\|batch\|game_stats` | `src/kalshi/live_data.zig` |
 | Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence\|init\|predict\|add-market\|add-thesis` | `src/kb/*` |
-| KB poller | `zig build run-poll-markets -- run --kb-root=./kb` | `tools/poll_markets.zig` |
+| KB poller | `zig build run-poll-markets -- --kb-root=./kb` | `tools/poll_markets.zig` |
 | Demo loop smoke | `./scripts/demo_loop_smoke.sh` | `scripts/demo_loop_smoke.sh` |
 | Metrics | `GET /metrics` on the dashboard server | `src/kb/metrics.zig` |
 | CoinGecko spot | `zig build run-poll -- prices` | `tools/poll_resolved_markets.zig` |
