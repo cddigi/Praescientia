@@ -1,0 +1,10 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 1800,
+  "rationale": "Decision with size 0 — Kalshi rejects these so we shouldn't ship them.",
+  "commentary_body": "Should be rejected by validate.",
+  "commentary_tags": ["fixture"],
+  "orders": [
+    {"ticker": "KX-A", "side": "yes", "action": "buy", "size": 0, "limit_cents": 28, "reason": "fixture"}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "thesis",
+  "id": "fixture",
+  "description": "fixture thesis used by validate golden-files",
+  "market_set": ["KX-A", "KX-B"],
+  "rollup_fn": "weighted_avg_v1",
+  "weights": {"KX-A": 7000, "KX-B": 3000},
+  "trigger": {"confidence_delta_bp": 500}
+}

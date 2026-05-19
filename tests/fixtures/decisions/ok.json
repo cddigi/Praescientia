@@ -1,0 +1,11 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 1800,
+  "rationale": "Fading the lower rungs: ladder priced 25c implied, my view 18c.",
+  "commentary_body": "Ladder is internally consistent; OKC favored; fading per the prior post-mortem on tight-game overpricing.",
+  "commentary_tags": ["basketball", "fade", "sas-okc"],
+  "orders": [
+    {"ticker": "KX-A", "side": "yes", "action": "buy", "size": 5, "limit_cents": 28, "reason": "below market mid"},
+    {"ticker": "KX-B", "side": "no", "action": "buy", "size": 3, "limit_cents": 70, "reason": "hedge"}
+  ]
+}

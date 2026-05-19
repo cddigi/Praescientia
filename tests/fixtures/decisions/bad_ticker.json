@@ -1,0 +1,10 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 1800,
+  "rationale": "Decision with a ticker that isn't in the thesis market_set.",
+  "commentary_body": "Should be rejected by validate.",
+  "commentary_tags": ["fixture"],
+  "orders": [
+    {"ticker": "KX-NOT-LISTED", "side": "yes", "action": "buy", "size": 5, "limit_cents": 28, "reason": "fixture"}
+  ]
+}
