@@ -349,25 +349,33 @@ class SimilarRequest(BaseModel):
     min_ts: Optional[int] = None
 
 
-def build_query_app(table):
+def build_query_app(table, *, lance_dir: Path | None = None):
     """Build a FastAPI app exposing POST /similar and GET /health.
 
-    `table` is a LanceDB table handle as returned by `open_or_create_table`.
-    The app and the indexer loop share the same handle in production.
+    `table` is a LanceDB table handle as returned by `open_or_create_table` —
+    used directly when `lance_dir` is None (tests). In serve mode the
+    background indexer loop opens its own handle and writes new rows, so the
+    handlers re-open the table per request (via `lance_dir`) to see them.
     """
     from fastapi import FastAPI, HTTPException
+
+    def _table():
+        if lance_dir is not None:
+            return open_or_create_table(Path(lance_dir))
+        return table
 
     app = FastAPI(title="Praescientia commentary query")
 
     @app.get("/health")
     def health() -> dict:
-        n = table.to_arrow().num_rows
+        n = _table().to_arrow().num_rows
         return {"status": "ok", "indexed_rows": n}
 
     @app.post("/similar")
     def similar(req: SimilarRequest) -> dict:
+        t = _table()
         # 1. Look up the anchor's vector.
-        rows = table.to_arrow().to_pylist()
+        rows = t.to_arrow().to_pylist()
         anchor = next((r for r in rows if r["hash"] == req.anchor_hash), None)
         if anchor is None:
             raise HTTPException(status_code=404, detail=f"anchor_hash not indexed: {req.anchor_hash}")
@@ -378,7 +386,7 @@ def build_query_app(table):
         # still leave us `limit` neighbors.
         query_limit = req.limit + 1 + len(req.exclude_scopes) * req.limit
         results = (
-            table.search(anchor["vector"])
+            t.search(anchor["vector"])
             .limit(query_limit)
             .to_arrow()
             .to_pylist()
@@ -498,7 +506,7 @@ def _run_serve_and_loop(
     t = threading.Thread(target=_loop, name="commentary-indexer-loop", daemon=True)
     t.start()
 
-    app = build_query_app(table)
+    app = build_query_app(table, lance_dir=lance_dir)
     uvicorn.run(app, host="127.0.0.1", port=query_port, log_level="warning")
     return 0
 
