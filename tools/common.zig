@@ -95,6 +95,16 @@ pub fn runMain(
         }
     }
 
+    // Single-subcommand CLIs (e.g. praescientia-poll-markets) get auto-default:
+    // when the user invokes the binary with no positional verb — either bare,
+    // or with tool-specific flags but no subcommand name — fall through to the
+    // sole subcommand. Multi-subcommand binaries still demand a verb.
+    const first_filtered: ?[]const u8 = if (filtered.items.len > 0) filtered.items[0] else null;
+    if (shouldAutoDefaultSubcommand(subcommands.len, first_filtered, want_help)) {
+        const default_name = try arena_alloc.dupeZ(u8, subcommands[0].name);
+        try filtered.insert(0, default_name);
+    }
+
     if (want_help or filtered.items.len == 0) {
         try printUsage(stderr, program_name, subcommands);
         return if (want_help) 0 else 2;
@@ -146,6 +156,22 @@ pub fn runMain(
         .client = &client,
     };
     return matched.?.run(&ctx);
+}
+
+/// True when `runMain` should auto-prepend the sole registered subcommand's
+/// name to the filtered args. Triggers only on single-subcommand binaries,
+/// only when `--help` was not requested, and only when the first
+/// post-global-flag arg is absent or is itself a flag (i.e. the user did NOT
+/// name the verb).
+fn shouldAutoDefaultSubcommand(
+    subcommand_count: usize,
+    first_filtered: ?[]const u8,
+    want_help: bool,
+) bool {
+    if (want_help) return false;
+    if (subcommand_count != 1) return false;
+    if (first_filtered) |a| return std.mem.startsWith(u8, a, "--");
+    return true; // bare invocation with no args at all
 }
 
 fn printUsage(out: *std.Io.Writer, program_name: []const u8, subcommands: []const Subcommand) !void {
@@ -239,4 +265,25 @@ test "Context.positional skips flags" {
     try std.testing.expectEqualStrings("TICKER-1", ctx.positional(0).?);
     try std.testing.expectEqualStrings("extra", ctx.positional(1).?);
     try std.testing.expectEqual(@as(?[]const u8, null), ctx.positional(2));
+}
+
+test "shouldAutoDefaultSubcommand fires only for single-subcommand binaries with no verb" {
+    // Bare invocation against a single-subcommand binary → auto-default.
+    try std.testing.expect(shouldAutoDefaultSubcommand(1, null, false));
+
+    // First arg is a tool-specific flag, no verb named → auto-default.
+    try std.testing.expect(shouldAutoDefaultSubcommand(1, "--kb-root=./kb", false));
+
+    // First arg IS the verb (no leading --) → caller's name wins, no auto.
+    try std.testing.expect(!shouldAutoDefaultSubcommand(1, "run", false));
+
+    // --help requested → never auto-default; let the usage print.
+    try std.testing.expect(!shouldAutoDefaultSubcommand(1, null, true));
+
+    // Multi-subcommand binaries still demand a verb.
+    try std.testing.expect(!shouldAutoDefaultSubcommand(3, null, false));
+    try std.testing.expect(!shouldAutoDefaultSubcommand(3, "--kb-root=./kb", false));
+
+    // Zero subcommands (degenerate) shouldn't fire either.
+    try std.testing.expect(!shouldAutoDefaultSubcommand(0, null, false));
 }

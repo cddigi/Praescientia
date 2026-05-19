@@ -249,7 +249,7 @@ zig build run-kb -- add-thesis fed-jun \
     --confidence-delta-bp=500 --kb-root=./kb
 
 # 4. Poll Kalshi once. Refreshes every market under ./kb/markets/ then recomputes every thesis.
-zig build run-poll-markets -- run --kb-root=./kb
+zig build run-poll-markets -- --kb-root=./kb
 
 # 5. Record your prediction. confidence_bp = how strongly you believe the thesis (1..10000).
 zig build run-kb -- predict fed-jun --confidence-bp=7200 --rationale="initial belief" --kb-root=./kb
