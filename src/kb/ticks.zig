@@ -507,6 +507,100 @@ pub fn writeSnapshot(entries: []const SnapshotEntry, writer: *std.Io.Writer) !vo
 }
 
 // ---------------------------------------------------------------------------
+// Loss reflection
+// ---------------------------------------------------------------------------
+
+/// Output schema for the `praescientia-loss-reflector` sub-agent. The
+/// orchestrator parses the agent's JSON into this struct, validates it
+/// via `validateLossReflection`, and writes the accepted reflection as
+/// a commentary entry into BOTH the thesis's and the market's commentary
+/// chains so future thesis-analyst dispatches encounter the lesson via
+/// similarity search.
+pub const LossReflection = struct {
+    what_we_believed: []const u8,
+    what_actually_happened: []const u8,
+    why_we_were_wrong: []const u8,
+    decision_pattern_to_avoid: []const u8,
+    tags: []const []const u8 = &.{},
+};
+
+pub const LossReflectionError = error{
+    /// Any of the four required fields was an empty string. A post-mortem
+    /// missing one of the audit dimensions has thrown away the failure.
+    EmptyField,
+    WhatWeBelievedTooLong,
+    WhatActuallyHappenedTooLong,
+    WhyWeWereWrongTooLong,
+    DecisionPatternTooLong,
+    /// `why_we_were_wrong` matched a stoplist phrase that names the
+    /// outcome without diagnosing the cause. The reflection is rejected
+    /// and the loss queues for re-attempt on the next tick.
+    GenericPhrase,
+};
+
+/// Phrases that signal an outcome-naming rather than cause-diagnosing
+/// post-mortem. Substring-matched case-insensitively against
+/// `why_we_were_wrong`. The entries are deliberately specific (e.g.
+/// `"was noise"` not `"noise"`) so legitimate diagnostic uses of the
+/// constituent words ("we treated the bid as liquidity-cap noise")
+/// slip through.
+pub const loss_reflection_stoplist = [_][]const u8{
+    "the market moved",
+    "got unlucky",
+    "just noise",
+    "was noise",
+    "random noise",
+    "was random",
+    "random variance",
+    "coin flip",
+    "always going to be",
+    "small sample",
+    "we were wrong",
+    "the market was wrong",
+};
+
+/// Field-length caps for the loss-reflection schema. Public so the
+/// orchestrator's prompt-construction code and the agent file's schema
+/// section can reference one source of truth.
+pub const loss_reflection_caps = struct {
+    pub const what_we_believed: usize = 200;
+    pub const what_actually_happened: usize = 200;
+    pub const why_we_were_wrong: usize = 500;
+    pub const decision_pattern_to_avoid: usize = 200;
+};
+
+/// Validate a loss reflection against the schema caps and the stoplist.
+/// Returns a tagged error on rejection; the orchestrator logs the
+/// rejection and queues the loss for re-attempt on the next tick
+/// (cursor in `kb/.ticks/.last_settlement.json` does not advance until
+/// a reflection is accepted and persisted).
+pub fn validateLossReflection(r: LossReflection) LossReflectionError!void {
+    if (r.what_we_believed.len == 0) return LossReflectionError.EmptyField;
+    if (r.what_actually_happened.len == 0) return LossReflectionError.EmptyField;
+    if (r.why_we_were_wrong.len == 0) return LossReflectionError.EmptyField;
+    if (r.decision_pattern_to_avoid.len == 0) return LossReflectionError.EmptyField;
+
+    if (r.what_we_believed.len > loss_reflection_caps.what_we_believed) {
+        return LossReflectionError.WhatWeBelievedTooLong;
+    }
+    if (r.what_actually_happened.len > loss_reflection_caps.what_actually_happened) {
+        return LossReflectionError.WhatActuallyHappenedTooLong;
+    }
+    if (r.why_we_were_wrong.len > loss_reflection_caps.why_we_were_wrong) {
+        return LossReflectionError.WhyWeWereWrongTooLong;
+    }
+    if (r.decision_pattern_to_avoid.len > loss_reflection_caps.decision_pattern_to_avoid) {
+        return LossReflectionError.DecisionPatternTooLong;
+    }
+
+    for (loss_reflection_stoplist) |phrase| {
+        if (std.ascii.indexOfIgnoreCase(r.why_we_were_wrong, phrase) != null) {
+            return LossReflectionError.GenericPhrase;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -956,4 +1050,79 @@ test "writeSnapshot emits canonical JSON with alphabetical keys" {
     try std.testing.expect(std.mem.indexOf(u8, out, ",\"scope_path\":\"markets/SAMPLE/commentary\"") != null);
     // Empty chains serialize head_hash as JSON null.
     try std.testing.expect(std.mem.indexOf(u8, out, "\"head_hash\":null") != null);
+}
+
+// --- validateLossReflection tests ---
+
+fn validReflection() LossReflection {
+    return .{
+        .what_we_believed = "1800bp confidence on the umbrella thesis fading SAS at the lower spread rungs.",
+        .what_actually_happened = "KX-SAS1 yes_bid went 28c -> 22c with volume 1200, then 65c at resolution.",
+        .why_we_were_wrong = "Treated the initial 28c bid as liquidity-cap noise and held the fade after real volume of 1200 appeared at 22c. The volume was the signal; we did not advance the prediction. Five ticks of stale confidence against a book already rejecting the NO side.",
+        .decision_pattern_to_avoid = "When a market shows non-zero volume after a flat-quote period, force a thesis re-evaluation in the next tick.",
+        .tags = &.{ "ignored-volume-signal", "stale-confidence" },
+    };
+}
+
+test "validateLossReflection accepts a specific diagnostic reflection" {
+    try validateLossReflection(validReflection());
+}
+
+test "validateLossReflection rejects empty fields" {
+    var r = validReflection();
+    r.what_we_believed = "";
+    try std.testing.expectError(LossReflectionError.EmptyField, validateLossReflection(r));
+
+    r = validReflection();
+    r.why_we_were_wrong = "";
+    try std.testing.expectError(LossReflectionError.EmptyField, validateLossReflection(r));
+}
+
+test "validateLossReflection enforces per-field length caps" {
+    var r = validReflection();
+    const long_body = "x" ** 201;
+    r.what_we_believed = long_body;
+    try std.testing.expectError(LossReflectionError.WhatWeBelievedTooLong, validateLossReflection(r));
+
+    r = validReflection();
+    const long_diag = "x" ** 501;
+    r.why_we_were_wrong = long_diag;
+    try std.testing.expectError(LossReflectionError.WhyWeWereWrongTooLong, validateLossReflection(r));
+}
+
+test "validateLossReflection rejects stoplisted phrases in why_we_were_wrong" {
+    var r = validReflection();
+    r.why_we_were_wrong = "The market moved against us in the final tick before resolution.";
+    try std.testing.expectError(LossReflectionError.GenericPhrase, validateLossReflection(r));
+
+    r = validReflection();
+    r.why_we_were_wrong = "We got unlucky on a high-variance outcome.";
+    try std.testing.expectError(LossReflectionError.GenericPhrase, validateLossReflection(r));
+
+    r = validReflection();
+    r.why_we_were_wrong = "It was a coin flip in retrospect.";
+    try std.testing.expectError(LossReflectionError.GenericPhrase, validateLossReflection(r));
+
+    r = validReflection();
+    r.why_we_were_wrong = "Just noise.";
+    try std.testing.expectError(LossReflectionError.GenericPhrase, validateLossReflection(r));
+}
+
+test "validateLossReflection allows specific uses of words that appear in stoplist patterns" {
+    // The bare words "noise" and "random" appear in the diagnostic phrasing
+    // but are not flagged because the stoplist patterns are specific
+    // ("was noise" / "just noise" / "was random") not generic.
+    var r = validReflection();
+    r.why_we_were_wrong = "We treated the bid as liquidity-cap noise when it was actually a real probability signal.";
+    try validateLossReflection(r); // should pass — 'noise' alone is fine
+
+    r = validReflection();
+    r.why_we_were_wrong = "We failed to randomize our entries across the ladder rungs, concentrating exposure on the tail.";
+    try validateLossReflection(r); // should pass — 'randomize' is not in the stoplist
+}
+
+test "validateLossReflection stoplist match is case-insensitive" {
+    var r = validReflection();
+    r.why_we_were_wrong = "THE MARKET MOVED in ways we could not have predicted.";
+    try std.testing.expectError(LossReflectionError.GenericPhrase, validateLossReflection(r));
 }
