@@ -14,12 +14,14 @@ const common = @import("common");
 const praescientia = @import("praescientia");
 
 const ticks = praescientia.kb.ticks;
+const manifest_mod = praescientia.kb.manifest;
 
 pub fn main(init: std.process.Init) !u8 {
     return common.runMain(init, "praescientia-ticks", &.{
         .{ .name = "snapshot", .description = "Write a chain-head snapshot JSON file to <out_path>", .run = cmdSnapshot },
         .{ .name = "begin", .description = "Generate a tick_id and write its pre-state snapshot", .run = cmdBegin },
         .{ .name = "finish", .description = "Write the post-state snapshot for an in-progress tick", .run = cmdFinish },
+        .{ .name = "validate", .description = "Validate a sub-agent decision file against a thesis manifest", .run = cmdValidate },
     });
 }
 
@@ -110,6 +112,173 @@ fn cmdFinish(ctx: *common.Context) !u8 {
 }
 
 // ---------------------------------------------------------------------------
+// validate --thesis-manifest=PATH --decision=PATH [--bankroll-cap-cents=N]
+// ---------------------------------------------------------------------------
+
+/// Shape of a sub-agent's decision JSON. The orchestrator builds the
+/// prompt that produces this; here we parse and validate one before it's
+/// allowed to drive chain writes or order placement.
+const DecisionDoc = struct {
+    tick_id: ?[]const u8 = null,
+    confidence_bp: u32,
+    rationale: []const u8 = "",
+    commentary_body: []const u8 = "",
+    commentary_tags: []const []const u8 = &.{},
+    orders: []const DecisionOrder = &.{},
+};
+
+const DecisionOrder = struct {
+    ticker: []const u8,
+    side: []const u8,
+    action: []const u8,
+    size: u32,
+    limit_cents: u8,
+    reason: []const u8 = "",
+};
+
+fn cmdValidate(ctx: *common.Context) !u8 {
+    const manifest_path = ctx.flagValue("--thesis-manifest") orelse {
+        try ctx.stderr.print("validate requires --thesis-manifest=PATH\n", .{});
+        return 2;
+    };
+    const decision_path = ctx.flagValue("--decision") orelse {
+        try ctx.stderr.print("validate requires --decision=PATH\n", .{});
+        return 2;
+    };
+    var bankroll_cap_cents: u64 = std.math.maxInt(u64);
+    if (ctx.flagValue("--bankroll-cap-cents")) |v| {
+        bankroll_cap_cents = std.fmt.parseInt(u64, v, 10) catch {
+            try ctx.stderr.print("--bankroll-cap-cents must be an integer\n", .{});
+            return 2;
+        };
+    }
+
+    const manifest_json = try std.Io.Dir.cwd().readFileAlloc(ctx.io, manifest_path, ctx.gpa, .unlimited);
+    defer ctx.gpa.free(manifest_json);
+
+    var manifest = manifest_mod.parseThesis(ctx.gpa, manifest_json) catch |e| {
+        try ctx.stderr.print("parse manifest {s}: {t}\n", .{ manifest_path, e });
+        return 1;
+    };
+    defer manifest.deinit();
+
+    const decision_json = try std.Io.Dir.cwd().readFileAlloc(ctx.io, decision_path, ctx.gpa, .unlimited);
+    defer ctx.gpa.free(decision_json);
+
+    var parsed = std.json.parseFromSlice(DecisionDoc, ctx.gpa, decision_json, .{
+        .ignore_unknown_fields = true,
+    }) catch |e| {
+        try ctx.stderr.print(
+            "{{\"ok\":false,\"reason\":\"DecisionSchemaInvalid\",\"detail\":\"{t}\"}}\n",
+            .{e},
+        );
+        return 1;
+    };
+    defer parsed.deinit();
+
+    const exit = try validateDecision(
+        &manifest,
+        parsed.value,
+        bankroll_cap_cents,
+        ctx.stdout,
+        ctx.stderr,
+    );
+    return exit;
+}
+
+/// Pure validation entry point. Returns 0 on `OK`, 1 on rejection (after
+/// writing a JSON reason line to `err`). Extracted from the CLI command so
+/// inline tests can drive it without constructing a `common.Context`.
+pub fn validateDecision(
+    manifest: *const manifest_mod.ThesisManifest,
+    decision: DecisionDoc,
+    bankroll_cap_cents: u64,
+    out: *std.Io.Writer,
+    err: *std.Io.Writer,
+) !u8 {
+    // 1. Decision-level schema checks.
+    if (decision.confidence_bp > 10000) {
+        try err.print(
+            "{{\"ok\":false,\"reason\":\"ConfidenceOutOfRange\",\"got\":{d}}}\n",
+            .{decision.confidence_bp},
+        );
+        return 1;
+    }
+    if (decision.commentary_body.len > 4096) {
+        try err.print(
+            "{{\"ok\":false,\"reason\":\"CommentaryBodyTooLong\",\"got\":{d},\"max\":4096}}\n",
+            .{decision.commentary_body.len},
+        );
+        return 1;
+    }
+    if (decision.rationale.len > 500) {
+        try err.print(
+            "{{\"ok\":false,\"reason\":\"RationaleTooLong\",\"got\":{d},\"max\":500}}\n",
+            .{decision.rationale.len},
+        );
+        return 1;
+    }
+
+    // 2. Per-order validation. Accumulate bankroll usage so the second buy
+    //    in a tick is checked against the post-first-buy budget.
+    var bankroll_used: u64 = 0;
+    for (decision.orders, 0..) |o, i| {
+        const side = parseSide(o.side) catch {
+            try err.print(
+                "{{\"ok\":false,\"reason\":\"BadSide\",\"order_index\":{d},\"got\":\"{s}\"}}\n",
+                .{ i, o.side },
+            );
+            return 1;
+        };
+        const action = parseAction(o.action) catch {
+            try err.print(
+                "{{\"ok\":false,\"reason\":\"BadAction\",\"order_index\":{d},\"got\":\"{s}\"}}\n",
+                .{ i, o.action },
+            );
+            return 1;
+        };
+        const intent: ticks.OrderIntent = .{
+            .ticker = o.ticker,
+            .side = side,
+            .action = action,
+            .size = o.size,
+            .limit_cents = o.limit_cents,
+            .reason = o.reason,
+        };
+        ticks.validateOrderIntent(intent, manifest, .{
+            .bankroll_cap_cents = bankroll_cap_cents,
+            .bankroll_used_cents = bankroll_used,
+        }) catch |e| {
+            try err.print(
+                "{{\"ok\":false,\"reason\":\"{t}\",\"order_index\":{d},\"ticker\":\"{s}\"}}\n",
+                .{ e, i, o.ticker },
+            );
+            return 1;
+        };
+        if (action == .buy) {
+            bankroll_used +|= @as(u64, o.size) * @as(u64, o.limit_cents);
+        }
+    }
+
+    try out.print("OK\n", .{});
+    return 0;
+}
+
+fn parseSide(s: []const u8) !ticks.Side {
+    if (std.mem.eql(u8, s, "yes")) return .yes;
+    if (std.mem.eql(u8, s, "no")) return .no;
+    return error.UnknownSide;
+}
+
+fn parseAction(s: []const u8) !ticks.Action {
+    if (std.mem.eql(u8, s, "buy")) return .buy;
+    if (std.mem.eql(u8, s, "sell")) return .sell;
+    if (std.mem.eql(u8, s, "cancel")) return .cancel;
+    if (std.mem.eql(u8, s, "amend")) return .amend;
+    return error.UnknownAction;
+}
+
+// ---------------------------------------------------------------------------
 
 fn missing(ctx: *common.Context, usage: []const u8) !u8 {
     try ctx.stderr.print("usage: praescientia-ticks {s}\n", .{usage});
@@ -119,6 +288,68 @@ fn missing(ctx: *common.Context, usage: []const u8) !u8 {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+// --- validate tests against tests/fixtures/decisions/ ---
+
+fn loadFixtureManifest(allocator: std.mem.Allocator, io: std.Io) !manifest_mod.ThesisManifest {
+    const json = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        "tests/fixtures/decisions/thesis.json",
+        allocator,
+        .unlimited,
+    );
+    defer allocator.free(json);
+    return manifest_mod.parseThesis(allocator, json);
+}
+
+fn validateFixture(fixture_name: []const u8) !u8 {
+    const io = std.testing.io;
+    var manifest = try loadFixtureManifest(std.testing.allocator, io);
+    defer manifest.deinit();
+
+    var path_buf: [256]u8 = undefined;
+    const fixture_path = try std.fmt.bufPrint(&path_buf, "tests/fixtures/decisions/{s}", .{fixture_name});
+    const decision_json = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        fixture_path,
+        std.testing.allocator,
+        .unlimited,
+    );
+    defer std.testing.allocator.free(decision_json);
+
+    var parsed = try std.json.parseFromSlice(DecisionDoc, std.testing.allocator, decision_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err.deinit();
+
+    return validateDecision(
+        &manifest,
+        parsed.value,
+        std.math.maxInt(u64),
+        &out.writer,
+        &err.writer,
+    );
+}
+
+test "validate accepts a well-formed decision (ok.json)" {
+    const exit = try validateFixture("ok.json");
+    try std.testing.expectEqual(@as(u8, 0), exit);
+}
+
+test "validate rejects orders against tickers not in the manifest (bad_ticker.json)" {
+    const exit = try validateFixture("bad_ticker.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate rejects size-zero orders (bad_size.json)" {
+    const exit = try validateFixture("bad_size.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
 
 test "runSnapshot writes canonical-JSON entries to disk" {
     // Driven by exercising `snapshotHeads` + `writeSnapshot` indirectly via
