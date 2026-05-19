@@ -1,0 +1,31 @@
+[project]
+name = "praescientia-indexer"
+version = "0.1.0"
+description = "Commentary chain indexer + query service (LanceDB + llama-server BGE-M3)"
+requires-python = ">=3.11"
+dependencies = [
+    "lancedb>=0.13",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "pyarrow>=17",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Single-file module — explicitly listed so setuptools doesn't try to do
+# package discovery over the tools/indexer dir.
+py-modules = ["index_commentary"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = "-q"

@@ -34,7 +34,9 @@ praescientia/
 │   │   ├── rollup.zig           # Compile-time registry (weighted_avg_v1)
 │   │   ├── divergence.zig       # temporalDivergence + outcomeDivergence
 │   │   ├── metrics.zig          # Prometheus counters (appends, contention, requests, gauge)
-│   │   └── init.zig             # initTree(io, root, with_sample) — kb_root bootstrap
+│   │   ├── init.zig             # initTree(io, root, with_sample) — kb_root bootstrap
+│   │   ├── predict.zig          # writePrediction (thesis.prediction checkpoint)
+│   │   └── commentary.zig       # Talmud-commentary chain type (writeCommentary, encode, validate, Scope)
 │   └── kalshi/                  # One file per Kalshi endpoint group
 │       ├── auth.zig             # RSA-PSS signing via vendored mbedTLS
 │       ├── client.zig           # HTTP transport, env switching, auth-header signing
@@ -63,20 +65,26 @@ praescientia/
 │   ├── order_groups.zig         # praescientia-order-groups
 │   ├── live_data.zig            # praescientia-live-data
 │   ├── search.zig               # praescientia-search
-│   ├── kb.zig                   # praescientia-kb (inspect/branches/fork/divergence/init/predict/add-market/add-thesis)
+│   ├── kb.zig                   # praescientia-kb (inspect/branches/fork/divergence/init/predict/add-market/add-thesis/commentary)
 │   ├── poll_markets.zig         # praescientia-poll-markets (Kalshi → kb_root demo loop)
 │   ├── poll_resolved_markets.zig# praescientia-poll-resolved-markets (CoinGecko spot)
 │   ├── test_conn.zig            # End-to-end demo-API smoke harness
 │   ├── signtest.zig             # RSA-PSS sign one-off (Stage 1)
 │   ├── verifytest.zig           # RSA-PSS verify one-off
-│   └── bench_state_chain.zig    # divergesAt 100k microbenchmark
+│   ├── bench_state_chain.zig    # divergesAt 100k microbenchmark
+│   └── indexer/                 # Python: commentary chain indexer (LanceDB + llama-server BGE-M3) + FastAPI /similar
+│       ├── index_commentary.py  # tail/Cursors/LlamaServerEmbedder/run_once/run_loop/build_query_app
+│       ├── test_indexer.py      # pytest — embed call is mocked; llama-server not required
+│       └── pyproject.toml       # uv/pip-compatible
 ├── server/
 │   ├── main.zig                 # std.http.Server + Io.Threaded accept loop
 │   ├── handlers.zig             # One handler per route, delegates to src/kalshi/*
 │   └── dashboard.html           # @embedFile'd into praescientia-server
 ├── scripts/
 │   ├── cross_verify.sh          # Stage 1 Zig ↔ OpenSSL RSA-PSS interop check
-│   └── parity_check.sh          # Historical parity harness (vs Julia, pre-removal)
+│   ├── parity_check.sh          # Historical parity harness (vs Julia, pre-removal)
+│   ├── demo_loop_smoke.sh       # End-to-end KB loop against Kalshi demo API
+│   └── commentary_smoke.sh      # End-to-end Talmud-commentary loop (requires llama-server)
 ├── vendor/
 │   └── mbedtls/                 # 3.6 LTS submodule (RSA-PSS)
 ├── .secret/                     # gitignored — Kalshi API key + id
@@ -155,7 +163,8 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Account | `zig build run-account -- list_keys\|create_key\|generate_key\|delete_key\|limits\|incentives\|fcm_*` | `src/kalshi/account.zig` |
 | Search | `zig build run-search -- tags\|sport_filters\|targets\|target\|series TICKER` | `src/kalshi/search.zig` |
 | Live Data | `zig build run-live-data -- milestones\|milestone\|live\|live_legacy\|batch\|game_stats` | `src/kalshi/live_data.zig` |
-| Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence\|init\|predict\|add-market\|add-thesis` | `src/kb/*` |
+| Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence\|init\|predict\|add-market\|add-thesis\|commentary` | `src/kb/*` |
+| Commentary indexer | `python tools/indexer/index_commentary.py --kb-root=PATH [--once\|--serve]` | `tools/indexer/index_commentary.py` |
 | KB poller | `zig build run-poll-markets -- --kb-root=./kb` | `tools/poll_markets.zig` |
 | Demo loop smoke | `./scripts/demo_loop_smoke.sh` | `scripts/demo_loop_smoke.sh` |
 | Metrics | `GET /metrics` on the dashboard server | `src/kb/metrics.zig` |

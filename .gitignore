@@ -26,6 +26,16 @@ parity/
 *.so
 *.dylib
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+*.egg-info/
+build/
+dist/
+
 # Jupyter notebooks
 .ipynb_checkpoints/
 
