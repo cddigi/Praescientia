@@ -155,6 +155,42 @@ fn writeJsonString(writer: *std.Io.Writer, s: []const u8) !void {
     try writer.writeByte('"');
 }
 
+/// Validate the in-memory payload before encoding. Per-rule distinct errors
+/// so the CLI/HTTP layers can map to user-friendly messages.
+///
+/// Not validated here:
+///   - `parent_hash` referencing an entry that actually exists on the chain —
+///     that's a chain-level check done in `writeCommentary`.
+pub fn validatePayload(p: *const CommentaryPayload) !void {
+    if (p.agent.model.len == 0) return error.MissingAgentModel;
+    if (p.body.len > body_max_bytes) return error.BodyTooLong;
+    if (p.tags.len > max_tags) return error.TooManyTags;
+    for (p.tags) |t| {
+        if (t.len == 0 or t.len > max_tag_len) return error.TagTooLong;
+    }
+    for (p.references) |r| {
+        if (!isHexHash(r)) return error.InvalidHashFormat;
+    }
+    if (p.parent_hash) |h| {
+        if (!isHexHash(h)) return error.InvalidHashFormat;
+    }
+    if (p.inputs.prediction_head) |h| {
+        if (!isHexHash(h)) return error.InvalidHashFormat;
+    }
+    for (p.inputs.market_set_heads) |h| {
+        if (!isHexHash(h)) return error.InvalidHashFormat;
+    }
+}
+
+fn isHexHash(s: []const u8) bool {
+    if (s.len != hash_hex_len) return false;
+    for (s) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+        if (!ok) return false;
+    }
+    return true;
+}
+
 test "encodePayload produces canonical alphabetically-sorted JSON" {
     var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer aw.deinit();
@@ -172,4 +208,79 @@ test "encodePayload produces canonical alphabetically-sorted JSON" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\"agent\":{\"model\":\"claude-opus-4-7\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"kind\":\"commentary\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\"parent_hash\":null") != null);
+}
+
+// Tiny helper builder for tests — every test was rebuilding the same struct.
+fn validPayload() CommentaryPayload {
+    return .{
+        .agent = .{ .model = "test-model", .run_id = "r" },
+        .body = "hello",
+        .references = &.{},
+        .parent_hash = null,
+        .inputs = .{},
+        .tags = &.{},
+        .ts_ms = 1,
+    };
+}
+
+test "validatePayload accepts a well-formed minimal payload" {
+    const p = validPayload();
+    try validatePayload(&p);
+}
+
+test "validatePayload rejects body over 16 KB" {
+    var big_body: [body_max_bytes + 1]u8 = undefined;
+    @memset(&big_body, 'x');
+    var p = validPayload();
+    p.body = &big_body;
+    try std.testing.expectError(error.BodyTooLong, validatePayload(&p));
+}
+
+test "validatePayload rejects more than 8 tags" {
+    var p = validPayload();
+    p.tags = &.{ "a", "b", "c", "d", "e", "f", "g", "h", "i" };
+    try std.testing.expectError(error.TooManyTags, validatePayload(&p));
+}
+
+test "validatePayload rejects tag longer than 32 chars" {
+    var p = validPayload();
+    p.tags = &.{ "ok", "this-tag-is-way-way-way-too-long-to-be-allowed" };
+    try std.testing.expectError(error.TagTooLong, validatePayload(&p));
+}
+
+test "validatePayload rejects an empty tag" {
+    var p = validPayload();
+    p.tags = &.{ "" };
+    try std.testing.expectError(error.TagTooLong, validatePayload(&p));
+}
+
+test "validatePayload rejects references that aren't 64-char hex" {
+    var p = validPayload();
+    p.references = &.{ "not-a-hash" };
+    try std.testing.expectError(error.InvalidHashFormat, validatePayload(&p));
+}
+
+test "validatePayload rejects references with non-hex chars" {
+    var p = validPayload();
+    // 64 chars but contains a 'z'
+    p.references = &.{ "z" ** 64 };
+    try std.testing.expectError(error.InvalidHashFormat, validatePayload(&p));
+}
+
+test "validatePayload accepts a well-formed 64-char hex reference" {
+    var p = validPayload();
+    p.references = &.{ "0" ** 64 };
+    try validatePayload(&p);
+}
+
+test "validatePayload rejects empty agent.model" {
+    var p = validPayload();
+    p.agent.model = "";
+    try std.testing.expectError(error.MissingAgentModel, validatePayload(&p));
+}
+
+test "validatePayload rejects malformed parent_hash" {
+    var p = validPayload();
+    p.parent_hash = "abc";
+    try std.testing.expectError(error.InvalidHashFormat, validatePayload(&p));
 }
