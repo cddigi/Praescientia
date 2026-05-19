@@ -249,7 +249,7 @@ zig build run-kb -- add-thesis fed-jun \
     --confidence-delta-bp=500 --kb-root=./kb
 
 # 4. Poll Kalshi once. Refreshes every market under ./kb/markets/ then recomputes every thesis.
-zig build run-poll-markets -- --kb-root=./kb
+zig build run-poll-markets -- run --kb-root=./kb
 
 # 5. Record your prediction. confidence_bp = how strongly you believe the thesis (1..10000).
 zig build run-kb -- predict fed-jun --confidence-bp=7200 --rationale="initial belief" --kb-root=./kb
@@ -259,6 +259,8 @@ zig build run-kb -- divergence ./kb/theses/fed-jun/prediction ./kb/theses/fed-ju
 ```
 
 Step 4 honors `manifest.confidence_delta_bp`: thesis reality only grows when the aggregate moves by at least that many basis points. Auth is loaded from `.secret/kalshi_api_key_id.txt` + `.secret/kalshi_api_key_private.txt`; without them the poller exits with the Kalshi 401.
+
+To verify the loop wires up against a live demo API, run `./scripts/demo_loop_smoke.sh`. It picks a clean open-status ticker, drives the loop end-to-end against `demo-api.kalshi.co`, and asserts both chains grew + divergence returned a sensible result.
 
 The full design and rationale lives in `docs/plans/done/2026-05-17-state-chain-knowledge-base-design.md`. The demo loop spec lives in `docs/plans/2026-05-18-kalshi-demo-loop-design.md`.
 

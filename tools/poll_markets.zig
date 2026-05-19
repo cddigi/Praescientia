@@ -11,6 +11,7 @@ const common = @import("common");
 const praescientia = @import("praescientia");
 
 const ingest = praescientia.kb.ingest;
+const rollup = praescientia.kb.rollup;
 const markets_mod = praescientia.kalshi.markets;
 const init_mod = praescientia.kb.init;
 const metrics = praescientia.kb.metrics;
@@ -58,6 +59,17 @@ pub const PollSummary = struct {
 /// caller can decide on an exit code.
 pub fn pollAll(ctx: *common.Context, kb_root: std.Io.Dir) !PollSummary {
     var summary: PollSummary = .{ .markets = 0, .theses = 0, .errors = 0 };
+
+    // The rollup registry is module-level state; each fresh process starts
+    // empty. Register the v1 rollups here so `recomputeThesisReality` can
+    // resolve `manifest.rollup_fn` for every thesis we visit. Reset to
+    // `.empty` first so the function is idempotent across repeated calls
+    // (StringHashMapUnmanaged.deinit leaves the map `undefined`, which would
+    // crash a second registerAll if pollAll gets called twice in-process —
+    // foreshadowing daemon mode).
+    rollup.registry = .empty;
+    try rollup.registerAll(ctx.gpa);
+    defer rollup.registry.deinit(ctx.gpa);
 
     var markets_dir = try kb_root.openDir(ctx.io, "markets", .{ .iterate = true });
     defer markets_dir.close(ctx.io);

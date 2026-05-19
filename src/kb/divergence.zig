@@ -35,14 +35,14 @@ pub fn temporalDivergence(
 ) !TemporalDivergence {
     for (prediction.log.items.items, 0..) |pred_tx, idx| {
         const pred = try parsePayload(allocator, pred_tx.payload);
-        const pb = pred.yes_bid_cents orelse continue;
+        const pb = probabilityCents(pred) orelse continue;
 
         // Find the most-recent reality entry with ts ≤ pred.ts.
         var reality_bid: ?u32 = null;
         for (reality.log.items.items) |real_tx| {
             const real = try parsePayload(allocator, real_tx.payload);
             if (real.ts > pred.ts) break;
-            if (real.yes_bid_cents) |rb| reality_bid = rb;
+            if (probabilityCents(real)) |rb| reality_bid = rb;
         }
         const rb = reality_bid orelse continue;
 
@@ -65,6 +65,7 @@ pub fn temporalDivergence(
 const PayloadView = struct {
     ts: u64,
     yes_bid_cents: ?u32,
+    aggregate_yes_cents: ?u32,
     confidence_bp: ?u32,
     resolved_yes: ?bool,
 };
@@ -78,6 +79,10 @@ fn parsePayload(allocator: Allocator, payload: []const u8) !PayloadView {
         @intCast(v.integer)
     else
         null;
+    const agg: ?u32 = if (obj.get("aggregate_yes_cents")) |v|
+        @intCast(v.integer)
+    else
+        null;
     const conf: ?u32 = if (obj.get("confidence_bp")) |v|
         @intCast(v.integer)
     else
@@ -86,9 +91,23 @@ fn parsePayload(allocator: Allocator, payload: []const u8) !PayloadView {
     return .{
         .ts = ts,
         .yes_bid_cents = yes_bid,
+        .aggregate_yes_cents = agg,
         .confidence_bp = conf,
         .resolved_yes = resolved,
     };
+}
+
+/// Extract a normalized yes-probability in cents (0..100) from any payload.
+/// Priority:
+///   1. `aggregate_yes_cents` — thesis.reality rollup outputs
+///   2. `confidence_bp` / 100 — thesis.prediction author beliefs
+///   3. `yes_bid_cents` — market.reality / market.prediction
+/// Returns null when none of those fields are present.
+fn probabilityCents(view: PayloadView) ?u32 {
+    if (view.aggregate_yes_cents) |c| return c;
+    if (view.confidence_bp) |bp| return bp / 100;
+    if (view.yes_bid_cents) |c| return c;
+    return null;
 }
 
 pub const OutcomeDivergence = struct {
@@ -246,4 +265,38 @@ test "temporalDivergence returns null when chains agree within threshold" {
     // 1c off = 100 bp; threshold 200 bp → no divergence.
     const d = try temporalDivergence(std.testing.allocator, &pred_chain, &reality_chain, 200);
     try std.testing.expectEqual(@as(?usize, null), d.first_drift_idx);
+}
+
+test "temporalDivergence pairs thesis.prediction (confidence_bp) with thesis.reality (aggregate_yes_cents)" {
+    // Mirror of the demo-loop flow: thesis chains don't carry `yes_bid_cents`.
+    // Reality has aggregate_yes_cents=75; prediction has confidence_bp=6500
+    // (= 65 cents). Delta 10c = 1000 bp; threshold 500 bp must catch it.
+    var reality_log: txlog.TxLog = .init(std.testing.allocator);
+    defer reality_log.deinit();
+    try appendCanonical(&reality_log, "{\"aggregate_yes_cents\":75,\"kind\":\"thesis.reality\",\"ts\":100}");
+
+    var pred_log: txlog.TxLog = .init(std.testing.allocator);
+    defer pred_log.deinit();
+    try appendCanonical(&pred_log, "{\"confidence_bp\":6500,\"kind\":\"thesis.prediction\",\"ts\":100}");
+
+    const reality_chain: chain_mod.Chain = .{
+        .allocator = std.testing.allocator,
+        .log = reality_log,
+        .branch_name = try std.testing.allocator.dupe(u8, "main"),
+    };
+    defer std.testing.allocator.free(reality_chain.branch_name);
+    const pred_chain: chain_mod.Chain = .{
+        .allocator = std.testing.allocator,
+        .log = pred_log,
+        .branch_name = try std.testing.allocator.dupe(u8, "main"),
+    };
+    defer std.testing.allocator.free(pred_chain.branch_name);
+
+    const d = try temporalDivergence(std.testing.allocator, &pred_chain, &reality_chain, 500);
+    try std.testing.expectEqual(@as(?usize, 0), d.first_drift_idx);
+    try std.testing.expectEqual(@as(u32, 1000), d.drift_amount_bp);
+
+    // 1500 bp threshold won't fire on a 1000 bp delta.
+    const d2 = try temporalDivergence(std.testing.allocator, &pred_chain, &reality_chain, 1500);
+    try std.testing.expectEqual(@as(?usize, null), d2.first_drift_idx);
 }
