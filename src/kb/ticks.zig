@@ -15,6 +15,7 @@ const Allocator = std.mem.Allocator;
 const txlog = @import("../txlog.zig");
 const chain_mod = @import("chain.zig");
 const branches_mod = @import("branches.zig");
+const manifest_mod = @import("manifest.zig");
 const state_chain = @import("../state_chain.zig");
 const Hash = state_chain.Hash;
 
@@ -223,6 +224,92 @@ fn hexEncodeHash(hash: Hash, out: *[64]u8) void {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Order intents
+// ---------------------------------------------------------------------------
+
+/// YES or NO side of a binary Kalshi market.
+pub const Side = enum { yes, no };
+
+/// Order operation. Matches the verbs `praescientia-orders` exposes.
+pub const Action = enum { buy, sell, cancel, amend };
+
+/// One order operation proposed by a sub-agent. The orchestrator validates
+/// every field before translating into a Kalshi API call.
+pub const OrderIntent = struct {
+    ticker: []const u8,
+    side: Side,
+    action: Action,
+    size: u32,
+    limit_cents: u8,
+    reason: []const u8 = "",
+};
+
+/// Tagged reasons for rejecting an `OrderIntent`. Maps 1:1 to the
+/// rejection categories documented in the design's §6.
+pub const ValidationError = error{
+    /// `intent.ticker` is not in the thesis's `market_set` whitelist.
+    TickerNotInManifest,
+    /// `intent.size` exceeds the per-market position cap.
+    SizeOverPerMarketCap,
+    /// `intent.limit_cents` is outside Kalshi's `[1, 99]` range.
+    LimitOutOfRange,
+    /// `intent.size == 0` — Kalshi rejects these and we shouldn't ship them.
+    SizeNonPositive,
+    /// Combined cost of this order plus already-committed bankroll for this
+    /// tick exceeds the per-thesis cap.
+    BankrollCapExceeded,
+};
+
+/// State the validator needs beyond the intent itself. The orchestrator
+/// computes this once per thesis per tick from current portfolio + manifest.
+pub const PositionState = struct {
+    /// Maximum contracts allowed in a single market position. §6 default 100.
+    per_market_cap: u32 = 100,
+    /// Per-thesis bankroll cap in cents, derived from `bankroll_cap_bp` and
+    /// the current account balance.
+    bankroll_cap_cents: u64,
+    /// Cents already committed by earlier orders this tick on this thesis.
+    /// Lets the validator catch the second order in a sequence that would
+    /// individually fit but collectively breach the cap.
+    bankroll_used_cents: u64 = 0,
+};
+
+/// Enforce §6 rules on a single order intent against the responsible
+/// thesis's manifest and current position state. Returns nothing on success;
+/// returns a tagged `ValidationError` otherwise. The orchestrator records
+/// the rejection reason in `kb/.ticks/{tick_id}.rejected.json` and skips
+/// that order without crashing the tick.
+///
+/// `buy` is the only action whose `size * limit_cents` charges the bankroll
+/// — sells, cancels, and amends either release capital or are net-neutral
+/// for this conservative gate.
+pub fn validateOrderIntent(
+    intent: OrderIntent,
+    manifest: *const manifest_mod.ThesisManifest,
+    state: PositionState,
+) ValidationError!void {
+    if (intent.size == 0) return ValidationError.SizeNonPositive;
+    if (intent.size > state.per_market_cap) return ValidationError.SizeOverPerMarketCap;
+    if (intent.limit_cents < 1 or intent.limit_cents > 99) return ValidationError.LimitOutOfRange;
+
+    var found = false;
+    for (manifest.market_set) |t| {
+        if (std.mem.eql(u8, t, intent.ticker)) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) return ValidationError.TickerNotInManifest;
+
+    if (intent.action == .buy) {
+        const cost: u64 = @as(u64, intent.size) * @as(u64, intent.limit_cents);
+        if (state.bankroll_used_cents +| cost > state.bankroll_cap_cents) {
+            return ValidationError.BankrollCapExceeded;
+        }
+    }
+}
+
 /// Write a canonical-JSON encoding of a snapshot slice. Top-level shape:
 ///
 ///   {"entries":[
@@ -366,6 +453,111 @@ test "snapshotHeads handles an empty kb_root gracefully" {
     const entries = try snapshotHeads(std.testing.allocator, io, tmp.dir);
     defer freeSnapshot(std.testing.allocator, entries);
     try std.testing.expectEqual(@as(usize, 0), entries.len);
+}
+
+// --- validateOrderIntent tests ---
+
+fn testThesis() !manifest_mod.ThesisManifest {
+    const json =
+        \\{"kind":"thesis","id":"t","description":"x",
+        \\"market_set":["KX-A","KX-B"],"rollup_fn":"weighted_avg_v1",
+        \\"weights":{"KX-A":7000,"KX-B":3000},
+        \\"trigger":{"confidence_delta_bp":500}}
+    ;
+    return manifest_mod.parseThesis(std.testing.allocator, json);
+}
+
+test "validateOrderIntent accepts a well-formed buy" {
+    var t = try testThesis();
+    defer t.deinit();
+    try validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 5, .limit_cents = 30 },
+        &t,
+        .{ .bankroll_cap_cents = 10_000 },
+    );
+}
+
+test "validateOrderIntent rejects size == 0" {
+    var t = try testThesis();
+    defer t.deinit();
+    try std.testing.expectError(ValidationError.SizeNonPositive, validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 0, .limit_cents = 30 },
+        &t,
+        .{ .bankroll_cap_cents = 10_000 },
+    ));
+}
+
+test "validateOrderIntent rejects size over per-market cap" {
+    var t = try testThesis();
+    defer t.deinit();
+    try std.testing.expectError(ValidationError.SizeOverPerMarketCap, validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 200, .limit_cents = 30 },
+        &t,
+        .{ .per_market_cap = 100, .bankroll_cap_cents = 100_000 },
+    ));
+}
+
+test "validateOrderIntent rejects limit below or above Kalshi range" {
+    var t = try testThesis();
+    defer t.deinit();
+    try std.testing.expectError(ValidationError.LimitOutOfRange, validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 5, .limit_cents = 0 },
+        &t,
+        .{ .bankroll_cap_cents = 10_000 },
+    ));
+    try std.testing.expectError(ValidationError.LimitOutOfRange, validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 5, .limit_cents = 100 },
+        &t,
+        .{ .bankroll_cap_cents = 10_000 },
+    ));
+}
+
+test "validateOrderIntent rejects tickers not in manifest market_set" {
+    var t = try testThesis();
+    defer t.deinit();
+    try std.testing.expectError(ValidationError.TickerNotInManifest, validateOrderIntent(
+        .{ .ticker = "KX-NOT-LISTED", .side = .yes, .action = .buy, .size = 5, .limit_cents = 30 },
+        &t,
+        .{ .bankroll_cap_cents = 10_000 },
+    ));
+}
+
+test "validateOrderIntent rejects buys that breach bankroll cap" {
+    var t = try testThesis();
+    defer t.deinit();
+    // 50 contracts × 30¢ = 1500¢, cap is 1000¢.
+    try std.testing.expectError(ValidationError.BankrollCapExceeded, validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 50, .limit_cents = 30 },
+        &t,
+        .{ .bankroll_cap_cents = 1000 },
+    ));
+}
+
+test "validateOrderIntent bankroll cap counts cumulative used cents" {
+    var t = try testThesis();
+    defer t.deinit();
+    // Cap 1000¢; 800 already used; this order needs 5 × 50 = 250¢ → breach.
+    try std.testing.expectError(ValidationError.BankrollCapExceeded, validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .buy, .size = 5, .limit_cents = 50 },
+        &t,
+        .{ .bankroll_cap_cents = 1000, .bankroll_used_cents = 800 },
+    ));
+}
+
+test "validateOrderIntent skips bankroll check for cancels and sells" {
+    var t = try testThesis();
+    defer t.deinit();
+    // A cancel against a fully-saturated bankroll still passes — we're freeing capital.
+    try validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .cancel, .size = 5, .limit_cents = 50 },
+        &t,
+        .{ .bankroll_cap_cents = 100, .bankroll_used_cents = 100 },
+    );
+    try validateOrderIntent(
+        .{ .ticker = "KX-A", .side = .yes, .action = .sell, .size = 5, .limit_cents = 50 },
+        &t,
+        .{ .bankroll_cap_cents = 100, .bankroll_used_cents = 100 },
+    );
 }
 
 test "writeSnapshot emits canonical JSON with alphabetical keys" {
