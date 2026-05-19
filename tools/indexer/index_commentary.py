@@ -161,11 +161,21 @@ class LlamaServerEmbedder:
         vectors: list[list[float]] = []
         for item in payload:
             if isinstance(item, dict) and "embedding" in item:
-                vectors.append(list(item["embedding"]))
+                emb = item["embedding"]
             elif isinstance(item, list):
-                vectors.append(list(item))
+                emb = item
             else:
                 raise EmbedderUnavailable(f"unexpected /embedding row shape: {type(item)}")
+            # Modern llama.cpp wraps the pooled embedding in an outer batch
+            # dimension: [[...1024 floats...]]. Older builds emit a flat
+            # [1024]. Unwrap the single-row batch when we see it.
+            if emb and isinstance(emb[0], list):
+                if len(emb) != 1:
+                    raise EmbedderUnavailable(
+                        f"expected one pooled row per input, got {len(emb)}"
+                    )
+                emb = emb[0]
+            vectors.append(list(emb))
         return vectors
 
 
