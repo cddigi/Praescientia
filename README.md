@@ -181,7 +181,9 @@ All Kalshi CLIs accept `--demo` (default), `--live`, `--verbose`, and `--help`.
 | `zig build run-order-groups -- list` | Order group lifecycle |
 | `zig build run-live-data -- milestones` | `/milestones`, `/live_data/*` |
 | `zig build run-search -- series KXBTCD` | `/series/{ticker}`, `/search/*` |
-| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence`, `init`, `predict`, `add-market`, `add-thesis` |
+| `zig build run-kb -- inspect <chain-dir>` | `kb/` chains: `inspect`, `branches`, `fork`, `divergence`, `init`, `predict`, `add-market`, `add-thesis`, `commentary` |
+| `zig build run-kb -- commentary write --thesis=ID --agent-model=NAME --body="..."` | Append a commentary entry to a thesis/market/global chain; also `list` and `show` |
+| `python tools/indexer/index_commentary.py --kb-root=./kb --once` | Run the commentary indexer once (requires llama-server on 8001) |
 | `zig build run-poll-markets -- --kb-root=./kb` | Poll Kalshi for every market under `--kb-root`; recompute every thesis |
 | `zig build run-poll -- prices` | CoinGecko BTC/ETH/SOL spot |
 | `zig build run-server -- --port=8080` | Dashboard at `http://localhost:<port>/` |
@@ -200,11 +202,15 @@ All Kalshi CLIs accept `--demo` (default), `--live`, `--verbose`, and `--help`.
 │   └── reality/
 │       ├── main.jsonl           # Hash-chained observations from Kalshi
 │       └── branches.json        # Fork metadata
-└── theses/<id>/
-    ├── manifest.json            # {kind, market_set, rollup_fn, weights, trigger.confidence_delta_bp}
-    ├── reality/                 # Reduced from market reality via rollup_fn
-    └── prediction/              # Author's belief checkpoints
+├── theses/<id>/
+│   ├── manifest.json            # {kind, market_set, rollup_fn, weights, trigger.confidence_delta_bp}
+│   ├── reality/                 # Reduced from market reality via rollup_fn
+│   ├── prediction/              # Author's belief checkpoints
+│   └── commentary/              # Free-form AI/operator notes (see Commentary below)
+└── commentary/global/           # Cross-thesis macro observations
 ```
+
+Markets also gain a `commentary/` subdir; the global path is created on first write.
 
 The `praescientia-kb` CLI inspects chains, lists branches, forks, and computes temporal divergence:
 
@@ -230,6 +236,52 @@ When the dashboard server is started with `--kb-root=PATH`, four routes become a
 | `GET /metrics` | Prometheus text exposition: appends, lock contention, torn-tail recoveries, observe skips, per-route request counts, kb_root_configured gauge |
 
 The dashboard sidebar exposes "KB Markets" and "KB Theses" panels backed by these routes.
+
+### Commentary
+
+The Talmud-style commentary chain layers AI/operator prose on top of the reality and prediction chains. A LanceDB vector index serves cross-context retrieval — "what *else* in this kb bears on this situation?" — without bundling text into the chain itself. The chain is canonical; the index is disposable.
+
+Three scopes, all using the same `txlog` machinery as reality/prediction:
+
+- `theses/<id>/commentary/` — observations tied to a specific thesis (most common)
+- `markets/<TICKER>/commentary/` — observations about a specific market
+- `commentary/global/` — macro observations not tied to any one thesis
+
+Payload schema (canonical-JSON, alphabetical keys): `agent {model, run_id}`, `body` (≤ 16 KB), `inputs {market_set_heads, prediction_head}`, `kind: "commentary"`, `parent_hash`, `references[]`, `tags[]` (≤ 8 entries / ≤ 32 chars each), `ts` (int64 ms).
+
+Operator workflow:
+
+```bash
+# 1. Write a commentary entry. --agent-model is required (use "human" if you're typing it).
+zig build run-kb -- commentary write \
+    --thesis=fed-jun --agent-model=human \
+    --body="Yields ticked up after the dot plot revision." \
+    --tags=macro,rates --kb-root=./kb
+# → prints {"hash":"...","scope":"theses/fed-jun/commentary"} so an agent driver can chain.
+
+# 2. List recent entries for a scope.
+zig build run-kb -- commentary list --thesis=fed-jun --kb-root=./kb --limit=20
+
+# 3. Show the full canonical payload by hash (searches all scopes).
+zig build run-kb -- commentary show <hash> --kb-root=./kb
+
+# 4. Bring up the indexer + query service. Requires a long-lived llama-server
+#    embedding daemon (BGE-M3 GGUF, port 8001 by default).
+llama-server --embeddings -m bge-m3-Q4_K_M.gguf --port 8001 --ctx-size 8192 &
+python tools/indexer/index_commentary.py --kb-root=./kb --serve --query-port=8002 &
+
+# 5. Start the dashboard with the retrieval proxy enabled.
+zig build run-server -- --kb-root=./kb --commentary-query-url=http://127.0.0.1:8002
+
+# 6. Hit /similar with one of your hashes to get ranked neighbors from other scopes.
+curl -X POST http://localhost:8080/api/kb/commentary/similar \
+    -H 'content-type: application/json' \
+    -d '{"anchor_hash":"<hash>", "limit":5, "exclude_scopes":["theses/fed-jun/commentary"]}'
+```
+
+The dashboard server also exposes three POST write routes (gated behind `--kb-root`): `/api/kb/theses/{id}/commentary`, `/api/kb/markets/{ticker}/commentary`, `/api/kb/commentary/global`. Same JSON shape as the CLI flags translated into fields; the server fills in `kind` and `ts`.
+
+`./scripts/commentary_smoke.sh` exercises the full loop end-to-end (requires a running `llama-server`).
 
 ### Demo Loop
 
