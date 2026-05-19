@@ -373,6 +373,78 @@ pub fn clientOrderId(
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// Clamping
+// ---------------------------------------------------------------------------
+
+/// Why an order's size got clamped down from what the sub-agent proposed.
+/// `null` in `ClampResult.reason` means no clamp was needed.
+pub const ClampReason = enum {
+    /// Sub-agent asked for more contracts than the per-market position cap.
+    PerMarketCap,
+    /// Order would breach the per-thesis bankroll cap; reduced to fit.
+    BankrollCap,
+    /// Demo/live balance can't cover the requested size; reduced to fit.
+    InsufficientBalance,
+};
+
+pub const ClampResult = struct {
+    /// Clamped size (≤ original). May be 0 if the gate was fully shut.
+    size: u32,
+    /// Which constraint determined the clamp, or `null` if nothing bound.
+    reason: ?ClampReason,
+};
+
+pub const ClampConfig = struct {
+    /// Max contracts allowed in a single market position. §6 default 100.
+    per_market_cap: u32 = 100,
+    /// Cents still available for this thesis after prior-tick commitments.
+    bankroll_remaining_cents: u64,
+    /// Total account balance in cents.
+    balance_cents: u64,
+};
+
+/// Compute the largest size we'd ship to Kalshi for this intent, given the
+/// active caps. Used by the orchestrator's executor to do best-effort
+/// execution instead of rejecting the order outright. The reason field
+/// surfaces the binding constraint so it can be logged in the tick's
+/// events JSONL.
+///
+/// Non-buy actions (sell, cancel, amend) don't consume capital and are
+/// returned unchanged. A zero-size intent is also returned unchanged.
+pub fn clampOrderSize(intent: OrderIntent, cfg: ClampConfig) ClampResult {
+    if (intent.action != .buy) return .{ .size = intent.size, .reason = null };
+    if (intent.size == 0 or intent.limit_cents == 0) {
+        return .{ .size = intent.size, .reason = null };
+    }
+
+    const per_unit: u64 = @as(u64, intent.limit_cents);
+    const max_bankroll: u32 = @intCast(@min(cfg.bankroll_remaining_cents / per_unit, @as(u64, std.math.maxInt(u32))));
+    const max_balance: u32 = @intCast(@min(cfg.balance_cents / per_unit, @as(u64, std.math.maxInt(u32))));
+
+    var size = intent.size;
+    var reason: ?ClampReason = null;
+
+    // Apply caps in policy precedence: per-market hard cap, then bankroll,
+    // then account balance. Later binding constraints overwrite the reason
+    // so the recorded reason names the constraint that actually shaped
+    // the final size.
+    if (cfg.per_market_cap < size) {
+        size = cfg.per_market_cap;
+        reason = .PerMarketCap;
+    }
+    if (max_bankroll < size) {
+        size = max_bankroll;
+        reason = .BankrollCap;
+    }
+    if (max_balance < size) {
+        size = max_balance;
+        reason = .InsufficientBalance;
+    }
+
+    return .{ .size = size, .reason = reason };
+}
+
 /// Write a canonical-JSON encoding of a snapshot slice. Top-level shape:
 ///
 ///   {"entries":[
@@ -703,6 +775,112 @@ test "clientOrderId errors when output buffer is too small" {
         .yes,
         .buy,
     ));
+}
+
+// --- clampOrderSize tests ---
+
+test "clampOrderSize passes through orders that fit every cap" {
+    const intent: OrderIntent = .{
+        .ticker = "K",
+        .side = .yes,
+        .action = .buy,
+        .size = 5,
+        .limit_cents = 30,
+    };
+    const r = clampOrderSize(intent, .{
+        .per_market_cap = 100,
+        .bankroll_remaining_cents = 10_000,
+        .balance_cents = 10_000,
+    });
+    try std.testing.expectEqual(@as(u32, 5), r.size);
+    try std.testing.expect(r.reason == null);
+}
+
+test "clampOrderSize clamps to per_market_cap when nothing tighter binds" {
+    const intent: OrderIntent = .{
+        .ticker = "K",
+        .side = .yes,
+        .action = .buy,
+        .size = 200,
+        .limit_cents = 1,
+    };
+    const r = clampOrderSize(intent, .{
+        .per_market_cap = 100,
+        .bankroll_remaining_cents = 1_000_000,
+        .balance_cents = 1_000_000,
+    });
+    try std.testing.expectEqual(@as(u32, 100), r.size);
+    try std.testing.expectEqual(@as(?ClampReason, .PerMarketCap), r.reason);
+}
+
+test "clampOrderSize clamps to bankroll when bankroll is the binding cap" {
+    const intent: OrderIntent = .{
+        .ticker = "K",
+        .side = .yes,
+        .action = .buy,
+        .size = 50,
+        .limit_cents = 30,
+    };
+    // Bankroll allows 300/30 = 10 contracts. Balance and per-market are wide.
+    const r = clampOrderSize(intent, .{
+        .per_market_cap = 100,
+        .bankroll_remaining_cents = 300,
+        .balance_cents = 1_000_000,
+    });
+    try std.testing.expectEqual(@as(u32, 10), r.size);
+    try std.testing.expectEqual(@as(?ClampReason, .BankrollCap), r.reason);
+}
+
+test "clampOrderSize clamps to balance when balance is the tightest cap" {
+    const intent: OrderIntent = .{
+        .ticker = "K",
+        .side = .yes,
+        .action = .buy,
+        .size = 50,
+        .limit_cents = 30,
+    };
+    // Balance allows 150/30 = 5 contracts. Bankroll/per-market are looser.
+    const r = clampOrderSize(intent, .{
+        .per_market_cap = 100,
+        .bankroll_remaining_cents = 1_000_000,
+        .balance_cents = 150,
+    });
+    try std.testing.expectEqual(@as(u32, 5), r.size);
+    try std.testing.expectEqual(@as(?ClampReason, .InsufficientBalance), r.reason);
+}
+
+test "clampOrderSize sets size to 0 when bankroll cannot afford one contract" {
+    const intent: OrderIntent = .{
+        .ticker = "K",
+        .side = .yes,
+        .action = .buy,
+        .size = 5,
+        .limit_cents = 50,
+    };
+    const r = clampOrderSize(intent, .{
+        .per_market_cap = 100,
+        .bankroll_remaining_cents = 25, // < 50¢ per contract
+        .balance_cents = 1_000_000,
+    });
+    try std.testing.expectEqual(@as(u32, 0), r.size);
+    try std.testing.expectEqual(@as(?ClampReason, .BankrollCap), r.reason);
+}
+
+test "clampOrderSize leaves non-buy actions untouched" {
+    const intent: OrderIntent = .{
+        .ticker = "K",
+        .side = .yes,
+        .action = .cancel,
+        .size = 100,
+        .limit_cents = 99,
+    };
+    const r = clampOrderSize(intent, .{
+        .per_market_cap = 1,
+        .bankroll_remaining_cents = 0,
+        .balance_cents = 0,
+    });
+    try std.testing.expectEqual(@as(u32, 100), r.size);
+    try std.testing.expect(r.reason == null);
 }
 
 test "writeSnapshot emits canonical JSON with alphabetical keys" {
