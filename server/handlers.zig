@@ -94,6 +94,10 @@ pub const routes = [_]Route{
     .{ .method = .GET, .pattern = "/api/kb/markets/{ticker}/head", .handler = kbMarketHead },
     .{ .method = .GET, .pattern = "/api/kb/theses/{id}/divergence", .handler = kbThesisDivergence },
     .{ .method = .GET, .pattern = "/api/kb/theses/{id}/branches", .handler = kbThesisBranches },
+    // Commentary write endpoints — localhost-only gate via kb_root_path
+    .{ .method = .POST, .pattern = "/api/kb/theses/{id}/commentary", .handler = kbThesisCommentaryWrite },
+    .{ .method = .POST, .pattern = "/api/kb/markets/{ticker}/commentary", .handler = kbMarketCommentaryWrite },
+    .{ .method = .POST, .pattern = "/api/kb/commentary/global", .handler = kbGlobalCommentaryWrite },
     // Metrics
     .{ .method = .GET, .pattern = "/metrics", .handler = metricsHandler },
 };
@@ -376,6 +380,165 @@ fn kbThesisDivergence(ctx: *RequestCtx) !void {
     return respondOk(ctx, body.items);
 }
 
+// ----- Commentary write handlers --------------------------------------------
+
+/// Wire-format size cap for commentary POST bodies. Matches the schema cap on
+/// the `body` field plus generous headroom for the surrounding JSON envelope.
+const commentary_body_cap: usize = 24 * 1024;
+
+fn kbThesisCommentaryWrite(ctx: *RequestCtx) !void {
+    const scope = kb.commentary.Scope{ .thesis = ctx.param(0) };
+    return commentaryWriteImpl(ctx, scope);
+}
+
+fn kbMarketCommentaryWrite(ctx: *RequestCtx) !void {
+    const scope = kb.commentary.Scope{ .market = ctx.param(0) };
+    return commentaryWriteImpl(ctx, scope);
+}
+
+fn kbGlobalCommentaryWrite(ctx: *RequestCtx) !void {
+    return commentaryWriteImpl(ctx, .global);
+}
+
+/// Shared implementation:
+///   1. Require kb_root_path (503 otherwise — same gate as KB reads).
+///   2. Read the request body, capped at `commentary_body_cap` (413 if over).
+///   3. Parse the JSON shape: agent{model,run_id?}, body, references?[],
+///      parent_hash?, inputs?{prediction_head?, market_set_heads?[]}, tags?[].
+///   4. Stamp `ts_ms` server-side (clients don't get to backdate the chain).
+///   5. Hand off to `commentary.writeCommentary`.
+///   6. Map errors to HTTP status codes; respond with the standard envelope.
+fn commentaryWriteImpl(ctx: *RequestCtx, scope: kb.commentary.Scope) !void {
+    var root = (try requireKbRoot(ctx)) orelse return;
+    defer root.close(ctx.io);
+
+    // Read body.
+    var body_buf: [16 * 1024]u8 = undefined;
+    const body_reader = ctx.request.readerExpectContinue(&body_buf) catch |e|
+        return respondError(ctx, @errorName(e), .bad_request);
+
+    var collected: std.array_list.Managed(u8) = .init(ctx.arena);
+    while (true) {
+        const chunk = body_reader.peek(1) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return respondError(ctx, @errorName(err), .bad_request),
+        };
+        if (chunk.len == 0) break;
+        if (collected.items.len + chunk.len > commentary_body_cap) {
+            return respondError(ctx, "request body exceeds 24 KB cap", .payload_too_large);
+        }
+        try collected.appendSlice(chunk);
+        body_reader.toss(chunk.len);
+    }
+
+    // Parse the JSON envelope.
+    var parsed = std.json.parseFromSlice(std.json.Value, ctx.arena, collected.items, .{}) catch |err| {
+        const msg = try std.fmt.allocPrint(ctx.arena, "invalid JSON: {t}", .{err});
+        return respondError(ctx, msg, .bad_request);
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return respondError(ctx, "request body must be a JSON object", .bad_request);
+    const root_obj = parsed.value.object;
+
+    // agent (required, with .model).
+    const agent_val = root_obj.get("agent") orelse return respondError(ctx, "missing field: agent", .bad_request);
+    if (agent_val != .object) return respondError(ctx, "agent must be an object", .bad_request);
+    const agent_model_val = agent_val.object.get("model") orelse return respondError(ctx, "missing field: agent.model", .bad_request);
+    if (agent_model_val != .string) return respondError(ctx, "agent.model must be a string", .bad_request);
+    const agent_run_id: []const u8 = if (agent_val.object.get("run_id")) |v| switch (v) {
+        .string => |s| s,
+        else => return respondError(ctx, "agent.run_id must be a string", .bad_request),
+    } else "";
+
+    // body (required string).
+    const body_val = root_obj.get("body") orelse return respondError(ctx, "missing field: body", .bad_request);
+    if (body_val != .string) return respondError(ctx, "body must be a string", .bad_request);
+
+    const references = try jsonStringArray(ctx.arena, root_obj.get("references"), "references");
+    const tags = try jsonStringArray(ctx.arena, root_obj.get("tags"), "tags");
+
+    var parent_hash: ?[]const u8 = null;
+    if (root_obj.get("parent_hash")) |v| switch (v) {
+        .string => |s| parent_hash = s,
+        .null => parent_hash = null,
+        else => return respondError(ctx, "parent_hash must be a string or null", .bad_request),
+    };
+
+    var prediction_head: ?[]const u8 = null;
+    var market_set_heads: []const []const u8 = &.{};
+    if (root_obj.get("inputs")) |inputs_val| {
+        if (inputs_val != .object) return respondError(ctx, "inputs must be an object", .bad_request);
+        if (inputs_val.object.get("prediction_head")) |ph| switch (ph) {
+            .string => |s| prediction_head = s,
+            .null => prediction_head = null,
+            else => return respondError(ctx, "inputs.prediction_head must be a string or null", .bad_request),
+        };
+        market_set_heads = try jsonStringArray(ctx.arena, inputs_val.object.get("market_set_heads"), "inputs.market_set_heads");
+    }
+
+    // Server-stamped ts_ms.
+    const ts_ms: i64 = @intCast(@divFloor(std.Io.Clock.real.now(ctx.io).nanoseconds, 1_000_000));
+
+    const payload: kb.commentary.CommentaryPayload = .{
+        .agent = .{ .model = agent_model_val.string, .run_id = agent_run_id },
+        .body = body_val.string,
+        .references = references,
+        .parent_hash = parent_hash,
+        .inputs = .{
+            .prediction_head = prediction_head,
+            .market_set_heads = market_set_heads,
+        },
+        .tags = tags,
+        .ts_ms = ts_ms,
+    };
+
+    const result = kb.commentary.writeCommentary(ctx.arena, ctx.io, root, scope, payload) catch |err| {
+        const status: std.http.Status = switch (err) {
+            error.BodyTooLong, error.TooManyTags, error.TagTooLong, error.InvalidHashFormat, error.MissingAgentModel => .bad_request,
+            error.InvalidThesisId, error.InvalidMarketTicker => .bad_request,
+            error.ParentHashNotFound => .not_found,
+            else => .internal_server_error,
+        };
+        const msg = try std.fmt.allocPrint(ctx.arena, "{t}", .{err});
+        return respondError(ctx, msg, status);
+    };
+    // result.scope_path was allocated on ctx.arena (we passed ctx.arena into
+    // writeCommentary), so it's freed automatically when the arena resets.
+
+    var hex: [64]u8 = undefined;
+    _ = std.fmt.bufPrint(&hex, "{x}", .{result.hash}) catch unreachable;
+
+    var body: std.array_list.Managed(u8) = .init(ctx.arena);
+    try body.appendSlice("{\"hash\":");
+    try writeJsonString(&body, &hex);
+    try body.appendSlice(",\"scope_path\":");
+    try writeJsonString(&body, result.scope_path);
+    try body.appendSlice("}");
+    return respondOk(ctx, body.items);
+}
+
+/// Pluck an optional string-array JSON field. Returns &.{} for null/missing.
+/// Returns an error response upstream on type mismatch.
+fn jsonStringArray(arena: Allocator, maybe_val: ?std.json.Value, field_name: []const u8) ![]const []const u8 {
+    _ = field_name; // referenced only via the upstream error message path
+    const val = maybe_val orelse return &.{};
+    switch (val) {
+        .null => return &.{},
+        .array => |arr| {
+            const out = try arena.alloc([]const u8, arr.items.len);
+            for (arr.items, 0..) |item, i| {
+                switch (item) {
+                    .string => |s| out[i] = s,
+                    else => return error.MustBeStringArray,
+                }
+            }
+            return out;
+        },
+        else => return error.MustBeStringArray,
+    }
+}
+
 // ----- Proxy helpers ---------------------------------------------------------
 
 fn proxyGet(ctx: *RequestCtx, kalshi_path: []const u8) !void {
@@ -593,6 +756,20 @@ test "match: kb routes are wired up and capture path params" {
     const br = match(.GET, "/api/kb/theses/fed-cuts-jun/branches", &params).?;
     try std.testing.expectEqualStrings("/api/kb/theses/{id}/branches", br.route.pattern);
     try std.testing.expectEqualStrings("fed-cuts-jun", params[0]);
+}
+
+test "match: commentary write routes are wired up" {
+    var params: [max_path_params][]const u8 = undefined;
+    const thesis = match(.POST, "/api/kb/theses/fed-jun/commentary", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/theses/{id}/commentary", thesis.route.pattern);
+    try std.testing.expectEqualStrings("fed-jun", params[0]);
+
+    const market = match(.POST, "/api/kb/markets/KXBTC/commentary", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/markets/{ticker}/commentary", market.route.pattern);
+    try std.testing.expectEqualStrings("KXBTC", params[0]);
+
+    const global = match(.POST, "/api/kb/commentary/global", &params).?;
+    try std.testing.expectEqualStrings("/api/kb/commentary/global", global.route.pattern);
 }
 
 test "dashboard.html exposes the Knowledge Base sidebar markers" {
