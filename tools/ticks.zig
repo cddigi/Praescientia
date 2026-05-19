@@ -216,9 +216,9 @@ pub fn validateDecision(
         );
         return 1;
     }
-    if (decision.rationale.len > 500) {
+    if (decision.rationale.len > 1024) {
         try err.print(
-            "{{\"ok\":false,\"reason\":\"RationaleTooLong\",\"got\":{d},\"max\":500}}\n",
+            "{{\"ok\":false,\"reason\":\"RationaleTooLong\",\"got\":{d},\"max\":1024}}\n",
             .{decision.rationale.len},
         );
         return 1;
