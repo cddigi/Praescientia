@@ -325,6 +325,80 @@ def run_loop(
         time.sleep(interval_seconds)
 
 
+# ----- Query service ---------------------------------------------------------
+
+from pydantic import BaseModel, Field  # noqa: E402  (import here so the module loads even without fastapi-only deps)
+
+
+class SimilarRequest(BaseModel):
+    """Request body for POST /similar — k-NN over the commentary index by hash anchor."""
+
+    anchor_hash: str = Field(..., min_length=64, max_length=64)
+    limit: int = Field(10, ge=1, le=200)
+    exclude_scopes: list[str] = Field(default_factory=list)
+    min_ts: Optional[int] = None
+
+
+def build_query_app(table):
+    """Build a FastAPI app exposing POST /similar and GET /health.
+
+    `table` is a LanceDB table handle as returned by `open_or_create_table`.
+    The app and the indexer loop share the same handle in production.
+    """
+    from fastapi import FastAPI, HTTPException
+
+    app = FastAPI(title="Praescientia commentary query")
+
+    @app.get("/health")
+    def health() -> dict:
+        n = table.to_arrow().num_rows
+        return {"status": "ok", "indexed_rows": n}
+
+    @app.post("/similar")
+    def similar(req: SimilarRequest) -> dict:
+        # 1. Look up the anchor's vector.
+        rows = table.to_arrow().to_pylist()
+        anchor = next((r for r in rows if r["hash"] == req.anchor_hash), None)
+        if anchor is None:
+            raise HTTPException(status_code=404, detail=f"anchor_hash not indexed: {req.anchor_hash}")
+
+        # 2. Run k-NN. Lance returns rows in similarity order, with a
+        #    `_distance` column we map to `score`.
+        # Ask for limit + 1 + len(exclude_scopes) so post-filtering can
+        # still leave us `limit` neighbors.
+        query_limit = req.limit + 1 + len(req.exclude_scopes) * req.limit
+        results = (
+            table.search(anchor["vector"])
+            .limit(query_limit)
+            .to_arrow()
+            .to_pylist()
+        )
+
+        filtered: list[dict] = []
+        for row in results:
+            if row["hash"] == req.anchor_hash:
+                continue
+            if row["scope_path"] in req.exclude_scopes:
+                continue
+            if req.min_ts is not None and row["ts"] < req.min_ts:
+                continue
+            filtered.append(
+                {
+                    "hash": row["hash"],
+                    "scope_path": row["scope_path"],
+                    "score": float(row.get("_distance", 0.0)),
+                    "ts": int(row["ts"]),
+                    "tags": list(row.get("tags") or []),
+                }
+            )
+            if len(filtered) >= req.limit:
+                break
+
+        return {"results": filtered}
+
+    return app
+
+
 # ----- CLI entry --------------------------------------------------------------
 
 
@@ -359,7 +433,18 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
             print(f"indexed {indexed} new entries")
             return 0
-        # Default: loop forever. Query service is added in Task 4.6.
+
+        if args.serve:
+            return _run_serve_and_loop(
+                kb_root=args.kb_root,
+                lance_dir=lance_dir,
+                embedder=embedder,
+                interval=args.interval,
+                query_port=args.query_port,
+                verbose=args.verbose,
+            )
+
+        # Default: loop forever, no query service.
         run_loop(
             kb_root=args.kb_root,
             lance_dir=lance_dir,
@@ -370,6 +455,42 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     finally:
         embedder.close()
+
+
+def _run_serve_and_loop(
+    *,
+    kb_root: Path,
+    lance_dir: Path,
+    embedder,
+    interval: float,
+    query_port: int,
+    verbose: bool,
+) -> int:
+    """Run the indexer loop in a background thread + the FastAPI query service
+    in the foreground. Single process, both roles."""
+    import threading
+
+    import uvicorn
+
+    # Open or create the table once; both the loop and the app share this handle.
+    table = open_or_create_table(lance_dir)
+
+    def _loop():
+        import time
+
+        while True:
+            try:
+                run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder, verbose=verbose)
+            except Exception as e:  # noqa: BLE001
+                print(f"[indexer] iteration failed: {e!r}")
+            time.sleep(interval)
+
+    t = threading.Thread(target=_loop, name="commentary-indexer-loop", daemon=True)
+    t.start()
+
+    app = build_query_app(table)
+    uvicorn.run(app, host="127.0.0.1", port=query_port, log_level="warning")
+    return 0
 
 
 if __name__ == "__main__":

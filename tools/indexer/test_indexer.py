@@ -365,6 +365,86 @@ def test_run_once_skips_unavailable_embedder_without_crashing(tmp_path: Path) ->
     assert "theses/sample/commentary" not in cursors
 
 
+def test_build_query_app_health(tmp_path: Path) -> None:
+    table = ic.open_or_create_table(tmp_path / "lance")
+    ic.insert_rows(table, [_make_row("a" * 64)])
+    app = ic.build_query_app(table)
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        r = client.get("/health")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert body["indexed_rows"] == 1
+
+
+def test_build_query_app_similar_returns_ranked_neighbors(tmp_path: Path) -> None:
+    table = ic.open_or_create_table(tmp_path / "lance")
+    # Three rows in three different scopes, deterministic vectors.
+    ic.insert_rows(
+        table,
+        [
+            _make_row("a" * 64, scope_path="theses/sample/commentary", vec_value=0.1),
+            _make_row("b" * 64, scope_path="theses/sample/commentary", vec_value=0.2),
+            _make_row("c" * 64, scope_path="commentary/global", vec_value=0.9),
+        ],
+    )
+    app = ic.build_query_app(table)
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        r = client.post("/similar", json={"anchor_hash": "a" * 64, "limit": 5})
+        assert r.status_code == 200
+        body = r.json()
+        # Anchor itself is excluded; remaining 2 neighbors come back.
+        hashes = [row["hash"] for row in body["results"]]
+        assert ("a" * 64) not in hashes
+        assert set(hashes) == {"b" * 64, "c" * 64}
+        # Each row carries the required fields.
+        for row in body["results"]:
+            assert set(row.keys()) >= {"hash", "scope_path", "score", "ts", "tags"}
+
+
+def test_build_query_app_similar_honours_exclude_scopes(tmp_path: Path) -> None:
+    table = ic.open_or_create_table(tmp_path / "lance")
+    ic.insert_rows(
+        table,
+        [
+            _make_row("a" * 64, scope_path="theses/sample/commentary", vec_value=0.1),
+            _make_row("b" * 64, scope_path="theses/sample/commentary", vec_value=0.2),
+            _make_row("c" * 64, scope_path="commentary/global", vec_value=0.9),
+        ],
+    )
+    app = ic.build_query_app(table)
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/similar",
+            json={"anchor_hash": "a" * 64, "limit": 5, "exclude_scopes": ["theses/sample/commentary"]},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        hashes = [row["hash"] for row in body["results"]]
+        assert hashes == ["c" * 64]
+
+
+def test_build_query_app_similar_returns_404_for_unknown_anchor(tmp_path: Path) -> None:
+    table = ic.open_or_create_table(tmp_path / "lance")
+    ic.insert_rows(table, [_make_row("a" * 64)])
+    app = ic.build_query_app(table)
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        r = client.post("/similar", json={"anchor_hash": "z" * 64})
+        assert r.status_code == 404
+
+
 def test_run_once_handles_market_and_global_scopes(tmp_path: Path) -> None:
     kb_root = tmp_path / "kb"
     (kb_root / "markets").mkdir(parents=True)
