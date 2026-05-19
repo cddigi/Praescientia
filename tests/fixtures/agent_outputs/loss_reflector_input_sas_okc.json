@@ -1,0 +1,84 @@
+{
+  "tick_id": "01XYZRESOLUTIONTICKABC123",
+  "thesis": {
+    "id": "sas-okc-spread-ladder",
+    "description": "San Antonio over OKC: spread ladder (1.5/4.5/7.5/10.5/13.5)",
+    "market_set": [
+      "KXNBASPREAD-26MAY20SASOKC-SAS1",
+      "KXNBASPREAD-26MAY20SASOKC-SAS4",
+      "KXNBASPREAD-26MAY20SASOKC-SAS7",
+      "KXNBASPREAD-26MAY20SASOKC-SAS10",
+      "KXNBASPREAD-26MAY20SASOKC-SAS13"
+    ],
+    "weights_bp": [2000, 2000, 2000, 2000, 2000],
+    "rollup_fn": "weighted_avg_v1",
+    "confidence_delta_bp": 100,
+    "bankroll_cap_bp": 500
+  },
+  "market_resolution": {
+    "ticker": "KXNBASPREAD-26MAY20SASOKC-SAS1",
+    "resolved_yes": true,
+    "resolution_ts_ms": 1779300000000,
+    "our_held_side": "no",
+    "our_contracts": 5,
+    "realized_pnl_cents": -150
+  },
+  "prediction_history": [
+    {
+      "confidence_bp": 2000,
+      "ts_ms": 1779166392000,
+      "rationale": "Fading the lower rungs: market mean 25c but SAS+1.5 30c quote is liquidity-limit driven, not probability-driven. OKC favored."
+    },
+    {
+      "confidence_bp": 1800,
+      "ts_ms": 1779166607000,
+      "rationale": "Tightening fade to 18%: order book sat flat across the poll cycle, no surprise late liquidity."
+    },
+    {
+      "confidence_bp": 1800,
+      "ts_ms": 1779170000000,
+      "rationale": "No change — bid stable at 28c, no fresh volume."
+    },
+    {
+      "confidence_bp": 1800,
+      "ts_ms": 1779210000000,
+      "rationale": "No change — bid drifted 28c -> 22c but spread tightened, treating as quote-maker recalibration."
+    },
+    {
+      "confidence_bp": 1800,
+      "ts_ms": 1779240000000,
+      "rationale": "No change — book activity unclear."
+    }
+  ],
+  "market_reality_chain": [
+    {"ts_ms": 1779165182000, "yes_bid_cents": 28, "yes_ask_cents": 32, "last_trade_cents": null, "volume": 0},
+    {"ts_ms": 1779166342000, "yes_bid_cents": 28, "yes_ask_cents": 32, "last_trade_cents": null, "volume": 0},
+    {"ts_ms": 1779210000000, "yes_bid_cents": 22, "yes_ask_cents": 25, "last_trade_cents": 24, "volume": 1200},
+    {"ts_ms": 1779240000000, "yes_bid_cents": 35, "yes_ask_cents": 40, "last_trade_cents": 38, "volume": 2100},
+    {"ts_ms": 1779280000000, "yes_bid_cents": 65, "yes_ask_cents": 70, "last_trade_cents": 68, "volume": 3400},
+    {"ts_ms": 1779299000000, "yes_bid_cents": 95, "yes_ask_cents": 100, "last_trade_cents": 98, "volume": 4200}
+  ],
+  "commentary_neighbors": [
+    {
+      "hash": "1b35453f81b74fc0636b8c11dbde7f82c755f5b317e2e5266578486391ca9ef2",
+      "scope_path": "theses/sas-okc-spread-ladder/commentary",
+      "body": "Initial framing: spread ladder lets us read the market's implied win-margin distribution; the steeper the no-bid drop across rungs, the more confident the market is in a tight game.",
+      "tags": ["basketball", "thesis-framing", "methodology"],
+      "ts_ms": 1779100000000
+    },
+    {
+      "hash": "2cb660af6162043339500f8c5f0ac2c8482ddd5bb3314bb1c5f3d24dab91a827",
+      "scope_path": "theses/sas-okc-spread-ladder/commentary",
+      "body": "Read the ladder: 30c at SAS+1.5, 22c at +4.5, 13c at +7.5, 12c at +10.5, 9c at +13.5. Curve is internally consistent (monotonic decrease as the spread widens). OKC is the implied favorite. My view: lean slightly below the market mean. Thin liquidity at lower rungs likely over-prices small-margin outcomes because makers cap downside.",
+      "tags": ["basketball", "prediction-rationale", "sas-okc", "fade-the-tails"],
+      "ts_ms": 1779166000000
+    },
+    {
+      "hash": "a5e8dd18b4e64a16fc3fc6b0a2b9242ddfe7ea7f2f785e06c130c28ad79862e1",
+      "scope_path": "commentary/global",
+      "body": "Demo API tickers don't have real volume — treat all order-book signal as synthetic. The point of the demo run is exercising the chain pipeline, not extracting alpha.",
+      "tags": ["demo", "methodology"],
+      "ts_ms": 1779165202000
+    }
+  ]
+}
