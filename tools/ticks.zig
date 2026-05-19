@@ -15,6 +15,9 @@ const praescientia = @import("praescientia");
 
 const ticks = praescientia.kb.ticks;
 const manifest_mod = praescientia.kb.manifest;
+const branches_mod = praescientia.kb.branches;
+const state_chain = praescientia.state_chain;
+const Hash = state_chain.Hash;
 
 pub fn main(init: std.process.Init) !u8 {
     return common.runMain(init, "praescientia-ticks", &.{
@@ -23,6 +26,7 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "finish", .description = "Write the post-state snapshot for an in-progress tick", .run = cmdFinish },
         .{ .name = "validate", .description = "Validate a sub-agent decision file against a thesis manifest", .run = cmdValidate },
         .{ .name = "status", .description = "Show the most recent ticks under kb/.ticks/", .run = cmdStatus },
+        .{ .name = "rollback", .description = "Fork every pre-tick head as a 'pre-{tick_id}' branch for operator rollback", .run = cmdRollback },
     });
 }
 
@@ -366,6 +370,159 @@ fn tickStatusGreaterThan(_: void, a: TickStatus, b: TickStatus) bool {
 }
 
 // ---------------------------------------------------------------------------
+// rollback --tick-id=ID --kb-root=PATH
+// ---------------------------------------------------------------------------
+
+const SnapshotEntryJson = struct {
+    branch: []const u8,
+    head_hash: ?[]const u8,
+    length: usize,
+    scope_path: []const u8,
+};
+
+const SnapshotDoc = struct {
+    entries: []SnapshotEntryJson,
+};
+
+fn cmdRollback(ctx: *common.Context) !u8 {
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    const tick_id = ctx.flagValue("--tick-id") orelse {
+        try ctx.stderr.print("rollback requires --tick-id=ID\n", .{});
+        return 2;
+    };
+    if (tick_id.len != ticks.tick_id_len) {
+        try ctx.stderr.print(
+            "--tick-id must be a {d}-char ULID; got {d} chars\n",
+            .{ ticks.tick_id_len, tick_id.len },
+        );
+        return 2;
+    }
+
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |e| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, e });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    var pre_rel_buf: [128]u8 = undefined;
+    const pre_rel = try std.fmt.bufPrint(&pre_rel_buf, ".ticks/{s}.pre.json", .{tick_id});
+    const pre_json = kb_root.readFileAlloc(ctx.io, pre_rel, ctx.gpa, .unlimited) catch |e| {
+        try ctx.stderr.print("read {s}: {t}\n", .{ pre_rel, e });
+        return 1;
+    };
+    defer ctx.gpa.free(pre_json);
+
+    var parsed = try std.json.parseFromSlice(SnapshotDoc, ctx.gpa, pre_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    const summary = try rollbackFromSnapshot(
+        ctx.gpa,
+        ctx.io,
+        kb_root,
+        parsed.value,
+        tick_id,
+        ctx.stderr,
+    );
+    try ctx.stdout.print(
+        "rollback {s}: forked={d}, skipped={d}, failed={d}\n",
+        .{ tick_id, summary.forked, summary.skipped, summary.failed },
+    );
+    if (summary.failed > 0) return 1;
+    return 0;
+}
+
+pub const RollbackSummary = struct {
+    forked: usize,
+    skipped: usize,
+    failed: usize,
+};
+
+/// Pure rollback core. Extracted from `cmdRollback` so inline tests can
+/// drive it without constructing a Context. Iterates pre-snapshot entries,
+/// forks each chain at its recorded head into a branch named
+/// `pre-{tick_id}`. Idempotent — re-running against the same tick reports
+/// `BranchExists` as skip, not failure.
+pub fn rollbackFromSnapshot(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    kb_root: std.Io.Dir,
+    snapshot: SnapshotDoc,
+    tick_id: []const u8,
+    err: *std.Io.Writer,
+) !RollbackSummary {
+    var summary: RollbackSummary = .{ .forked = 0, .skipped = 0, .failed = 0 };
+    var fork_name_buf: [64]u8 = undefined;
+    const fork_name = try std.fmt.bufPrint(&fork_name_buf, "pre-{s}", .{tick_id});
+
+    for (snapshot.entries) |e| {
+        const head_hex = e.head_hash orelse {
+            // Empty pre-tick chain — nothing to fork from.
+            summary.skipped += 1;
+            continue;
+        };
+        if (head_hex.len != 64) {
+            try err.print("  ! {s}: malformed head_hash\n", .{e.scope_path});
+            summary.failed += 1;
+            continue;
+        }
+        var head_bytes: Hash = undefined;
+        hexDecodeHash(head_hex, &head_bytes) catch {
+            try err.print("  ! {s}: invalid hex in head_hash\n", .{e.scope_path});
+            summary.failed += 1;
+            continue;
+        };
+
+        var chain_dir = kb_root.openDir(io, e.scope_path, .{ .iterate = false }) catch |open_err| {
+            try err.print("  ! {s}: open ({t})\n", .{ e.scope_path, open_err });
+            summary.failed += 1;
+            continue;
+        };
+        defer chain_dir.close(io);
+
+        branches_mod.fork(allocator, io, chain_dir, e.branch, head_bytes, fork_name) catch |fork_err| switch (fork_err) {
+            error.BranchExists => summary.skipped += 1,
+            error.ForkHashNotFound => {
+                try err.print(
+                    "  ! {s}: pre-tick head no longer present on '{s}' branch\n",
+                    .{ e.scope_path, e.branch },
+                );
+                summary.failed += 1;
+            },
+            else => {
+                try err.print("  ! {s}: fork failed ({t})\n", .{ e.scope_path, fork_err });
+                summary.failed += 1;
+            },
+        };
+        // Only count as forked if no error or skip recorded for this entry.
+        // Track via deltas to avoid double-counting.
+    }
+
+    // Recompute forked = entries - skipped - failed (deltas are already in summary).
+    summary.forked = snapshot.entries.len - summary.skipped - summary.failed;
+    return summary;
+}
+
+fn hexDecodeHash(hex: []const u8, out: *Hash) !void {
+    if (hex.len != 64) return error.InvalidHex;
+    for (out, 0..) |*b, i| {
+        const hi = try hexNibble(hex[i * 2]);
+        const lo = try hexNibble(hex[i * 2 + 1]);
+        b.* = (hi << 4) | lo;
+    }
+}
+
+fn hexNibble(c: u8) !u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => 10 + (c - 'a'),
+        'A'...'F' => 10 + (c - 'A'),
+        else => error.InvalidHex,
+    };
+}
+
+// ---------------------------------------------------------------------------
 
 fn missing(ctx: *common.Context, usage: []const u8) !u8 {
     try ctx.stderr.print("usage: praescientia-ticks {s}\n", .{usage});
@@ -436,6 +593,96 @@ test "validate rejects orders against tickers not in the manifest (bad_ticker.js
 test "validate rejects size-zero orders (bad_size.json)" {
     const exit = try validateFixture("bad_size.json");
     try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "rollbackFromSnapshot forks each non-empty chain at its pre-tick head" {
+    const init_mod = praescientia.kb.init;
+    const predict_mod = praescientia.kb.predict;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try init_mod.initTree(io, tmp.dir, true); // sample thesis + sample market
+
+    // Tick-1 prediction: advances the thesis prediction chain by one entry.
+    try predict_mod.writePrediction(std.testing.allocator, io, tmp.dir, "sample", 5000, "tick1");
+
+    // Capture pre-state for a synthetic tick-2.
+    const entries = try ticks.snapshotHeads(std.testing.allocator, io, tmp.dir);
+    defer ticks.freeSnapshot(std.testing.allocator, entries);
+
+    // Convert to the SnapshotDoc shape (matches what rollbackFromSnapshot ingests).
+    var entries_json = try std.testing.allocator.alloc(SnapshotEntryJson, entries.len);
+    defer std.testing.allocator.free(entries_json);
+    for (entries, 0..) |e, i| {
+        entries_json[i] = .{
+            .branch = e.branch,
+            .head_hash = if (e.head_hash) |h| h[0..] else null,
+            .length = e.length,
+            .scope_path = e.scope_path,
+        };
+    }
+
+    // Tick-2 prediction: chains advance further.
+    try predict_mod.writePrediction(std.testing.allocator, io, tmp.dir, "sample", 6000, "tick2");
+
+    var err: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err.deinit();
+    const tick_id = "01ABCDEFGHJKMNPQRSTVWXYZ12";
+    const summary = try rollbackFromSnapshot(
+        std.testing.allocator,
+        io,
+        tmp.dir,
+        .{ .entries = entries_json },
+        tick_id,
+        &err.writer,
+    );
+    try std.testing.expectEqual(@as(usize, 0), summary.failed);
+
+    // The prediction chain had a head (after the first write); rollback should
+    // have produced a `pre-{tick_id}` branch on that chain dir.
+    var pred_dir = try tmp.dir.openDir(io, "theses/sample/prediction", .{ .iterate = false });
+    defer pred_dir.close(io);
+    var pre_branch_buf: [64]u8 = undefined;
+    const pre_branch = try std.fmt.bufPrint(&pre_branch_buf, "pre-{s}.jsonl", .{tick_id});
+    var pre_chain_file = try pred_dir.openFile(io, pre_branch, .{});
+    pre_chain_file.close(io);
+}
+
+test "rollbackFromSnapshot is idempotent (BranchExists treated as skip)" {
+    const init_mod = praescientia.kb.init;
+    const predict_mod = praescientia.kb.predict;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    try init_mod.initTree(io, tmp.dir, true);
+    try predict_mod.writePrediction(std.testing.allocator, io, tmp.dir, "sample", 5000, "");
+
+    const entries = try ticks.snapshotHeads(std.testing.allocator, io, tmp.dir);
+    defer ticks.freeSnapshot(std.testing.allocator, entries);
+    var entries_json = try std.testing.allocator.alloc(SnapshotEntryJson, entries.len);
+    defer std.testing.allocator.free(entries_json);
+    for (entries, 0..) |e, i| {
+        entries_json[i] = .{
+            .branch = e.branch,
+            .head_hash = if (e.head_hash) |h| h[0..] else null,
+            .length = e.length,
+            .scope_path = e.scope_path,
+        };
+    }
+
+    var err: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err.deinit();
+    const tick_id = "01ABCDEFGHJKMNPQRSTVWXYZ12";
+
+    const first = try rollbackFromSnapshot(std.testing.allocator, io, tmp.dir, .{ .entries = entries_json }, tick_id, &err.writer);
+    try std.testing.expectEqual(@as(usize, 0), first.failed);
+
+    const second = try rollbackFromSnapshot(std.testing.allocator, io, tmp.dir, .{ .entries = entries_json }, tick_id, &err.writer);
+    try std.testing.expectEqual(@as(usize, 0), second.failed);
+    // Every chain that was forked on first run shows up as skipped on the second.
+    try std.testing.expect(second.skipped >= first.forked);
 }
 
 test "runSnapshot writes canonical-JSON entries to disk" {
