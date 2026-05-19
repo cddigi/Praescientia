@@ -28,6 +28,7 @@ pub const kb = struct {
     pub const metrics = @import("kb/metrics.zig");
     pub const init = @import("kb/init.zig");
     pub const predict = @import("kb/predict.zig");
+    pub const commentary = @import("kb/commentary.zig");
 };
 
 pub const canonical_json = @import("canonical_json.zig");
@@ -57,6 +58,7 @@ test {
     _ = kb.metrics;
     _ = kb.init;
     _ = kb.predict;
+    _ = kb.commentary;
     _ = canonical_json;
     _ = state_chain;
     _ = txlog;
