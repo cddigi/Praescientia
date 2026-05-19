@@ -95,7 +95,7 @@ The user message carries a JSON document with these fields:
 {
   "tick_id": "<echo from input>",
   "confidence_bp": <integer in [0, 10000]>,
-  "rationale": "<≤500 chars; six-clause structured argument (see below)>",
+  "rationale": "<≤1024 chars; six-clause structured argument (see below)>",
   "commentary_body": "<≤4096 chars OR null>",
   "commentary_tags": ["<string>", ...],
   "orders": [
@@ -132,7 +132,8 @@ no new analysis to record) and `orders` (use `[]` for no-op ticks).
 
 Six clauses, in order, comma-separated or numbered. The orchestrator's
 audit pipeline scans for this shape, so consistency matters more than
-prose elegance.
+prose elegance. The cap is 1024 chars — plenty of room for a thorough
+six-clause argument with citations, but not for prose essays.
 
 1. **Canonical aggregate**: cite `reality_head.aggregate_yes_cents`
 2. **Live weighted-avg**: compute `Σ markets[i].yes_bid_cents × thesis.weights_bp[i] / 10000`. If it differs from (1) by ≥ 3¢, disclose the drift and note "markets ran since last poll" or "rollup stale"

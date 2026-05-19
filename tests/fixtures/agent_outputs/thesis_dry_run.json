@@ -1,0 +1,23 @@
+{
+  "_dry_run_meta": {
+    "agent": "praescientia-thesis-analyst",
+    "input_fixture": "thesis_input_sas_okc.json",
+    "captured_at": "2026-05-19T09:51:00Z",
+    "captured_in_session": "after PR #49 merge, agent registered at session start",
+    "model_observed": "claude-haiku-4-5-20251001",
+    "raw_response_wrapped_in_fences": true,
+    "rationale_length_chars": 528,
+    "notes": [
+      "Agent wrapped its JSON in ```json ... ``` fences despite the explicit negative example in the prompt. Orchestrator parser (Stage 5) must strip leading/trailing markdown fences before json.parse.",
+      "Rationale length 528 chars, over the 500-char cap currently in validateDecision. Either raise the cap to ~1024 chars or tighten the prompt to enforce terseness. Tracked as Stage 7 hardening candidate.",
+      "Content quality is excellent: computed live weighted-avg correctly (16c = 0.2*28 + 0.2*20 + 0.2*13 + 0.2*12 + 0.2*8), identified SAS7 87c spread as liquidity-gate failure, respected no-churn rule (re-emitted prior 1800bp).",
+      "No code fences appeared inside the JSON body — only wrapping it. The JSON payload itself is well-formed and parses cleanly after fence-strip."
+    ]
+  },
+  "tick_id": "01ABCDEFGHJKMNPQRSTVWXYZ12",
+  "confidence_bp": 1800,
+  "rationale": "Rollup 25c; live wavg 16c (-9c drift, rollup uses yes_bid only, markets ran since last poll); prior 1800bp; no relevant post-mortems; new 1800bp (no change — confidence stable within 100bp no-churn gate); no orders — every market fails liquidity gate (volume=0 AND spread>50c on SAS7 at 87c spread, others within range but no buy edge to defend an order; SAS1 28/32 has 4c spread but bid 28c equals my implied mid 25c + 3c minimum edge requirement, fails edge gate).",
+  "commentary_body": null,
+  "commentary_tags": [],
+  "orders": []
+}
