@@ -224,3 +224,191 @@ def test_open_or_create_table_reuses_existing(tmp_path: Path) -> None:
 
     table_b = ic.open_or_create_table(tmp_path / "lance")
     assert table_b.to_arrow().num_rows == 1
+
+
+class _DeterministicEmbedder:
+    """A test double that hashes the input string to produce a stable vector.
+
+    Lets us assert "Lance got the vectors we expected" without going near
+    a real model.
+    """
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        self.call_count += 1
+        vectors = []
+        for t in texts:
+            seed = float(hash(t) % 1000) / 1000.0
+            vectors.append([seed] * 1024)
+        return vectors
+
+    def close(self) -> None:
+        pass
+
+
+def _seed_kb_root_with_commentary(tmp_path: Path) -> Path:
+    """Build a minimal kb_root with two commentary entries on a thesis chain."""
+    kb_root = tmp_path / "kb"
+    (kb_root / "markets").mkdir(parents=True)
+    (kb_root / "theses").mkdir(parents=True)
+    chain_dir = kb_root / "theses" / "sample" / "commentary"
+    _write_jsonl_chain(
+        chain_dir,
+        [
+            {
+                "tx_id": "tx_a",
+                "prev_hash": "0" * 64,
+                "hash": "a" * 64,
+                "payload": {
+                    "agent": {"model": "claude", "run_id": "r1"},
+                    "body": "first thought",
+                    "kind": "commentary",
+                    "tags": ["macro"],
+                    "ts": 1779000000000,
+                },
+            },
+            {
+                "tx_id": "tx_b",
+                "prev_hash": "a" * 64,
+                "hash": "b" * 64,
+                "payload": {
+                    "agent": {"model": "claude", "run_id": "r2"},
+                    "body": "second thought",
+                    "kind": "commentary",
+                    "tags": [],
+                    "ts": 1779000060000,
+                },
+            },
+        ],
+    )
+    return kb_root
+
+
+def test_run_once_indexes_pending_and_advances_cursor(tmp_path: Path) -> None:
+    kb_root = _seed_kb_root_with_commentary(tmp_path)
+    lance_dir = kb_root / ".commentary_index" / "lance"
+    embedder = _DeterministicEmbedder()
+
+    indexed = ic.run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder)
+    assert indexed == 2  # both entries embedded + inserted
+
+    table = ic.open_or_create_table(lance_dir)
+    assert table.to_arrow().num_rows == 2
+    hashes = set(table.to_arrow().column("hash").to_pylist())
+    assert hashes == {"a" * 64, "b" * 64}
+
+    cursors = ic.Cursors(kb_root / ".commentary_index" / "cursors.json").read()
+    assert cursors["theses/sample/commentary"] == "b" * 64
+
+
+def test_run_once_is_idempotent(tmp_path: Path) -> None:
+    kb_root = _seed_kb_root_with_commentary(tmp_path)
+    lance_dir = kb_root / ".commentary_index" / "lance"
+    embedder = _DeterministicEmbedder()
+
+    ic.run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder)
+    second_pass = ic.run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder)
+    assert second_pass == 0  # cursor advanced; nothing new to index
+
+    table = ic.open_or_create_table(lance_dir)
+    assert table.to_arrow().num_rows == 2
+
+
+def test_run_once_picks_up_new_entries_after_cursor(tmp_path: Path) -> None:
+    kb_root = _seed_kb_root_with_commentary(tmp_path)
+    lance_dir = kb_root / ".commentary_index" / "lance"
+    embedder = _DeterministicEmbedder()
+    ic.run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder)
+
+    # Append a third entry to the same chain.
+    chain_path = kb_root / "theses" / "sample" / "commentary" / "main.jsonl"
+    new_line = json.dumps(
+        {
+            "tx_id": "tx_c",
+            "prev_hash": "b" * 64,
+            "hash": "c" * 64,
+            "payload": {
+                "agent": {"model": "claude", "run_id": "r3"},
+                "body": "third thought",
+                "kind": "commentary",
+                "tags": [],
+                "ts": 1779000120000,
+            },
+        }
+    )
+    with chain_path.open("a") as f:
+        f.write(new_line + "\n")
+
+    indexed = ic.run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder)
+    assert indexed == 1
+
+    table = ic.open_or_create_table(lance_dir)
+    assert table.to_arrow().num_rows == 3
+
+
+def test_run_once_skips_unavailable_embedder_without_crashing(tmp_path: Path) -> None:
+    """If llama-server is down, the cursor stays put and we log + continue."""
+    kb_root = _seed_kb_root_with_commentary(tmp_path)
+    lance_dir = kb_root / ".commentary_index" / "lance"
+
+    class _BrokenEmbedder:
+        def embed_batch(self, texts):
+            raise ic.EmbedderUnavailable("simulated outage")
+
+    indexed = ic.run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=_BrokenEmbedder())
+    assert indexed == 0  # nothing got through
+
+    cursors = ic.Cursors(kb_root / ".commentary_index" / "cursors.json").read()
+    # Either no cursor written yet, or the scope's cursor wasn't advanced.
+    assert "theses/sample/commentary" not in cursors
+
+
+def test_run_once_handles_market_and_global_scopes(tmp_path: Path) -> None:
+    kb_root = tmp_path / "kb"
+    (kb_root / "markets").mkdir(parents=True)
+    (kb_root / "theses").mkdir(parents=True)
+
+    _write_jsonl_chain(
+        kb_root / "markets" / "KXBTC" / "commentary",
+        [
+            {
+                "tx_id": "tx_m",
+                "prev_hash": "0" * 64,
+                "hash": "1" * 64,
+                "payload": {
+                    "agent": {"model": "human"},
+                    "body": "market take",
+                    "kind": "commentary",
+                    "tags": [],
+                    "ts": 1779000000000,
+                },
+            }
+        ],
+    )
+    _write_jsonl_chain(
+        kb_root / "commentary" / "global",
+        [
+            {
+                "tx_id": "tx_g",
+                "prev_hash": "0" * 64,
+                "hash": "2" * 64,
+                "payload": {
+                    "agent": {"model": "human"},
+                    "body": "global take",
+                    "kind": "commentary",
+                    "tags": [],
+                    "ts": 1779000000000,
+                },
+            }
+        ],
+    )
+
+    embedder = _DeterministicEmbedder()
+    indexed = ic.run_once(kb_root=kb_root, lance_dir=kb_root / ".commentary_index" / "lance", embedder=embedder)
+    assert indexed == 2
+
+    cursors = ic.Cursors(kb_root / ".commentary_index" / "cursors.json").read()
+    assert cursors["markets/KXBTC/commentary"] == "1" * 64
+    assert cursors["commentary/global"] == "2" * 64

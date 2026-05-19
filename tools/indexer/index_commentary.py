@@ -212,3 +212,165 @@ def insert_rows(table, rows: list[dict]) -> None:
         return
     arrow_table = pa.Table.from_pylist(rows, schema=LANCE_SCHEMA)
     table.add(arrow_table)
+
+
+# ----- Main loop -------------------------------------------------------------
+
+
+def _discover_scopes(kb_root: Path) -> list[tuple[str, Path]]:
+    """Return [(scope_path, jsonl_path), ...] for every commentary chain under kb_root.
+
+    Walks `theses/*/commentary`, `markets/*/commentary`, and the single
+    `commentary/global` path. Caller-side filtering by .exists() is the
+    chain-tail reader's job.
+    """
+    scopes: list[tuple[str, Path]] = []
+    theses_dir = kb_root / "theses"
+    if theses_dir.is_dir():
+        for sub in sorted(theses_dir.iterdir()):
+            if not sub.is_dir():
+                continue
+            jsonl = sub / "commentary" / "main.jsonl"
+            scopes.append((f"theses/{sub.name}/commentary", jsonl))
+
+    markets_dir = kb_root / "markets"
+    if markets_dir.is_dir():
+        for sub in sorted(markets_dir.iterdir()):
+            if not sub.is_dir():
+                continue
+            jsonl = sub / "commentary" / "main.jsonl"
+            scopes.append((f"markets/{sub.name}/commentary", jsonl))
+
+    global_jsonl = kb_root / "commentary" / "global" / "main.jsonl"
+    scopes.append(("commentary/global", global_jsonl))
+
+    return scopes
+
+
+def _row_from_entry(entry: dict, scope_path: str, vector: list[float]) -> dict:
+    payload = entry.get("payload", {}) or {}
+    agent = payload.get("agent", {}) or {}
+    return {
+        "hash": entry["hash"],
+        "vector": vector,
+        "scope_path": scope_path,
+        "agent_run_id": str(agent.get("run_id", "")),
+        "tags": [str(t) for t in (payload.get("tags") or [])],
+        "ts": int(payload.get("ts", 0)),
+    }
+
+
+def run_once(*, kb_root: Path, lance_dir: Path, embedder, verbose: bool = False) -> int:
+    """One pass over every commentary scope. Returns the number of newly
+    indexed rows. Embedder failures (`EmbedderUnavailable`) leave the cursor
+    untouched for that scope and the loop continues to the next.
+    """
+    kb_root = Path(kb_root)
+    lance_dir = Path(lance_dir)
+
+    table = open_or_create_table(lance_dir)
+    cursors_file = Cursors(kb_root / ".commentary_index" / "cursors.json")
+    cursors = cursors_file.read()
+    indexed_total = 0
+
+    for scope_path, jsonl_path in _discover_scopes(kb_root):
+        last_hash = cursors.get(scope_path)
+        new_entries = list(tail(jsonl_path, after_hash=last_hash))
+        if not new_entries:
+            continue
+
+        bodies = [(e.get("payload") or {}).get("body", "") for e in new_entries]
+        try:
+            vectors = embedder.embed_batch(bodies)
+        except EmbedderUnavailable as e:
+            if verbose:
+                print(f"[indexer] skip {scope_path}: {e}")
+            continue
+
+        if len(vectors) != len(new_entries):
+            if verbose:
+                print(
+                    f"[indexer] skip {scope_path}: embedder returned {len(vectors)} vectors "
+                    f"for {len(new_entries)} entries"
+                )
+            continue
+
+        rows = [_row_from_entry(e, scope_path, v) for e, v in zip(new_entries, vectors)]
+        insert_rows(table, rows)
+        indexed_total += len(rows)
+
+        # Advance the cursor to the head of what we just indexed.
+        cursors[scope_path] = new_entries[-1]["hash"]
+        cursors_file.write(cursors)
+
+    return indexed_total
+
+
+def run_loop(
+    *,
+    kb_root: Path,
+    lance_dir: Path,
+    embedder,
+    interval_seconds: float = 60.0,
+    verbose: bool = False,
+) -> None:
+    """Forever-loop: run_once, sleep, repeat. Ctrl-C exits cleanly."""
+    import time
+
+    while True:
+        try:
+            run_once(kb_root=kb_root, lance_dir=lance_dir, embedder=embedder, verbose=verbose)
+        except Exception as e:  # noqa: BLE001
+            print(f"[indexer] iteration failed: {e!r}")
+        time.sleep(interval_seconds)
+
+
+# ----- CLI entry --------------------------------------------------------------
+
+
+def _parse_args(argv: Optional[list[str]] = None):
+    import argparse
+
+    p = argparse.ArgumentParser(prog="praescientia-indexer", description="Commentary indexer + query service")
+    p.add_argument("--kb-root", required=True, type=Path, help="Path to the praescientia kb_root")
+    p.add_argument("--llama-url", default="http://localhost:8001", help="llama-server base URL")
+    p.add_argument(
+        "--lance-dir",
+        type=Path,
+        default=None,
+        help="LanceDB directory (default: <kb_root>/.commentary_index/lance)",
+    )
+    p.add_argument("--once", action="store_true", help="Single pass then exit")
+    p.add_argument("--interval", type=float, default=60.0, help="Loop interval in seconds (default 60)")
+    p.add_argument("--query-port", type=int, default=8002, help="Port for the /similar service")
+    p.add_argument("--serve", action="store_true", help="Run the query service alongside the loop")
+    p.add_argument("--verbose", action="store_true")
+    return p.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = _parse_args(argv)
+    lance_dir = args.lance_dir or (args.kb_root / ".commentary_index" / "lance")
+    embedder = LlamaServerEmbedder(args.llama_url)
+    try:
+        if args.once:
+            indexed = run_once(
+                kb_root=args.kb_root, lance_dir=lance_dir, embedder=embedder, verbose=args.verbose
+            )
+            print(f"indexed {indexed} new entries")
+            return 0
+        # Default: loop forever. Query service is added in Task 4.6.
+        run_loop(
+            kb_root=args.kb_root,
+            lance_dir=lance_dir,
+            embedder=embedder,
+            interval_seconds=args.interval,
+            verbose=args.verbose,
+        )
+        return 0
+    finally:
+        embedder.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
