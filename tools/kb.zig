@@ -185,13 +185,202 @@ fn cmdCommentaryWrite(ctx: *common.Context) !u8 {
 }
 
 fn cmdCommentaryList(ctx: *common.Context) !u8 {
-    _ = ctx;
+    const scope_opt = try resolveScopeFromFlags(ctx);
+    const scope = scope_opt orelse return 2;
+
+    var limit: usize = 10;
+    if (ctx.flagValue("--limit")) |v| {
+        limit = std.fmt.parseInt(usize, v, 10) catch {
+            try ctx.stderr.print("--limit must be an integer\n", .{});
+            return 2;
+        };
+    }
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    var path_buf: [256]u8 = undefined;
+    const rel_path = commentary_mod.scopeRelativePath(&path_buf, scope) catch |err| {
+        try ctx.stderr.print("scope path: {t}\n", .{err});
+        return 2;
+    };
+
+    // Best-effort: if the scope's commentary dir doesn't exist (e.g. global
+    // was never written), just print nothing and exit 0.
+    if (kb_root.access(ctx.io, rel_path, .{})) |_| {} else |err| switch (err) {
+        error.FileNotFound => return 0,
+        else => {
+            try ctx.stderr.print("access {s}: {t}\n", .{ rel_path, err });
+            return 1;
+        },
+    }
+
+    var chain_dir = try kb_root.openDir(ctx.io, rel_path, .{ .iterate = false });
+    defer chain_dir.close(ctx.io);
+
+    var chain = chain_mod.openRead(ctx.arena, ctx.io, chain_dir, "main") catch |err| {
+        try ctx.stderr.print("open chain: {t}\n", .{err});
+        return 1;
+    };
+    defer chain.deinit();
+
+    const tail = chain.tail(limit);
+    for (tail) |tx| {
+        var hash_hex: [64]u8 = undefined;
+        _ = std.fmt.bufPrint(&hash_hex, "{x}", .{tx.hash}) catch unreachable;
+
+        const ts = parseTsFromPayload(tx.payload) orelse 0;
+        const model = parseAgentModelFromPayload(tx.payload) orelse "?";
+        const body = parseBodyFromPayload(tx.payload) orelse "";
+        const body_short = if (body.len > 80) body[0..80] else body;
+
+        try ctx.stdout.print(
+            "{s}  ts={d}  agent={s}  body={s}\n",
+            .{ hash_hex[0..12], ts, model, body_short },
+        );
+    }
     return 0;
 }
 
 fn cmdCommentaryShow(ctx: *common.Context) !u8 {
-    _ = ctx;
-    return 0;
+    const hash_arg = ctx.positional(1) orelse {
+        try ctx.stderr.print("usage: praescientia-kb commentary show <hash>\n", .{});
+        return 2;
+    };
+    if (hash_arg.len != 64) {
+        try ctx.stderr.print("hash must be 64 hex chars (got {d})\n", .{hash_arg.len});
+        return 2;
+    }
+    var target: Hash = undefined;
+    decodeHex(hash_arg, &target) catch {
+        try ctx.stderr.print("invalid hex in hash\n", .{});
+        return 2;
+    };
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = true }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    // Walk the three scope kinds: theses/<*>/commentary, markets/<*>/commentary,
+    // commentary/global. Return the first hit.
+    const hit = findCommentaryHash(ctx, &kb_root, target) catch |err| {
+        try ctx.stderr.print("search failed: {t}\n", .{err});
+        return 1;
+    };
+    if (hit) |payload| {
+        try ctx.stdout.print("{s}\n", .{payload});
+        return 0;
+    }
+    try ctx.stderr.print("hash not found in any commentary chain under {s}\n", .{kb_root_path});
+    return 1;
+}
+
+/// Walk theses/*/commentary, markets/*/commentary, commentary/global and
+/// return the canonical-JSON payload (caller's ctx.arena-owned) for the entry
+/// whose hash matches `target`, or null if not found.
+fn findCommentaryHash(ctx: *common.Context, kb_root: *std.Io.Dir, target: Hash) !?[]const u8 {
+    // theses/<id>/commentary
+    if (try searchScopeDir(ctx, kb_root, "theses", target)) |hit| return hit;
+    // markets/<TICKER>/commentary
+    if (try searchScopeDir(ctx, kb_root, "markets", target)) |hit| return hit;
+    // commentary/global
+    if (try searchOneCommentaryDir(ctx, kb_root, "commentary/global", target)) |hit| return hit;
+    return null;
+}
+
+/// For each subdir of `parent` under kb_root, check `<subdir>/commentary` for
+/// the hash. Returns the matching payload (ctx.arena-owned) or null.
+fn searchScopeDir(ctx: *common.Context, kb_root: *std.Io.Dir, parent: []const u8, target: Hash) !?[]const u8 {
+    var parent_dir = kb_root.openDir(ctx.io, parent, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer parent_dir.close(ctx.io);
+
+    var it = parent_dir.iterate();
+    while (try it.next(ctx.io)) |entry| {
+        if (entry.kind != .directory) continue;
+        // Path under kb_root: "<parent>/<entry.name>/commentary"
+        var rel_buf: [512]u8 = undefined;
+        const rel = try std.fmt.bufPrint(&rel_buf, "{s}/{s}/commentary", .{ parent, entry.name });
+        if (try searchOneCommentaryDir(ctx, kb_root, rel, target)) |hit| return hit;
+    }
+    return null;
+}
+
+fn searchOneCommentaryDir(ctx: *common.Context, kb_root: *std.Io.Dir, rel_path: []const u8, target: Hash) !?[]const u8 {
+    var chain_dir = kb_root.openDir(ctx.io, rel_path, .{ .iterate = false }) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return null,
+        else => return err,
+    };
+    defer chain_dir.close(ctx.io);
+
+    var chain = chain_mod.openRead(ctx.arena, ctx.io, chain_dir, "main") catch |err| switch (err) {
+        error.BranchNotFound => return null,
+        else => return err,
+    };
+    defer chain.deinit();
+
+    if (chain.at(target)) |tx| {
+        // The payload is owned by `chain` and will be freed on deinit; dupe so
+        // the caller can use it.
+        return try ctx.arena.dupe(u8, tx.payload);
+    }
+    return null;
+}
+
+/// Minimal JSON field plucker — payload is canonical (no whitespace), so we
+/// can substring-match on the exact key prefix. Returns the raw integer
+/// number or null.
+fn parseTsFromPayload(payload: []const u8) ?i64 {
+    const needle = "\"ts\":";
+    const idx = std.mem.indexOf(u8, payload, needle) orelse return null;
+    var i = idx + needle.len;
+    // Read digits (and optional leading '-'). Stop at any non-digit.
+    var neg = false;
+    if (i < payload.len and payload[i] == '-') {
+        neg = true;
+        i += 1;
+    }
+    var n: i64 = 0;
+    var saw_digit = false;
+    while (i < payload.len) : (i += 1) {
+        const c = payload[i];
+        if (c < '0' or c > '9') break;
+        n = n * 10 + @as(i64, c - '0');
+        saw_digit = true;
+    }
+    if (!saw_digit) return null;
+    return if (neg) -n else n;
+}
+
+fn parseAgentModelFromPayload(payload: []const u8) ?[]const u8 {
+    const needle = "\"agent\":{\"model\":\"";
+    const idx = std.mem.indexOf(u8, payload, needle) orelse return null;
+    const start = idx + needle.len;
+    const end = std.mem.indexOfScalarPos(u8, payload, start, '"') orelse return null;
+    return payload[start..end];
+}
+
+fn parseBodyFromPayload(payload: []const u8) ?[]const u8 {
+    const needle = "\"body\":\"";
+    const idx = std.mem.indexOf(u8, payload, needle) orelse return null;
+    const start = idx + needle.len;
+    // Body may contain escaped chars; just find the next unescaped quote.
+    var i = start;
+    while (i < payload.len) : (i += 1) {
+        if (payload[i] == '"' and (i == start or payload[i - 1] != '\\')) {
+            return payload[start..i];
+        }
+    }
+    return null;
 }
 
 fn cmdAddThesis(ctx: *common.Context) !u8 {
