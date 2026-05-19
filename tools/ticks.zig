@@ -22,6 +22,7 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "begin", .description = "Generate a tick_id and write its pre-state snapshot", .run = cmdBegin },
         .{ .name = "finish", .description = "Write the post-state snapshot for an in-progress tick", .run = cmdFinish },
         .{ .name = "validate", .description = "Validate a sub-agent decision file against a thesis manifest", .run = cmdValidate },
+        .{ .name = "status", .description = "Show the most recent ticks under kb/.ticks/", .run = cmdStatus },
     });
 }
 
@@ -276,6 +277,92 @@ fn parseAction(s: []const u8) !ticks.Action {
     if (std.mem.eql(u8, s, "cancel")) return .cancel;
     if (std.mem.eql(u8, s, "amend")) return .amend;
     return error.UnknownAction;
+}
+
+// ---------------------------------------------------------------------------
+// status --kb-root=PATH [--limit=N]
+// ---------------------------------------------------------------------------
+
+const TickStatus = struct {
+    id: [ticks.tick_id_len]u8,
+    has_pre: bool,
+    has_post: bool,
+};
+
+fn cmdStatus(ctx: *common.Context) !u8 {
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var limit: usize = 10;
+    if (ctx.flagValue("--limit")) |v| {
+        limit = std.fmt.parseInt(usize, v, 10) catch limit;
+    }
+
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |e| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, e });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    var ticks_dir = kb_root.openDir(ctx.io, ".ticks", .{ .iterate = true }) catch |e| switch (e) {
+        error.FileNotFound => {
+            try ctx.stdout.print("no ticks yet under {s}/.ticks/\n", .{kb_root_path});
+            return 0;
+        },
+        else => return e,
+    };
+    defer ticks_dir.close(ctx.io);
+
+    // Group files by tick_id prefix.
+    var seen: std.StringHashMapUnmanaged(TickStatus) = .empty;
+    defer {
+        var it = seen.iterator();
+        while (it.next()) |entry| ctx.gpa.free(entry.key_ptr.*);
+        seen.deinit(ctx.gpa);
+    }
+
+    var iter = ticks_dir.iterate();
+    while (try iter.next(ctx.io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (entry.name.len < ticks.tick_id_len) continue;
+        const tick_id = entry.name[0..ticks.tick_id_len];
+        if (ticks.tickIdMs(tick_id)) |_| {} else |_| continue;
+
+        const gop = try seen.getOrPut(ctx.gpa, tick_id);
+        if (!gop.found_existing) {
+            gop.key_ptr.* = try ctx.gpa.dupe(u8, tick_id);
+            gop.value_ptr.* = .{ .id = undefined, .has_pre = false, .has_post = false };
+            @memcpy(&gop.value_ptr.id, tick_id);
+        }
+        if (std.mem.endsWith(u8, entry.name, ".pre.json")) gop.value_ptr.has_pre = true;
+        if (std.mem.endsWith(u8, entry.name, ".post.json")) gop.value_ptr.has_post = true;
+    }
+
+    // Collect and sort descending by tick_id (ULIDs are time-sortable).
+    var all = std.array_list.Managed(TickStatus).init(ctx.gpa);
+    defer all.deinit();
+    var it = seen.valueIterator();
+    while (it.next()) |v| try all.append(v.*);
+    std.mem.sort(TickStatus, all.items, {}, tickStatusGreaterThan);
+
+    const shown = @min(all.items.len, limit);
+    if (shown == 0) {
+        try ctx.stdout.print("no ticks yet under {s}/.ticks/\n", .{kb_root_path});
+        return 0;
+    }
+
+    try ctx.stdout.print("{s:<26}  started_at (ms)  state\n", .{"tick_id"});
+    for (all.items[0..shown]) |s| {
+        const ms = ticks.tickIdMs(s.id[0..]) catch 0;
+        const state: []const u8 = if (s.has_post) "DONE" else if (s.has_pre) "IN-PROGRESS" else "ORPHAN";
+        try ctx.stdout.print("{s}  {d:>14}  {s}\n", .{ s.id, ms, state });
+    }
+    if (all.items.len > limit) {
+        try ctx.stdout.print("... {d} earlier ticks elided (--limit={d})\n", .{ all.items.len - limit, limit });
+    }
+    return 0;
+}
+
+fn tickStatusGreaterThan(_: void, a: TickStatus, b: TickStatus) bool {
+    return std.mem.order(u8, &a.id, &b.id) == .gt;
 }
 
 // ---------------------------------------------------------------------------

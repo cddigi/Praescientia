@@ -22,6 +22,37 @@ const Hash = state_chain.Hash;
 /// Length of the ULID portion of a tick id (Crockford-base32, 26 chars).
 pub const tick_id_len: usize = 26;
 
+/// Crockford base32 decode table. -1 = invalid char (caller validates).
+/// Generated once at comptime; reused by `tickIdMs`.
+const crockford_decode = blk: {
+    var t: [256]i8 = @splat(-1);
+    const upper = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    for (upper, 0..) |c, i| t[c] = @as(i8, @intCast(i));
+    // Crockford also accepts lower-case + the visually-confusable aliases
+    // I→1, L→1, O→0 — be permissive on input even though `generateTxId`
+    // only emits the canonical upper-case set.
+    const lower = "0123456789abcdefghjkmnpqrstvwxyz";
+    for (lower, 0..) |c, i| t[c] = @as(i8, @intCast(i));
+    t['I'] = 1; t['L'] = 1; t['O'] = 0;
+    t['i'] = 1; t['l'] = 1; t['o'] = 0;
+    break :blk t;
+};
+
+/// Extract the millisecond-since-epoch timestamp encoded in a tick_id's
+/// first 10 Crockford chars (the 48-bit time prefix of the ULID). Returns
+/// `error.InvalidTickId` if the id is the wrong length or contains a
+/// non-Crockford byte in the time prefix.
+pub fn tickIdMs(id: []const u8) !u64 {
+    if (id.len < 10) return error.InvalidTickId;
+    var v: u64 = 0;
+    for (id[0..10]) |c| {
+        const d = crockford_decode[c];
+        if (d < 0) return error.InvalidTickId;
+        v = (v << 5) | @as(u64, @intCast(d));
+    }
+    return v;
+}
+
 /// One tick. Created at the start of a tick; the `id` is the audit anchor
 /// for every artifact the tick produces (chain entries, snapshot files,
 /// rejection logs, client_order_ids).
@@ -513,6 +544,24 @@ test "Tick.path threads an absolute kb_root through" {
     var buf: [256]u8 = undefined;
     const p = try t.path(&buf, "/var/lib/praescientia/kb", .pre);
     try std.testing.expect(std.mem.startsWith(u8, p, "/var/lib/praescientia/kb/.ticks/"));
+}
+
+test "tickIdMs round-trips through a freshly-generated id" {
+    const a = Tick.init();
+    const a_ms = try tickIdMs(a.id[0..]);
+    const b = Tick.init();
+    const b_ms = try tickIdMs(b.id[0..]);
+    // The second id was generated after the first; allow equal-ms because
+    // generation is sub-ms fast.
+    try std.testing.expect(b_ms >= a_ms);
+    // ULID timestamps are 48-bit unix-ms so they should be reasonably
+    // current — easily greater than 10^12 (year 2001).
+    try std.testing.expect(a_ms > 1_000_000_000_000);
+}
+
+test "tickIdMs rejects malformed ids" {
+    try std.testing.expectError(error.InvalidTickId, tickIdMs("short"));
+    try std.testing.expectError(error.InvalidTickId, tickIdMs("!!!!!!!!!!"));
 }
 
 test "Tick.init produces distinct ids across rapid calls" {
