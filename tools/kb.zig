@@ -21,6 +21,7 @@ const branches_mod = kb.branches;
 const divergence_mod = kb.divergence;
 const init_mod = kb.init;
 const predict_mod = kb.predict;
+const commentary_mod = kb.commentary;
 const Hash = praescientia.state_chain.Hash;
 
 pub fn main(init: std.process.Init) !u8 {
@@ -33,7 +34,164 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "predict", .description = "Append a thesis prediction (--confidence-bp=N, optional --rationale=)", .run = cmdPredict },
         .{ .name = "add-market", .description = "Register a new market (--price-delta-cents=N, default 1)", .run = cmdAddMarket },
         .{ .name = "add-thesis", .description = "Register a new thesis (--description, --weights, optional --rollup, --confidence-delta-bp)", .run = cmdAddThesis },
+        .{ .name = "commentary", .description = "Read/write commentary chains (sub-ops: write|list|show)", .run = cmdCommentary },
     });
+}
+
+fn cmdCommentary(ctx: *common.Context) !u8 {
+    const op = ctx.positional(0) orelse {
+        try ctx.stderr.print(
+            "usage: praescientia-kb commentary <write|list|show> [...]\n",
+            .{},
+        );
+        return 2;
+    };
+    if (std.mem.eql(u8, op, "write")) return cmdCommentaryWrite(ctx);
+    if (std.mem.eql(u8, op, "list")) return cmdCommentaryList(ctx);
+    if (std.mem.eql(u8, op, "show")) return cmdCommentaryShow(ctx);
+    try ctx.stderr.print("unknown commentary op: {s} (expected write|list|show)\n", .{op});
+    return 2;
+}
+
+/// Resolve --thesis / --market / --global to a Scope. Exactly one is required.
+fn resolveScopeFromFlags(ctx: *common.Context) !?commentary_mod.Scope {
+    const thesis = ctx.flagValue("--thesis");
+    const market = ctx.flagValue("--market");
+    var global = false;
+    for (ctx.args[1..]) |a| {
+        if (std.mem.eql(u8, a, "--global")) global = true;
+    }
+    var picked: u32 = 0;
+    if (thesis != null) picked += 1;
+    if (market != null) picked += 1;
+    if (global) picked += 1;
+    if (picked != 1) {
+        try ctx.stderr.print(
+            "exactly one of --thesis=ID | --market=TICKER | --global is required\n",
+            .{},
+        );
+        return null;
+    }
+    if (thesis) |id| return commentary_mod.Scope{ .thesis = id };
+    if (market) |t| return commentary_mod.Scope{ .market = t };
+    return commentary_mod.Scope.global;
+}
+
+/// Parse comma-separated list into an arena-allocated slice of slices.
+fn parseCsvList(arena: std.mem.Allocator, raw: ?[]const u8) ![]const []const u8 {
+    if (raw == null) return &.{};
+    const s = raw.?;
+    if (s.len == 0) return &.{};
+    var count: usize = 1;
+    for (s) |c| if (c == ',') {
+        count += 1;
+    };
+    const out = try arena.alloc([]const u8, count);
+    var idx: usize = 0;
+    var start: usize = 0;
+    for (s, 0..) |c, i| {
+        if (c == ',') {
+            out[idx] = s[start..i];
+            idx += 1;
+            start = i + 1;
+        }
+    }
+    out[idx] = s[start..];
+    return out;
+}
+
+fn readBodyFromStdin(ctx: *common.Context) ![]const u8 {
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_r = std.Io.File.stdin().reader(ctx.io, &stdin_buf);
+    var list = std.array_list.Managed(u8).init(ctx.arena);
+    errdefer list.deinit();
+    while (true) {
+        const chunk = stdin_r.interface.peek(1) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        if (chunk.len == 0) break;
+        try list.appendSlice(chunk);
+        stdin_r.interface.toss(chunk.len);
+    }
+    return try list.toOwnedSlice();
+}
+
+fn cmdCommentaryWrite(ctx: *common.Context) !u8 {
+    const scope_opt = try resolveScopeFromFlags(ctx);
+    const scope = scope_opt orelse return 2;
+
+    const agent_model = ctx.flagValue("--agent-model") orelse {
+        try ctx.stderr.print(
+            "--agent-model is required (use --agent-model=human if writing by hand)\n",
+            .{},
+        );
+        return 2;
+    };
+    const agent_run_id = ctx.flagValue("--agent-run-id") orelse "";
+
+    const body: []const u8 = blk: {
+        if (ctx.flagValue("--body")) |b| break :blk b;
+        if (ctx.flagValue("--body-file")) |p| {
+            break :blk std.Io.Dir.cwd().readFileAlloc(ctx.io, p, ctx.arena, .unlimited) catch |err| {
+                try ctx.stderr.print("read --body-file {s}: {t}\n", .{ p, err });
+                return 1;
+            };
+        }
+        break :blk readBodyFromStdin(ctx) catch |err| {
+            try ctx.stderr.print("read body from stdin: {t}\n", .{err});
+            return 1;
+        };
+    };
+
+    const references = try parseCsvList(ctx.arena, ctx.flagValue("--references"));
+    const parent_hash: ?[]const u8 = ctx.flagValue("--parent-hash");
+    const prediction_head: ?[]const u8 = ctx.flagValue("--inputs-prediction-head");
+    const market_set_heads = try parseCsvList(ctx.arena, ctx.flagValue("--inputs-market-set-heads"));
+    const tags = try parseCsvList(ctx.arena, ctx.flagValue("--tags"));
+
+    const ts_ms: i64 = @intCast(@divFloor(std.Io.Clock.real.now(ctx.io).nanoseconds, 1_000_000));
+
+    const payload: commentary_mod.CommentaryPayload = .{
+        .agent = .{ .model = agent_model, .run_id = agent_run_id },
+        .body = body,
+        .references = references,
+        .parent_hash = parent_hash,
+        .inputs = .{
+            .prediction_head = prediction_head,
+            .market_set_heads = market_set_heads,
+        },
+        .tags = tags,
+        .ts_ms = ts_ms,
+    };
+
+    const kb_root_path = ctx.flagValue("--kb-root") orelse "./kb";
+    var kb_root = std.Io.Dir.cwd().openDir(ctx.io, kb_root_path, .{ .iterate = false }) catch |err| {
+        try ctx.stderr.print("open {s}: {t}\n", .{ kb_root_path, err });
+        return 1;
+    };
+    defer kb_root.close(ctx.io);
+
+    const result = commentary_mod.writeCommentary(ctx.gpa, ctx.io, kb_root, scope, payload) catch |err| {
+        try ctx.stderr.print("commentary write failed: {t}\n", .{err});
+        return 1;
+    };
+    defer ctx.gpa.free(result.scope_path);
+
+    var hex: [64]u8 = undefined;
+    _ = std.fmt.bufPrint(&hex, "{x}", .{result.hash}) catch unreachable;
+    try ctx.stdout.print("{{\"hash\":\"{s}\",\"scope\":\"{s}\"}}\n", .{ &hex, result.scope_path });
+    return 0;
+}
+
+fn cmdCommentaryList(ctx: *common.Context) !u8 {
+    _ = ctx;
+    return 0;
+}
+
+fn cmdCommentaryShow(ctx: *common.Context) !u8 {
+    _ = ctx;
+    return 0;
 }
 
 fn cmdAddThesis(ctx: *common.Context) !u8 {
