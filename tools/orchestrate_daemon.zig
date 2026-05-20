@@ -225,12 +225,14 @@ fn runDispatch(
     const r = try runCmd(ctx, av.items);
     if (r.exit != 0) {
         try logTickStep(ctx, n, max, 7, "claude exited non-zero");
+        try logSubprocessFailure(ctx, n, max, "claude", r);
         return error.DispatchFailed;
     }
     // Log a one-line summary; the full output is in claude's chain.
     const trimmed = std.mem.trim(u8, r.stdout, " \r\n\t");
     if (trimmed.len == 0) {
         try logTickStep(ctx, n, max, 7, "claude returned no stdout");
+        try logStderrTail(ctx, n, max, r.stderr, "claude (zero-stdout)");
     } else {
         const first = firstLine(trimmed);
         try logTickStep(ctx, n, max, 7, "claude dispatch complete; first line follows");
@@ -418,7 +420,7 @@ fn parseDuration(s: []const u8) !u64 {
     if (s.len < 2) return error.InvalidDuration;
     const suffix = s[s.len - 1];
     const num_str = s[0 .. s.len - 1];
-    const num = try std.fmt.parseInt(u64, num_str, 10);
+    const num = std.fmt.parseInt(u64, num_str, 10) catch return error.InvalidDuration;
     return switch (suffix) {
         's', 'S' => num,
         'm', 'M' => num * 60,
@@ -449,24 +451,63 @@ const ScheduleEntry = struct {
     phase: []const u8,
     interval_seconds: u32,
     next_tick_ms: i64,
+    /// Count of consecutive DispatchFailed events on this thesis. Reset to 0
+    /// on any successful dispatch. Used to compute exponential backoff
+    /// on `next_tick_ms` — prevents retry storms when claude is failing
+    /// systemically.
+    consecutive_failures: u8 = 0,
 };
+
+/// Compute the next_tick_ms delay for a thesis given its base interval
+/// and consecutive-failure count. With 0 failures: returns base. With N
+/// failures (N > 0): returns base × 2^min(N, 6), capped at 3600s. This
+/// gives a sequence of base, 2×, 4×, 8×, 16×, 32×, 64× (cap) for N=0..6+.
+fn backoffSeconds(base_seconds: u32, consecutive_failures: u8) u32 {
+    if (consecutive_failures == 0) return base_seconds;
+    const shift: u3 = @intCast(@min(@as(u8, 6), consecutive_failures));
+    const multiplier: u32 = @as(u32, 1) << shift;
+    const candidate: u64 = @as(u64, base_seconds) * multiplier;
+    const cap: u64 = 3600;
+    return @intCast(@min(candidate, cap));
+}
 
 fn nowMs(io: std.Io) i64 {
     return @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000));
 }
 
-/// Spawn `praescientia-game-state inspect --kb-root=PATH --now=NOW_MS`
-/// and parse the JSON array into ScheduleEntry rows. Each entry's
-/// `next_tick_ms` is initialized to `now_ms + interval` so a fresh
-/// daemon picks every thesis up on the first sweep.
+fn findScheduleIndex(schedule: []const ScheduleEntry, thesis_id: []const u8) ?usize {
+    for (schedule, 0..) |s, i| {
+        if (std.mem.eql(u8, s.thesis_id, thesis_id)) return i;
+    }
+    return null;
+}
+
+/// Refresh the daemon's persistent schedule against the kb on disk.
 ///
-/// Returned slice is arena-allocated; caller's arena owns it.
-fn loadSchedule(
+/// On each iteration:
+///   - Existing entries: refresh ticker/phase/interval (in case the
+///     thesis manifest changed or the game phase transitioned). PRESERVE
+///     `next_tick_ms` so the schedule accumulates state across iterations
+///     — without this, the daemon would never re-fire after the bootstrap.
+///   - New entries (not in schedule yet): add with `next_tick_ms = now_ms`
+///     so they're immediately due on the next loop iteration. This
+///     handles both the bootstrap case (empty schedule → all due) and
+///     mid-run thesis additions (new thesis materialized → picked up fast).
+///   - Entries no longer present on disk: removed.
+///
+/// Also handles **phase-transition acceleration**: if the new interval
+/// would put the next tick sooner than the existing scheduled time
+/// (e.g., game tipped during a 30-min sleep, transitioning from
+/// `scheduled` → `in_game` and shortening the interval from 1800s to
+/// 30s), advance `next_tick_ms` to `now + new_interval_ms`. Without
+/// this we'd wait out the old long interval and miss the escalation.
+fn refreshSchedule(
     ctx: *common.Context,
+    schedule: *std.array_list.Managed(ScheduleEntry),
     kb_root: []const u8,
     game_state_bin: []const u8,
     now_ms: i64,
-) ![]ScheduleEntry {
+) !void {
     const now_str = try std.fmt.allocPrint(ctx.arena, "{d}", .{now_ms});
     var av = std.array_list.Managed([]const u8).init(ctx.arena);
     try av.append(game_state_bin);
@@ -486,7 +527,8 @@ fn loadSchedule(
     defer parsed.deinit();
     if (parsed.value != .array) return error.GameStateInspectFailed;
 
-    var out: std.array_list.Managed(ScheduleEntry) = .init(ctx.arena);
+    var present_ids: std.array_list.Managed([]const u8) = .init(ctx.arena);
+
     for (parsed.value.array.items) |item| {
         if (item != .object) continue;
         const obj = item.object;
@@ -500,15 +542,48 @@ fn loadSchedule(
             continue;
         }
         const interval: u32 = @intCast(interval_v.integer);
-        try out.append(.{
-            .thesis_id = try ctx.arena.dupe(u8, thesis_id_v.string),
-            .ticker = try ctx.arena.dupe(u8, ticker_v.string),
-            .phase = try ctx.arena.dupe(u8, phase_v.string),
-            .interval_seconds = interval,
-            .next_tick_ms = now_ms + @as(i64, interval) * 1000,
-        });
+
+        try present_ids.append(thesis_id_v.string);
+
+        if (findScheduleIndex(schedule.items, thesis_id_v.string)) |i| {
+            // EXISTING: refresh metadata, preserve next_tick_ms, BUT
+            // accelerate if the new interval would advance us sooner.
+            schedule.items[i].ticker = try ctx.arena.dupe(u8, ticker_v.string);
+            schedule.items[i].phase = try ctx.arena.dupe(u8, phase_v.string);
+            schedule.items[i].interval_seconds = interval;
+            const candidate_next = now_ms + @as(i64, interval) * 1000;
+            if (candidate_next < schedule.items[i].next_tick_ms) {
+                schedule.items[i].next_tick_ms = candidate_next;
+            }
+        } else {
+            // NEW: add as immediately-due so the next iteration fires it.
+            try schedule.append(.{
+                .thesis_id = try ctx.arena.dupe(u8, thesis_id_v.string),
+                .ticker = try ctx.arena.dupe(u8, ticker_v.string),
+                .phase = try ctx.arena.dupe(u8, phase_v.string),
+                .interval_seconds = interval,
+                .next_tick_ms = now_ms,
+            });
+        }
     }
-    return out.items;
+
+    // Drop entries no longer present on disk.
+    var i: usize = 0;
+    while (i < schedule.items.len) {
+        const existing = schedule.items[i].thesis_id;
+        var found = false;
+        for (present_ids.items) |pid| {
+            if (std.mem.eql(u8, pid, existing)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            _ = schedule.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// Re-classify a single thesis after its tick fired. Returns the new
@@ -578,11 +653,14 @@ fn runDispatchTheses(
     const r = try runCmd(ctx, av.items);
     if (r.exit != 0) {
         try logTickStep(ctx, n, max, 7, "claude exited non-zero");
+        try logSubprocessFailure(ctx, n, max, "claude", r);
         return error.DispatchFailed;
     }
     const trimmed = std.mem.trim(u8, r.stdout, " \r\n\t");
     if (trimmed.len == 0) {
         try logTickStep(ctx, n, max, 7, "claude returned no stdout");
+        // Diagnostic: also tail stderr in case there's a clue.
+        try logStderrTail(ctx, n, max, r.stderr, "claude (zero-stdout)");
     } else {
         const first = firstLine(trimmed);
         try logTickStep(ctx, n, max, 7, "claude dispatch complete; first line follows");
@@ -593,6 +671,56 @@ fn runDispatchTheses(
         }
         try ctx.stdout.flush();
     }
+}
+
+/// Log the last ~2KB of a failing subprocess's stderr, plus the exit code.
+/// Critical diagnostic when claude exits non-zero — without this we're
+/// blind to why dispatches fail.
+fn logSubprocessFailure(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    cmd_label: []const u8,
+    r: RunResult,
+) !void {
+    const prefix = if (max) |m|
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}/{d}]", .{ n, m })
+    else
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}]", .{n});
+
+    try ctx.stderr.print("{s} {s} exit={d} stdout_bytes={d} stderr_bytes={d}\n", .{
+        prefix, cmd_label, r.exit, r.stdout.len, r.stderr.len,
+    });
+    // Tail stderr (last 2KB) so we see the actual error message.
+    const stderr_tail = if (r.stderr.len > 2048) r.stderr[r.stderr.len - 2048 ..] else r.stderr;
+    if (stderr_tail.len > 0) {
+        try ctx.stderr.print("{s} {s} stderr tail (last {d}B):\n", .{ prefix, cmd_label, stderr_tail.len });
+        try ctx.stderr.print("---8<---\n{s}\n--->8---\n", .{stderr_tail});
+    }
+    // Also tail stdout if non-empty (sometimes claude writes errors there too).
+    const stdout_tail = if (r.stdout.len > 1024) r.stdout[r.stdout.len - 1024 ..] else r.stdout;
+    if (stdout_tail.len > 0) {
+        try ctx.stderr.print("{s} {s} stdout tail (last {d}B):\n", .{ prefix, cmd_label, stdout_tail.len });
+        try ctx.stderr.print("---8<---\n{s}\n--->8---\n", .{stdout_tail});
+    }
+    try ctx.stderr.flush();
+}
+
+fn logStderrTail(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    stderr_bytes: []const u8,
+    label: []const u8,
+) !void {
+    if (stderr_bytes.len == 0) return;
+    const tail = if (stderr_bytes.len > 512) stderr_bytes[stderr_bytes.len - 512 ..] else stderr_bytes;
+    const prefix = if (max) |m|
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}/{d}]", .{ n, m })
+    else
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}]", .{n});
+    try ctx.stderr.print("{s} {s} stderr tail:\n{s}\n", .{ prefix, label, tail });
+    try ctx.stderr.flush();
 }
 
 /// Main loop for --per-thesis-cadence mode.
@@ -622,21 +750,26 @@ fn runLoopPerThesis(
     );
     try ctx.stdout.flush();
 
+    // PERSISTENT schedule — accumulates state across iterations. New
+    // theses get added with next_tick_ms=now (immediately due). Existing
+    // entries preserve their next_tick_ms unless a phase transition
+    // would advance them sooner. Removed theses get dropped.
+    var schedule: std.array_list.Managed(ScheduleEntry) = .init(ctx.arena);
+
     var tick_count: u32 = 0;
     while (!shutdown_requested.load(.seq_cst)) {
         if (max_ticks) |m| if (tick_count >= m) break;
 
         const now = nowMs(ctx.io);
 
-        // Step 1: refresh schedule.
-        const schedule = loadSchedule(ctx, kb_root, game_state_bin, now) catch |e| {
-            try ctx.stderr.print("[schedule] load failed: {t}; sleeping {d}s\n", .{ e, default_interval_seconds });
+        refreshSchedule(ctx, &schedule, kb_root, game_state_bin, now) catch |e| {
+            try ctx.stderr.print("[schedule] refresh failed: {t}; sleeping {d}s\n", .{ e, default_interval_seconds });
             try ctx.stderr.flush();
             try sleepInterruptible(ctx, default_interval_seconds, tick_count, max_ticks);
             continue;
         };
 
-        if (schedule.len == 0) {
+        if (schedule.items.len == 0) {
             try ctx.stdout.print("[schedule] no theses found; sleeping {d}s\n", .{default_interval_seconds});
             try ctx.stdout.flush();
             try sleepInterruptible(ctx, default_interval_seconds, tick_count, max_ticks);
@@ -651,23 +784,12 @@ fn runLoopPerThesis(
         }
         const paused = try sentinelExists(ctx, kb_root, "PAUSED");
 
-        // Step 3: find due theses. With a fresh schedule, every entry's
-        // next_tick_ms == now + interval, so the FIRST loop iteration
-        // never finds anything due. To make the first iteration useful,
-        // bias the initial schedule by setting next_tick_ms to `now` for
-        // every entry (one-time bootstrap).
+        // Find due theses against the persistent schedule.
         var due: std.array_list.Managed([]const u8) = .init(ctx.arena);
-        for (schedule) |s| {
+        for (schedule.items) |s| {
             if (s.next_tick_ms <= now) {
                 try due.append(s.thesis_id);
             }
-        }
-
-        // Bootstrap: if this is the first iteration (tick_count==0) and
-        // nothing is due, treat all theses as due. This ensures the
-        // daemon picks up every thesis at least once on startup.
-        if (tick_count == 0 and due.items.len == 0) {
-            for (schedule) |s| try due.append(s.thesis_id);
         }
 
         if (due.items.len == 0) {
@@ -676,7 +798,7 @@ fn runLoopPerThesis(
             tick_count += 1;
             // Sleep until the earliest next_tick_ms (capped at default interval).
             var earliest: i64 = now + @as(i64, @intCast(default_interval_seconds)) * 1000;
-            for (schedule) |s| {
+            for (schedule.items) |s| {
                 if (s.next_tick_ms < earliest) earliest = s.next_tick_ms;
             }
             const sleep_ms: i64 = if (earliest > now) earliest - now else 1000;
@@ -714,6 +836,7 @@ fn runLoopPerThesis(
         }
 
         // Dispatch.
+        var dispatch_failed = false;
         if (no_dispatch) {
             try logTickStep(ctx, tick_count, max_ticks, 7, "dispatch SKIPPED (--no-dispatch)");
         } else {
@@ -723,28 +846,58 @@ fn runLoopPerThesis(
                     .{ tick_count, e },
                 );
                 try ctx.stderr.flush();
+                dispatch_failed = true;
             };
         }
 
-        // Step 5: re-classify each fired thesis. Phases may transition
-        // mid-game (e.g., near_game → in_game when the clock crosses tip).
-        // We can't mutate `schedule` in place (it's arena-allocated and
-        // re-loaded next iteration anyway), so the re-classification's
-        // only purpose here is to compute the immediate sleep delay.
+        // Step 5: re-classify each fired thesis and UPDATE the persistent
+        // schedule. Phases may transition mid-game (e.g., near_game →
+        // in_game when the clock crosses tip). The schedule now persists
+        // across iterations, so next iteration's `due` check sees the
+        // updated next_tick_ms.
+        //
+        // BACKOFF: on dispatch_failed, increment consecutive_failures and
+        // apply exponential backoff to next_tick_ms — prevents the daemon
+        // from hammering claude with failing dispatches every 30s when
+        // claude is systemically broken. Reset to 0 on success.
         const post_dispatch_now = nowMs(ctx.io);
         var earliest_next: i64 = post_dispatch_now + @as(i64, @intCast(default_interval_seconds)) * 1000;
         for (due.items) |tid| {
-            // Find the schedule entry's ticker.
-            const ticker = for (schedule) |s| {
-                if (std.mem.eql(u8, s.thesis_id, tid)) break s.ticker;
-            } else continue;
+            const idx = findScheduleIndex(schedule.items, tid) orelse continue;
+            const ticker = schedule.items[idx].ticker;
             const classified = classifyOne(ctx, game_state_bin, ticker, post_dispatch_now) catch continue;
-            const next_ms = post_dispatch_now + @as(i64, classified.interval_seconds) * 1000;
+
+            // Update failure counter based on dispatch outcome.
+            if (dispatch_failed) {
+                if (schedule.items[idx].consecutive_failures < 255) {
+                    schedule.items[idx].consecutive_failures += 1;
+                }
+            } else if (!no_dispatch) {
+                // Successful real dispatch — reset the counter.
+                schedule.items[idx].consecutive_failures = 0;
+            }
+            // (--no-dispatch leaves the counter unchanged — it's a smoke
+            //  test, not a real dispatch attempt.)
+
+            const effective_interval = backoffSeconds(classified.interval_seconds, schedule.items[idx].consecutive_failures);
+            const next_ms = post_dispatch_now + @as(i64, effective_interval) * 1000;
+
+            schedule.items[idx].phase = try ctx.arena.dupe(u8, classified.phase);
+            schedule.items[idx].interval_seconds = classified.interval_seconds;
+            schedule.items[idx].next_tick_ms = next_ms;
             if (next_ms < earliest_next) earliest_next = next_ms;
-            try ctx.stdout.print(
-                "[tick {d}] post-dispatch reclass: {s} → phase={s}, next in {d}s\n",
-                .{ tick_count, tid, classified.phase, classified.interval_seconds },
-            );
+
+            if (schedule.items[idx].consecutive_failures > 0) {
+                try ctx.stdout.print(
+                    "[tick {d}] post-dispatch reclass: {s} → phase={s}, base={d}s, backoff={d}s (fails={d})\n",
+                    .{ tick_count, tid, classified.phase, classified.interval_seconds, effective_interval, schedule.items[idx].consecutive_failures },
+                );
+            } else {
+                try ctx.stdout.print(
+                    "[tick {d}] post-dispatch reclass: {s} → phase={s}, next in {d}s\n",
+                    .{ tick_count, tid, classified.phase, classified.interval_seconds },
+                );
+            }
         }
         try ctx.stdout.flush();
 
@@ -783,6 +936,31 @@ fn runLoopPerThesis(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test "backoffSeconds — zero failures returns base" {
+    try std.testing.expectEqual(@as(u32, 30), backoffSeconds(30, 0));
+    try std.testing.expectEqual(@as(u32, 300), backoffSeconds(300, 0));
+}
+
+test "backoffSeconds — doubles per failure" {
+    try std.testing.expectEqual(@as(u32, 60), backoffSeconds(30, 1));
+    try std.testing.expectEqual(@as(u32, 120), backoffSeconds(30, 2));
+    try std.testing.expectEqual(@as(u32, 240), backoffSeconds(30, 3));
+}
+
+test "backoffSeconds — caps at 3600s" {
+    // 300 × 64 = 19200, should cap at 3600
+    try std.testing.expectEqual(@as(u32, 3600), backoffSeconds(300, 6));
+    try std.testing.expectEqual(@as(u32, 3600), backoffSeconds(300, 7));
+    try std.testing.expectEqual(@as(u32, 3600), backoffSeconds(300, 200));
+}
+
+test "backoffSeconds — short interval stays bounded" {
+    // 30 × 64 = 1920, well under cap
+    try std.testing.expectEqual(@as(u32, 1920), backoffSeconds(30, 6));
+    // 30 × 64 still since shift saturates at 6
+    try std.testing.expectEqual(@as(u32, 1920), backoffSeconds(30, 10));
+}
 
 test "parseDuration accepts seconds, minutes, hours" {
     try std.testing.expectEqual(@as(u64, 30), try parseDuration("30s"));
