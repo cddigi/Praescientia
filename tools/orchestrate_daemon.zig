@@ -455,18 +455,39 @@ fn nowMs(io: std.Io) i64 {
     return @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000));
 }
 
-/// Spawn `praescientia-game-state inspect --kb-root=PATH --now=NOW_MS`
-/// and parse the JSON array into ScheduleEntry rows. Each entry's
-/// `next_tick_ms` is initialized to `now_ms + interval` so a fresh
-/// daemon picks every thesis up on the first sweep.
+fn findScheduleIndex(schedule: []const ScheduleEntry, thesis_id: []const u8) ?usize {
+    for (schedule, 0..) |s, i| {
+        if (std.mem.eql(u8, s.thesis_id, thesis_id)) return i;
+    }
+    return null;
+}
+
+/// Refresh the daemon's persistent schedule against the kb on disk.
 ///
-/// Returned slice is arena-allocated; caller's arena owns it.
-fn loadSchedule(
+/// On each iteration:
+///   - Existing entries: refresh ticker/phase/interval (in case the
+///     thesis manifest changed or the game phase transitioned). PRESERVE
+///     `next_tick_ms` so the schedule accumulates state across iterations
+///     — without this, the daemon would never re-fire after the bootstrap.
+///   - New entries (not in schedule yet): add with `next_tick_ms = now_ms`
+///     so they're immediately due on the next loop iteration. This
+///     handles both the bootstrap case (empty schedule → all due) and
+///     mid-run thesis additions (new thesis materialized → picked up fast).
+///   - Entries no longer present on disk: removed.
+///
+/// Also handles **phase-transition acceleration**: if the new interval
+/// would put the next tick sooner than the existing scheduled time
+/// (e.g., game tipped during a 30-min sleep, transitioning from
+/// `scheduled` → `in_game` and shortening the interval from 1800s to
+/// 30s), advance `next_tick_ms` to `now + new_interval_ms`. Without
+/// this we'd wait out the old long interval and miss the escalation.
+fn refreshSchedule(
     ctx: *common.Context,
+    schedule: *std.array_list.Managed(ScheduleEntry),
     kb_root: []const u8,
     game_state_bin: []const u8,
     now_ms: i64,
-) ![]ScheduleEntry {
+) !void {
     const now_str = try std.fmt.allocPrint(ctx.arena, "{d}", .{now_ms});
     var av = std.array_list.Managed([]const u8).init(ctx.arena);
     try av.append(game_state_bin);
@@ -486,7 +507,8 @@ fn loadSchedule(
     defer parsed.deinit();
     if (parsed.value != .array) return error.GameStateInspectFailed;
 
-    var out: std.array_list.Managed(ScheduleEntry) = .init(ctx.arena);
+    var present_ids: std.array_list.Managed([]const u8) = .init(ctx.arena);
+
     for (parsed.value.array.items) |item| {
         if (item != .object) continue;
         const obj = item.object;
@@ -500,15 +522,48 @@ fn loadSchedule(
             continue;
         }
         const interval: u32 = @intCast(interval_v.integer);
-        try out.append(.{
-            .thesis_id = try ctx.arena.dupe(u8, thesis_id_v.string),
-            .ticker = try ctx.arena.dupe(u8, ticker_v.string),
-            .phase = try ctx.arena.dupe(u8, phase_v.string),
-            .interval_seconds = interval,
-            .next_tick_ms = now_ms + @as(i64, interval) * 1000,
-        });
+
+        try present_ids.append(thesis_id_v.string);
+
+        if (findScheduleIndex(schedule.items, thesis_id_v.string)) |i| {
+            // EXISTING: refresh metadata, preserve next_tick_ms, BUT
+            // accelerate if the new interval would advance us sooner.
+            schedule.items[i].ticker = try ctx.arena.dupe(u8, ticker_v.string);
+            schedule.items[i].phase = try ctx.arena.dupe(u8, phase_v.string);
+            schedule.items[i].interval_seconds = interval;
+            const candidate_next = now_ms + @as(i64, interval) * 1000;
+            if (candidate_next < schedule.items[i].next_tick_ms) {
+                schedule.items[i].next_tick_ms = candidate_next;
+            }
+        } else {
+            // NEW: add as immediately-due so the next iteration fires it.
+            try schedule.append(.{
+                .thesis_id = try ctx.arena.dupe(u8, thesis_id_v.string),
+                .ticker = try ctx.arena.dupe(u8, ticker_v.string),
+                .phase = try ctx.arena.dupe(u8, phase_v.string),
+                .interval_seconds = interval,
+                .next_tick_ms = now_ms,
+            });
+        }
     }
-    return out.items;
+
+    // Drop entries no longer present on disk.
+    var i: usize = 0;
+    while (i < schedule.items.len) {
+        const existing = schedule.items[i].thesis_id;
+        var found = false;
+        for (present_ids.items) |pid| {
+            if (std.mem.eql(u8, pid, existing)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            _ = schedule.orderedRemove(i);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// Re-classify a single thesis after its tick fired. Returns the new
@@ -622,21 +677,26 @@ fn runLoopPerThesis(
     );
     try ctx.stdout.flush();
 
+    // PERSISTENT schedule — accumulates state across iterations. New
+    // theses get added with next_tick_ms=now (immediately due). Existing
+    // entries preserve their next_tick_ms unless a phase transition
+    // would advance them sooner. Removed theses get dropped.
+    var schedule: std.array_list.Managed(ScheduleEntry) = .init(ctx.arena);
+
     var tick_count: u32 = 0;
     while (!shutdown_requested.load(.seq_cst)) {
         if (max_ticks) |m| if (tick_count >= m) break;
 
         const now = nowMs(ctx.io);
 
-        // Step 1: refresh schedule.
-        const schedule = loadSchedule(ctx, kb_root, game_state_bin, now) catch |e| {
-            try ctx.stderr.print("[schedule] load failed: {t}; sleeping {d}s\n", .{ e, default_interval_seconds });
+        refreshSchedule(ctx, &schedule, kb_root, game_state_bin, now) catch |e| {
+            try ctx.stderr.print("[schedule] refresh failed: {t}; sleeping {d}s\n", .{ e, default_interval_seconds });
             try ctx.stderr.flush();
             try sleepInterruptible(ctx, default_interval_seconds, tick_count, max_ticks);
             continue;
         };
 
-        if (schedule.len == 0) {
+        if (schedule.items.len == 0) {
             try ctx.stdout.print("[schedule] no theses found; sleeping {d}s\n", .{default_interval_seconds});
             try ctx.stdout.flush();
             try sleepInterruptible(ctx, default_interval_seconds, tick_count, max_ticks);
@@ -651,23 +711,12 @@ fn runLoopPerThesis(
         }
         const paused = try sentinelExists(ctx, kb_root, "PAUSED");
 
-        // Step 3: find due theses. With a fresh schedule, every entry's
-        // next_tick_ms == now + interval, so the FIRST loop iteration
-        // never finds anything due. To make the first iteration useful,
-        // bias the initial schedule by setting next_tick_ms to `now` for
-        // every entry (one-time bootstrap).
+        // Find due theses against the persistent schedule.
         var due: std.array_list.Managed([]const u8) = .init(ctx.arena);
-        for (schedule) |s| {
+        for (schedule.items) |s| {
             if (s.next_tick_ms <= now) {
                 try due.append(s.thesis_id);
             }
-        }
-
-        // Bootstrap: if this is the first iteration (tick_count==0) and
-        // nothing is due, treat all theses as due. This ensures the
-        // daemon picks up every thesis at least once on startup.
-        if (tick_count == 0 and due.items.len == 0) {
-            for (schedule) |s| try due.append(s.thesis_id);
         }
 
         if (due.items.len == 0) {
@@ -676,7 +725,7 @@ fn runLoopPerThesis(
             tick_count += 1;
             // Sleep until the earliest next_tick_ms (capped at default interval).
             var earliest: i64 = now + @as(i64, @intCast(default_interval_seconds)) * 1000;
-            for (schedule) |s| {
+            for (schedule.items) |s| {
                 if (s.next_tick_ms < earliest) earliest = s.next_tick_ms;
             }
             const sleep_ms: i64 = if (earliest > now) earliest - now else 1000;
@@ -726,20 +775,22 @@ fn runLoopPerThesis(
             };
         }
 
-        // Step 5: re-classify each fired thesis. Phases may transition
-        // mid-game (e.g., near_game → in_game when the clock crosses tip).
-        // We can't mutate `schedule` in place (it's arena-allocated and
-        // re-loaded next iteration anyway), so the re-classification's
-        // only purpose here is to compute the immediate sleep delay.
+        // Step 5: re-classify each fired thesis and UPDATE the persistent
+        // schedule. Phases may transition mid-game (e.g., near_game →
+        // in_game when the clock crosses tip). The schedule now persists
+        // across iterations, so next iteration's `due` check sees the
+        // updated next_tick_ms.
         const post_dispatch_now = nowMs(ctx.io);
         var earliest_next: i64 = post_dispatch_now + @as(i64, @intCast(default_interval_seconds)) * 1000;
         for (due.items) |tid| {
-            // Find the schedule entry's ticker.
-            const ticker = for (schedule) |s| {
-                if (std.mem.eql(u8, s.thesis_id, tid)) break s.ticker;
-            } else continue;
+            const idx = findScheduleIndex(schedule.items, tid) orelse continue;
+            const ticker = schedule.items[idx].ticker;
             const classified = classifyOne(ctx, game_state_bin, ticker, post_dispatch_now) catch continue;
             const next_ms = post_dispatch_now + @as(i64, classified.interval_seconds) * 1000;
+            // MUTATE the persistent schedule so the next iteration sees the new state.
+            schedule.items[idx].phase = try ctx.arena.dupe(u8, classified.phase);
+            schedule.items[idx].interval_seconds = classified.interval_seconds;
+            schedule.items[idx].next_tick_ms = next_ms;
             if (next_ms < earliest_next) earliest_next = next_ms;
             try ctx.stdout.print(
                 "[tick {d}] post-dispatch reclass: {s} → phase={s}, next in {d}s\n",
