@@ -182,7 +182,14 @@ const DecisionDoc = struct {
 
 /// Per-field cap for `AnalysisBlock` fields. Public so the agent
 /// definition can cite one source of truth.
-pub const analysis_field_cap: usize = 300;
+///
+/// Calibrated at 750 chars uniformly. Empirical observation in the
+/// loss-reflector dry-run showed models blow tight (200/200/500/200)
+/// caps by 1-39% on substantive analysis. 750 gives room for
+/// "claim + citation + nuance" without devolving into essay
+/// territory — detailed reasoning belongs in `commentary_body`
+/// (4096-char cap) instead.
+pub const analysis_field_cap: usize = 750;
 
 const DecisionOrder = struct {
     ticker: []const u8,

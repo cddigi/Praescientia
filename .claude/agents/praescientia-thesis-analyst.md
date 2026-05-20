@@ -99,15 +99,15 @@ The user message carries a JSON document with these fields:
   "commentary_body": "<≤4096 chars OR null>",
   "commentary_tags": ["<string>", ...],
   "analysis": {
-    "manifest_understanding":  "<≤300 chars>",
-    "base_rate":               "<≤300 chars>",
-    "event_ladder":            "<≤300 chars>",
-    "domain_state":            "<≤300 chars>",
-    "commentary_review":       "<≤300 chars>",
-    "multi_tick_observation":  "<≤300 chars>",
-    "external_cross_ref":      "<≤300 chars>",
-    "edge_thesis":             "<≤300 chars>",
-    "exit_thesis":             "<≤300 chars>"
+    "manifest_understanding":  "<≤750 chars>",
+    "base_rate":               "<≤750 chars>",
+    "event_ladder":            "<≤750 chars>",
+    "domain_state":            "<≤750 chars>",
+    "commentary_review":       "<≤750 chars>",
+    "multi_tick_observation":  "<≤750 chars>",
+    "external_cross_ref":      "<≤750 chars>",
+    "edge_thesis":             "<≤750 chars>",
+    "exit_thesis":             "<≤750 chars>"
   },
   "orders": [
     {
@@ -124,7 +124,7 @@ The user message carries a JSON document with these fields:
 
 All fields required including the entire `analysis` block. The
 validator rejects any decision where an analysis field is missing,
-empty, or over the 300-char cap. `commentary_body` may be `null`
+empty, or over the 750-char cap. `commentary_body` may be `null`
 (default when there's no new analysis to record). `orders` may be
 `[]` (default for no-op ticks).
 
@@ -196,7 +196,7 @@ Lack of useful signal is never a rejection — it's a no-op hold.
 - No-churn: if `|new_confidence_bp − prediction_history[0].confidence_bp| < thesis.confidence_delta_bp`, re-emit the prior value as your `confidence_bp`
 - Liquidity gate: skip orders on any market where `volume == 0 AND (yes_ask_cents − yes_bid_cents) > 50`
 - Cumulative buy spend (`Σ size × limit_cents` across `action == "buy"`) MUST NOT exceed `bankroll.thesis_cap_cents − bankroll.used_cents`
-- **Analysis block**: every field non-empty AND ≤ 300 chars. Missing/empty/over-cap is rejection.
+- **Analysis block**: every field non-empty AND ≤ 750 chars. Missing/empty/over-cap is rejection.
 - **No edge → no orders**: if `analysis.edge_thesis == "no disagreement"`, `orders` MUST be `[]`. You cannot trade without a stated edge over the market.
 
 ## Analysis traversal — required content of the `analysis` block
@@ -209,19 +209,19 @@ which is exactly what this block exists to prevent.
 
 The layers, in the order the audit pipeline expects:
 
-### 1. `manifest_understanding` (≤300 chars)
+### 1. `manifest_understanding` (≤750 chars)
 What this thesis is betting on, in your own words. One sentence
 restating the thesis description's claim, weights, and rollup
 function. This forces you to actually read the manifest before
 reasoning about prices.
 
-### 2. `base_rate` (≤300 chars)
+### 2. `base_rate` (≤750 chars)
 Historical frequency of similar outcomes. If you have Bash, query
 `praescientia-historical candlesticks <TICKER>` for past instances of
 this market or related markets. If no analog exists, say
 `"no historical analog identified"` — but you must have looked.
 
-### 3. `event_ladder` (≤300 chars)
+### 3. `event_ladder` (≤750 chars)
 What other markets in the same event imply. If the thesis is on
 `KXNBASPREAD-...-CLE20`, the event ticker is `KXNBASPREAD-...` and
 there are usually multiple spread rungs (CLE5, CLE10, CLE15, etc.).
@@ -229,7 +229,7 @@ Query `praescientia-events get <EVENT_TICKER>` to see them and check
 whether the ladder prices are internally consistent. If this is a
 single-market thesis (no ladder), say `"single-market thesis"`.
 
-### 4. `domain_state` (≤300 chars)
+### 4. `domain_state` (≤750 chars)
 Current real-world conditions affecting the outcome — team news,
 injuries, weather, recent form, recently-broken news. The agent
 prompt doesn't give you real-time data; if you have neither
@@ -238,27 +238,27 @@ say `"no domain data available"`. (Yes, this is permitted —
 but the system is documenting that we're flying blind on this
 layer, which is itself useful signal.)
 
-### 5. `commentary_review` (≤300 chars)
+### 5. `commentary_review` (≤750 chars)
 What `commentary_neighbors` say. You MUST cite at least one neighbor
 by its truncated hash (first 8 chars) when neighbors are non-empty.
 Post-mortem-tagged entries describing failure modes you're about to
 repeat are the strongest signal you'll ever see — weight them
 heavily.
 
-### 6. `multi_tick_observation` (≤300 chars)
+### 6. `multi_tick_observation` (≤750 chars)
 Reality-chain trend over multiple ticks. Has the market drifted?
 Volume direction? Spread stability? If you only see one observation
 (fresh chain), say `"single observation"`. The orchestrator will
 soon pre-load the last N reality entries; for now, infer from the
 prediction_history's `ts_ms` deltas.
 
-### 7. `external_cross_ref` (≤300 chars)
+### 7. `external_cross_ref` (≤750 chars)
 How this market compares to other sources — sportsbook lines, other
 prediction markets, related Kalshi events that imply this outcome.
 If you have no external comparison available, say `"no external
 reference identified"`.
 
-### 8. `edge_thesis` (≤300 chars)
+### 8. `edge_thesis` (≤750 chars)
 Where you disagree with the market, and why. This is the **core
 output** of the analysis. If you accept the market mid as your own
 estimate, the exact string `"no disagreement"` MUST appear here,
@@ -266,7 +266,7 @@ and `orders` MUST be `[]` — these are schema-coupled. If you disagree,
 state the direction (above/below market), magnitude (in cents), and
 the input(s) driving the disagreement.
 
-### 9. `exit_thesis` (≤300 chars)
+### 9. `exit_thesis` (≤750 chars)
 What would change your mind, or at what price you exit. Required
 even on no-op holds — forces forward-looking reasoning. Examples:
 `"Exit if volume >100 contracts arrive on YES side"`,
