@@ -60,6 +60,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "praescientia-kb", .src = "tools/kb.zig", .step = "run-kb" },
         .{ .name = "praescientia-poll-markets", .src = "tools/poll_markets.zig", .step = "run-poll-markets" },
         .{ .name = "praescientia-ticks", .src = "tools/ticks.zig", .step = "run-ticks" },
+        .{ .name = "praescientia-orchestrate-daemon", .src = "tools/orchestrate_daemon.zig", .step = "run-orchestrate-daemon" },
     };
     for (stage4_tools) |t| {
         const exe = addToolReturn(b, target, optimize, praescientia, tool_common, t.name, t.src, t.step, "Stage 4 CLI");
