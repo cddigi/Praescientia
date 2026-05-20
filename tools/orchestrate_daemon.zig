@@ -420,7 +420,7 @@ fn parseDuration(s: []const u8) !u64 {
     if (s.len < 2) return error.InvalidDuration;
     const suffix = s[s.len - 1];
     const num_str = s[0 .. s.len - 1];
-    const num = try std.fmt.parseInt(u64, num_str, 10);
+    const num = std.fmt.parseInt(u64, num_str, 10) catch return error.InvalidDuration;
     return switch (suffix) {
         's', 'S' => num,
         'm', 'M' => num * 60,
@@ -451,7 +451,25 @@ const ScheduleEntry = struct {
     phase: []const u8,
     interval_seconds: u32,
     next_tick_ms: i64,
+    /// Count of consecutive DispatchFailed events on this thesis. Reset to 0
+    /// on any successful dispatch. Used to compute exponential backoff
+    /// on `next_tick_ms` — prevents retry storms when claude is failing
+    /// systemically.
+    consecutive_failures: u8 = 0,
 };
+
+/// Compute the next_tick_ms delay for a thesis given its base interval
+/// and consecutive-failure count. With 0 failures: returns base. With N
+/// failures (N > 0): returns base × 2^min(N, 6), capped at 3600s. This
+/// gives a sequence of base, 2×, 4×, 8×, 16×, 32×, 64× (cap) for N=0..6+.
+fn backoffSeconds(base_seconds: u32, consecutive_failures: u8) u32 {
+    if (consecutive_failures == 0) return base_seconds;
+    const shift: u3 = @intCast(@min(@as(u8, 6), consecutive_failures));
+    const multiplier: u32 = @as(u32, 1) << shift;
+    const candidate: u64 = @as(u64, base_seconds) * multiplier;
+    const cap: u64 = 3600;
+    return @intCast(@min(candidate, cap));
+}
 
 fn nowMs(io: std.Io) i64 {
     return @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000));
@@ -818,6 +836,7 @@ fn runLoopPerThesis(
         }
 
         // Dispatch.
+        var dispatch_failed = false;
         if (no_dispatch) {
             try logTickStep(ctx, tick_count, max_ticks, 7, "dispatch SKIPPED (--no-dispatch)");
         } else {
@@ -827,6 +846,7 @@ fn runLoopPerThesis(
                     .{ tick_count, e },
                 );
                 try ctx.stderr.flush();
+                dispatch_failed = true;
             };
         }
 
@@ -835,22 +855,49 @@ fn runLoopPerThesis(
         // in_game when the clock crosses tip). The schedule now persists
         // across iterations, so next iteration's `due` check sees the
         // updated next_tick_ms.
+        //
+        // BACKOFF: on dispatch_failed, increment consecutive_failures and
+        // apply exponential backoff to next_tick_ms — prevents the daemon
+        // from hammering claude with failing dispatches every 30s when
+        // claude is systemically broken. Reset to 0 on success.
         const post_dispatch_now = nowMs(ctx.io);
         var earliest_next: i64 = post_dispatch_now + @as(i64, @intCast(default_interval_seconds)) * 1000;
         for (due.items) |tid| {
             const idx = findScheduleIndex(schedule.items, tid) orelse continue;
             const ticker = schedule.items[idx].ticker;
             const classified = classifyOne(ctx, game_state_bin, ticker, post_dispatch_now) catch continue;
-            const next_ms = post_dispatch_now + @as(i64, classified.interval_seconds) * 1000;
-            // MUTATE the persistent schedule so the next iteration sees the new state.
+
+            // Update failure counter based on dispatch outcome.
+            if (dispatch_failed) {
+                if (schedule.items[idx].consecutive_failures < 255) {
+                    schedule.items[idx].consecutive_failures += 1;
+                }
+            } else if (!no_dispatch) {
+                // Successful real dispatch — reset the counter.
+                schedule.items[idx].consecutive_failures = 0;
+            }
+            // (--no-dispatch leaves the counter unchanged — it's a smoke
+            //  test, not a real dispatch attempt.)
+
+            const effective_interval = backoffSeconds(classified.interval_seconds, schedule.items[idx].consecutive_failures);
+            const next_ms = post_dispatch_now + @as(i64, effective_interval) * 1000;
+
             schedule.items[idx].phase = try ctx.arena.dupe(u8, classified.phase);
             schedule.items[idx].interval_seconds = classified.interval_seconds;
             schedule.items[idx].next_tick_ms = next_ms;
             if (next_ms < earliest_next) earliest_next = next_ms;
-            try ctx.stdout.print(
-                "[tick {d}] post-dispatch reclass: {s} → phase={s}, next in {d}s\n",
-                .{ tick_count, tid, classified.phase, classified.interval_seconds },
-            );
+
+            if (schedule.items[idx].consecutive_failures > 0) {
+                try ctx.stdout.print(
+                    "[tick {d}] post-dispatch reclass: {s} → phase={s}, base={d}s, backoff={d}s (fails={d})\n",
+                    .{ tick_count, tid, classified.phase, classified.interval_seconds, effective_interval, schedule.items[idx].consecutive_failures },
+                );
+            } else {
+                try ctx.stdout.print(
+                    "[tick {d}] post-dispatch reclass: {s} → phase={s}, next in {d}s\n",
+                    .{ tick_count, tid, classified.phase, classified.interval_seconds },
+                );
+            }
         }
         try ctx.stdout.flush();
 
@@ -889,6 +936,31 @@ fn runLoopPerThesis(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+test "backoffSeconds — zero failures returns base" {
+    try std.testing.expectEqual(@as(u32, 30), backoffSeconds(30, 0));
+    try std.testing.expectEqual(@as(u32, 300), backoffSeconds(300, 0));
+}
+
+test "backoffSeconds — doubles per failure" {
+    try std.testing.expectEqual(@as(u32, 60), backoffSeconds(30, 1));
+    try std.testing.expectEqual(@as(u32, 120), backoffSeconds(30, 2));
+    try std.testing.expectEqual(@as(u32, 240), backoffSeconds(30, 3));
+}
+
+test "backoffSeconds — caps at 3600s" {
+    // 300 × 64 = 19200, should cap at 3600
+    try std.testing.expectEqual(@as(u32, 3600), backoffSeconds(300, 6));
+    try std.testing.expectEqual(@as(u32, 3600), backoffSeconds(300, 7));
+    try std.testing.expectEqual(@as(u32, 3600), backoffSeconds(300, 200));
+}
+
+test "backoffSeconds — short interval stays bounded" {
+    // 30 × 64 = 1920, well under cap
+    try std.testing.expectEqual(@as(u32, 1920), backoffSeconds(30, 6));
+    // 30 × 64 still since shift saturates at 6
+    try std.testing.expectEqual(@as(u32, 1920), backoffSeconds(30, 10));
+}
 
 test "parseDuration accepts seconds, minutes, hours" {
     try std.testing.expectEqual(@as(u64, 30), try parseDuration("30s"));

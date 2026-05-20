@@ -179,6 +179,23 @@ pub fn build(b: *std.Build) void {
     const run_game_state_tests = b.addRunArtifact(game_state_tests);
     test_step.dependOn(&run_game_state_tests.step);
 
+    // tools/orchestrate_daemon.zig — inline tests for parseDuration,
+    // backoffSeconds, etc. Pure helpers; the loop itself is subprocess-
+    // heavy and covered by scripts/game_state_smoke.sh.
+    const orchestrate_daemon_test_mod = b.createModule(.{
+        .root_source_file = b.path("tools/orchestrate_daemon.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+            .{ .name = "common", .module = tool_common },
+        },
+    });
+    const orchestrate_daemon_tests = b.addTest(.{ .root_module = orchestrate_daemon_test_mod });
+    const run_orchestrate_daemon_tests = b.addRunArtifact(orchestrate_daemon_tests);
+    test_step.dependOn(&run_orchestrate_daemon_tests.step);
+
     test_step.dependOn(smoke_step);
 }
 
