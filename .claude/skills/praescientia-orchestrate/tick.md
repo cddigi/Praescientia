@@ -283,7 +283,8 @@ then dispatch:
 Agent({
   subagent_type: "praescientia-loss-reflector",
   prompt: <contents of /tmp/loss_input_${TICK_ID}_${TICKER}.json>,
-  description: "post-mortem for ${TICKER}"
+  description: "post-mortem for ${TICKER}",
+  model: "opus"  // see step 7 note on the Agent-tool model parameter
 })
 ```
 
@@ -435,14 +436,39 @@ for each /tmp/thesis_input_${TICK_ID}_*.json:
     subagent_type: "praescientia-thesis-analyst",
     prompt: <file contents — the full JSON>,
     description: "thesis analysis for <thesis_id>",
-    run_in_background: false  // we need synchronous return for step 8
+    model: "opus",                // see model-selection note below
+    run_in_background: false      // synchronous return needed for step 8
   })
 ```
 
-If a model override is in effect (`PRAESCIENTIA_THESIS_MODEL=sonnet|opus`),
-the sub-agent definition's `model:` frontmatter is overridden at
-invocation time. This isn't currently wired in code; document the env
-var in the followup plan and treat the default Haiku as canonical for v1.
+### Model selection — pass `model: "opus"` explicitly
+
+Both sub-agents have `model: inherit` in their frontmatter, which means
+"use whatever model the parent session is running on." That works at
+session start but **the agent definition is cached** — frontmatter
+changes made mid-session do not take effect until the next session
+restart.
+
+The Agent tool's `model:` parameter takes precedence over the cached
+frontmatter on every call. Pass `"opus"` (or `"sonnet"` for cost
+control, or `"inherit"` to use the parent session's model) on every
+dispatch. This is also the orchestrator's lever for per-tick
+escalation when a thesis is in a high-volatility regime.
+
+**Why this matters in practice.** Haiku reliably refuses to analyze
+zero-quote / cold-data inputs (see
+`feedback_haiku_no_signal_hard_floor` in memory). Three rounds of
+prompt-engineering didn't break that floor. Opus handles the same
+inputs correctly — six-clause rationale, proper §6 liquidity-gate
+citation, no error envelope. The reliability gain is large; the cost
+delta is bounded (~20k tokens vs ~15k per dispatch, ~3-9s vs ~2s).
+
+The same advice applies to the loss-reflector dispatch in §5.d.
+
+### Success
+
+Every Agent call returns within 60s. Capture each raw response string
+for step 8.
 
 ### Success
 
