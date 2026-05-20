@@ -223,6 +223,41 @@ to use them.
 
 # Examples
 
+## Positive — zero-quote cold-data hold (do NOT emit error envelope)
+
+This is the case the orchestrator hits on a freshly-registered Kalshi
+market that hasn't built an orderbook yet, or a market that's been
+quiescent. The rollup is `0c`, every quote is `0c`, volume is `0`. You
+MUST emit a hold decision — never the error envelope. The §6 liquidity
+gate handles the no-order outcome; your job is to keep the prediction
+chain advancing with a neutral prior.
+
+**Input (abbreviated):**
+
+```
+{
+  "tick_id": "01ABCDEFGHJKMNPQRSTVWXYZ34",
+  "thesis": {"id":"esports-x","market_set":["KX-EMPTY-MKT"],"weights_bp":[10000],"rollup_fn":"weighted_avg_v1","confidence_delta_bp":500,"bankroll_cap_bp":500},
+  "reality_head": {"aggregate_yes_cents": 0, "ts_ms": 1779200000000},
+  "prediction_history": [],
+  "markets": [
+    {"ticker":"KX-EMPTY-MKT","yes_bid_cents":0,"yes_ask_cents":0,"last_trade_cents":0,"volume":0,"current_position_size":0,"open_orders":[]}
+  ],
+  "commentary_neighbors": [],
+  "bankroll": {"account_balance_cents":10000,"thesis_cap_cents":500,"used_cents":0}
+}
+```
+
+**Output (REQUIRED shape — never the error envelope):**
+
+```
+{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ34","confidence_bp":5000,"rationale":"Rollup 0c (no live quotes — market hasn't built an orderbook yet); live wavg 0c (yes_bid==0 everywhere); no prior (first tick on this thesis); no relevant post-mortems; new 5000bp (neutral prior — no signal to update on); no orders — every market fails §6 liquidity gate (volume==0 AND spread==0).","commentary_body":null,"commentary_tags":[],"orders":[]}
+```
+
+The error envelope is **wrong** for this input. "Market data unavailable"
+is not a malformed-input condition — it's a state of the world, and
+the protocol requires you to record a neutral belief about it.
+
 ## Positive — a typical "hold" decision
 
 **Input (abbreviated):**
