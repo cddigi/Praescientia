@@ -316,6 +316,103 @@ To verify the loop wires up against a live demo API, run `./scripts/demo_loop_sm
 
 The full design and rationale lives in `docs/plans/done/2026-05-17-state-chain-knowledge-base-design.md`. The demo loop spec lives in `docs/plans/2026-05-18-kalshi-demo-loop-design.md`.
 
+## Autonomous Prediction Agent
+
+The autonomous loop turns observed market reality into recorded belief and placed orders without a human in the inner loop. The architecture is a three-tier hierarchy:
+
+- **Opus orchestrator** — a Claude Code session driven by the `/praescientia-orchestrate` skill. Owns the tick clock, snapshots chain heads, polls Kalshi, settles, and persists. Re-enters itself via `ScheduleWakeup` between ticks.
+- **Haiku sub-agents** — one `praescientia-thesis-analyst` per thesis (parallel, per tick) and one `praescientia-loss-reflector` per resolved-and-lost market. Sub-agents emit constrained JSON and never write to the chain directly.
+- **Orchestrator-side executor** — runs after fan-out. Validates every sub-agent response, clamps oversize orders, and serializes the writes per thesis.
+
+The asymmetry on resolution is doctrine: wins log one line to `events.jsonl` (no chain writes); losses dispatch a mandatory post-mortem whose output flows into commentary so future thesis-analyst dispatches encounter the lesson via similarity search.
+
+### Launching
+
+```bash
+# Inside a Claude Code session pointed at the project root:
+claude
+> /praescientia-orchestrate --kb-root=./kb --interval=300s
+```
+
+Flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--kb-root=PATH` | `./kb` | Knowledge-base root |
+| `--interval=DURATION` | `300s` | Wall-clock seconds between tick starts (clamped to `[60, 3600]`) |
+| `--max-ticks=N` | unbounded | Stop after N ticks (sentinel file at `kb/.ticks/.ticks_remaining`) |
+| `--theses=foo,bar` | all | Partial fan-out for debugging |
+| `--dry-run` | off | Replace real `praescientia-orders` calls with `dry_run_order` event lines |
+| `--once` | — | Alias for `--max-ticks=1` |
+| `--pause` / `--resume` | — | Toggle `kb/.ticks/PAUSED`; exits without running a tick |
+
+### Kill switches
+
+Operator-controlled file sentinels, checked at every tick entry and at the end of each tick before scheduling the next:
+
+| File | Effect |
+|---|---|
+| `kb/.ticks/KILL` | Abort immediately. No analysis, no writes, no `ScheduleWakeup`. |
+| `kb/.ticks/PAUSED` | Run steps 1-8 + 10-12 normally; **skip** step 9 (execute). Belief signal still advances; orders are frozen. |
+| `kb/.ticks/.daily_orders.json` | Auto-pause if today's order count ≥ 500. Resets at midnight UTC. |
+
+To emergency-stop without entering the session:
+
+```bash
+touch ./kb/.ticks/KILL
+```
+
+### Where a tick lives on disk
+
+Each tick produces a fixed set of artifacts under `kb/.ticks/{tick_id}.*`:
+
+| File | Written at | Contents |
+|---|---|---|
+| `{tick_id}.pre.json` | step 1 (begin) | Snapshot of every chain head before the tick |
+| `{tick_id}.post.json` | step 10 (finish) | Snapshot after all writes |
+| `{tick_id}.events.jsonl` | throughout | Step-by-step event log, one JSON object per line |
+| `{tick_id}.rejected.json` | step 7/8 failures | Array of sub-agent payloads that failed schema/validation |
+
+Plus cross-tick state:
+
+```
+kb/.ticks/
+├── .lock                       # flock held by `praescientia-ticks begin`
+├── .last_settlement.json       # Settlement cursor (advances after loss reflection persists)
+├── .daily_orders.json          # Daily-breaker counter
+├── .ticks_remaining            # --max-ticks counter (deleted at terminal tick)
+├── .global_events.jsonl        # Cross-tick events (kill-abort, daily-pause, …)
+├── KILL                        # Operator sentinel — abort
+└── PAUSED                      # Operator/breaker sentinel — skip execute
+```
+
+### Inspecting a tick
+
+```bash
+# Most recent 10 ticks
+./zig-out/bin/praescientia-ticks status --kb-root=./kb
+
+# Walk one tick top-to-bottom (events map 1:1 to numbered steps in tick.md)
+jq -c . ./kb/.ticks/<tick_id>.events.jsonl
+
+# Diff what changed: chain heads before vs after
+diff <(jq -S . ./kb/.ticks/<tick_id>.pre.json) \
+     <(jq -S . ./kb/.ticks/<tick_id>.post.json)
+
+# Prepare a rollback anchor (forks each pre-tick head as branch `pre-<tick_id>`)
+./zig-out/bin/praescientia-ticks rollback --kb-root=./kb --tick-id=<tick_id>
+```
+
+### End-to-end smoke
+
+`./scripts/orchestrator_smoke.sh` exercises the full 12-step lifecycle without calling Anthropic or Kalshi. It uses canned sub-agent JSON via `tests/fixtures/mock_thesis_analyst.sh` and `tests/fixtures/mock_loss_reflector.sh`, then asserts every artifact above lands as expected — including the settlement → loss-reflection → two-scope commentary write path. The mocks deliberately wrap their JSON in prose so the smoke exercises the orchestrator's outer-`{}` extractor every run.
+
+### Design + lifecycle reference
+
+- **Design doc** (rationale, decision summary, asymmetries): `docs/plans/done/2026-05-19-autonomous-prediction-agent-design.md`
+- **Per-tick checklist** (operator-readable steps with exact CLIs): `.claude/skills/praescientia-orchestrate/tick.md`
+- **Sub-agent definitions**: `.claude/agents/praescientia-{thesis-analyst,loss-reflector}.md`
+
 ## Philosophy
 
 The central insight is that **the gap between human and AI reasoning** in error identification isn't a fundamental limitation — it's an architectural choice.

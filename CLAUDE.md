@@ -1,6 +1,6 @@
 # Praescientia — Session Context
 
-> **Last Updated:** 2026-05-17 — Stage 5 complete; Julia tree removed.
+> **Last Updated:** 2026-05-19 — Autonomous prediction agent shipped (Stages 1-9 complete).
 > **Platform:** Kalshi — CFTC-regulated event contracts exchange
 > **Language:** Zig 0.16.0 (pinned).
 > **GitHub:** https://github.com/cddigi/Praescientia
@@ -36,7 +36,8 @@ praescientia/
 │   │   ├── metrics.zig          # Prometheus counters (appends, contention, requests, gauge)
 │   │   ├── init.zig             # initTree(io, root, with_sample) — kb_root bootstrap
 │   │   ├── predict.zig          # writePrediction (thesis.prediction checkpoint)
-│   │   └── commentary.zig       # Talmud-commentary chain type (writeCommentary, encode, validate, Scope)
+│   │   ├── commentary.zig       # Talmud-commentary chain type (writeCommentary, encode, validate, Scope)
+│   │   └── ticks.zig            # Tick/SnapshotEntry/OrderIntent/Settlement + validate + classifyResolution
 │   └── kalshi/                  # One file per Kalshi endpoint group
 │       ├── auth.zig             # RSA-PSS signing via vendored mbedTLS
 │       ├── client.zig           # HTTP transport, env switching, auth-header signing
@@ -66,6 +67,7 @@ praescientia/
 │   ├── live_data.zig            # praescientia-live-data
 │   ├── search.zig               # praescientia-search
 │   ├── kb.zig                   # praescientia-kb (inspect/branches/fork/divergence/init/predict/add-market/add-thesis/commentary)
+│   ├── ticks.zig                # praescientia-ticks (snapshot/begin/finish/validate/validate-loss-reflection/classify-resolution/status/rollback)
 │   ├── poll_markets.zig         # praescientia-poll-markets (Kalshi → kb_root demo loop)
 │   ├── poll_resolved_markets.zig# praescientia-poll-resolved-markets (CoinGecko spot)
 │   ├── test_conn.zig            # End-to-end demo-API smoke harness
@@ -84,7 +86,22 @@ praescientia/
 │   ├── cross_verify.sh          # Stage 1 Zig ↔ OpenSSL RSA-PSS interop check
 │   ├── parity_check.sh          # Historical parity harness (vs Julia, pre-removal)
 │   ├── demo_loop_smoke.sh       # End-to-end KB loop against Kalshi demo API
-│   └── commentary_smoke.sh      # End-to-end Talmud-commentary loop (requires llama-server)
+│   ├── commentary_smoke.sh      # End-to-end Talmud-commentary loop (requires llama-server)
+│   └── orchestrator_smoke.sh    # End-to-end tick lifecycle (uses mock sub-agents; no Anthropic/Kalshi calls)
+├── tests/
+│   └── fixtures/
+│       ├── agent_outputs/       # Captured Haiku dry-runs (thesis-analyst + loss-reflector)
+│       ├── decisions/           # Golden inputs for praescientia-ticks validate
+│       ├── loss_reflections/    # Golden inputs for praescientia-ticks validate-loss-reflection
+│       ├── settlements/         # Golden inputs for praescientia-ticks classify-resolution
+│       ├── mock_thesis_analyst.sh   # Mock sub-agent stand-in (prose-wrapped decision JSON)
+│       └── mock_loss_reflector.sh   # Mock post-mortem stand-in (prose-wrapped reflection JSON)
+├── .claude/
+│   ├── agents/
+│   │   ├── praescientia-thesis-analyst.md   # Haiku — one thesis per invocation, JSON decision
+│   │   └── praescientia-loss-reflector.md   # Haiku — post-mortem per resolved-and-lost market
+│   └── skills/
+│       └── praescientia-orchestrate/        # Opus orchestrator skill (SKILL.md + tick.md)
 ├── vendor/
 │   └── mbedtls/                 # 3.6 LTS submodule (RSA-PSS)
 ├── .secret/                     # gitignored — Kalshi API key + id
@@ -164,9 +181,14 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Search | `zig build run-search -- tags\|sport_filters\|targets\|target\|series TICKER` | `src/kalshi/search.zig` |
 | Live Data | `zig build run-live-data -- milestones\|milestone\|live\|live_legacy\|batch\|game_stats` | `src/kalshi/live_data.zig` |
 | Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence\|init\|predict\|add-market\|add-thesis\|commentary` | `src/kb/*` |
+| Tick lifecycle | `zig build run-ticks -- snapshot\|begin\|finish\|validate\|validate-loss-reflection\|classify-resolution\|status\|rollback` | `src/kb/ticks.zig` + `tools/ticks.zig` |
+| Orchestrator (Opus) | `/praescientia-orchestrate --kb-root=PATH --interval=300s [--max-ticks=N] [--theses=...] [--dry-run] [--pause\|--resume]` | `.claude/skills/praescientia-orchestrate/{SKILL.md,tick.md}` |
+| Thesis sub-agent (Haiku) | `Agent({subagent_type:"praescientia-thesis-analyst", prompt:<§2 JSON>})` | `.claude/agents/praescientia-thesis-analyst.md` |
+| Loss-reflector sub-agent (Haiku) | `Agent({subagent_type:"praescientia-loss-reflector", prompt:<§8 JSON>})` | `.claude/agents/praescientia-loss-reflector.md` |
 | Commentary indexer | `python tools/indexer/index_commentary.py --kb-root=PATH [--once\|--serve]` | `tools/indexer/index_commentary.py` |
 | KB poller | `zig build run-poll-markets -- --kb-root=./kb` | `tools/poll_markets.zig` |
 | Demo loop smoke | `./scripts/demo_loop_smoke.sh` | `scripts/demo_loop_smoke.sh` |
+| Orchestrator smoke | `./scripts/orchestrator_smoke.sh` | `scripts/orchestrator_smoke.sh` (uses mock sub-agents) |
 | Metrics | `GET /metrics` on the dashboard server | `src/kb/metrics.zig` |
 | CoinGecko spot | `zig build run-poll -- prices` | `tools/poll_resolved_markets.zig` |
 | Smoke harness | `./zig-out/bin/praescientia-test-conn [--env=demo\|live] [--capture-dir=PATH]` | exercises every above CLI |

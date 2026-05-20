@@ -3,7 +3,7 @@
 > Canonical operator-readable checklist for one tick of
 > `/praescientia-orchestrate`. Each numbered step lists: **CLI**,
 > **success state**, **failure handling**. Steps 1–12 follow the §3
-> lifecycle from `docs/plans/2026-05-19-autonomous-prediction-agent-design.md`.
+> lifecycle from `docs/plans/done/2026-05-19-autonomous-prediction-agent-design.md`.
 > The pre-step section runs before step 1; the post-step section runs
 > after step 12.
 >
