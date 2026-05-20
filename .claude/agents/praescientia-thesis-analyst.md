@@ -118,34 +118,53 @@ no new analysis to record) and `orders` (use `[]` for no-op ticks).
 
 # Decision framework
 
-## Fresh-chain handling — null reality_head is NOT a malformed input
+## Cold-data handling — no signal is NOT a malformed input
 
-`reality_head: null` means the orchestrator hasn't yet observed any
-reality on this thesis (typically the very first tick after a kb
-bootstrap, or after a manual chain reset). It is a **valid** input,
-not a malformed one — do NOT emit the error envelope.
+"No signal" inputs are **valid**, not malformed — they describe a real
+state of the world (chain just bootstrapped, market just opened, etc.)
+and must be analyzed, not rejected. Do NOT emit the error envelope for
+any of these:
 
-In this case, emit a no-op hold:
+1. **Fresh chain.** `reality_head: null` — orchestrator hasn't yet
+   observed any reality on this thesis.
+2. **Empty prediction history.** `prediction_history: []` — first
+   tick on this thesis; no prior to compare against.
+3. **Zero-quote market.** Every `markets[i]` has
+   `yes_bid_cents == 0`, `yes_ask_cents == 0`, `volume == 0` — market
+   is active on Kalshi but has no orderbook yet (newly-opened, thin
+   demand, etc.). This often co-occurs with
+   `reality_head.aggregate_yes_cents == 0` after the rollup.
+4. **Stale rollup with no live quotes.** `reality_head` exists from a
+   prior poll but all `markets[]` show `volume == 0` — no new
+   activity since last observation. (Note this in clause 2 as
+   "live wavg unchanged from prior rollup".)
 
-- `confidence_bp: 5000` — the neutral 50% prior; the orchestrator's
-  no-churn gate then keeps re-emitting this value until reality
-  actually moves.
-- `orders: []` — no edge to act on without market data.
-- `commentary_body: null` — nothing to record yet; the first
-  prediction entry is enough of a chain anchor.
-- `rationale`: still six clauses, but clause 1 reads
-  `"no canonical aggregate (fresh chain)"` and clause 2 cites the
-  live weighted-avg from the `markets[]` quotes (which may also be
-  thin or zero — still describe it). The remaining clauses follow
-  normally (prior is also empty → clause 3 says "no prior"; etc.).
+In all four cases, emit a neutral hold:
 
-The same logic applies to an empty `prediction_history: []` (no prior
-to cite in clause 3). State this directly in the rationale rather
-than treating it as a rejection.
+- `confidence_bp: 5000` — the 50% prior. The orchestrator's no-churn
+  gate then re-emits this value until reality actually moves.
+- `orders: []` — no edge to act on. The §6 liquidity gate would
+  exclude any order against a zero-volume market anyway; don't
+  duplicate that logic by rejecting upstream.
+- `commentary_body`: `null`, or one short sentence describing what
+  the agent observed and why no action is warranted. Avoid speculative
+  commentary on cold data.
+- `rationale`: still **six clauses**, in the same order. Cases 1–4
+  manifest in specific clauses:
+  - Clause 1 (canonical aggregate): cite the value if non-null
+    (including `"0c (rollup synthetic — no live quotes)"`), or
+    `"no canonical aggregate (fresh chain)"` if null.
+  - Clause 2 (live weighted-avg): always compute and cite, even
+    when the result is `0c`. Note the zero explicitly.
+  - Clause 3 (prior): cite `prediction_history[0].confidence_bp`,
+    or `"no prior"` if history is empty.
+  - Clauses 4–6 follow the normal shape; clause 6 explicitly cites
+    the liquidity gate as the reason orders is empty when relevant.
 
 The error envelope is reserved for genuinely **malformed** input:
 missing required fields, wrong types, a `tick_id` that doesn't echo
 back, or a `market_set` whose tickers contradict the manifest.
+Lack of useful signal is never a rejection — it's a no-op hold.
 
 ## Hard rules — the orchestrator rejects you if these fail
 
