@@ -34,6 +34,33 @@ pub const SettlementsList = struct {
     settlements: []std.json.Value = &.{},
 };
 
+/// Typed shape for one record returned by `/portfolio/settlements`.
+///
+/// Kalshi documents the response as a per-market record with both sides'
+/// counts and costs and a `market_result` describing how the market settled.
+/// `revenue` is the cash credited to the account from this settlement; the
+/// per-side P&L split is derived in `src/kb/settlements.zig::transform`.
+///
+/// `market_result` is `"yes"`, `"no"`, or `"void"`. Voided markets do not
+/// have a winning side — the transformer skips them rather than synthesizing
+/// a phantom outcome.
+pub const SettlementRecord = struct {
+    ticker: []const u8,
+    market_result: []const u8,
+    yes_count: u32 = 0,
+    no_count: u32 = 0,
+    yes_total_cost: i64 = 0,
+    no_total_cost: i64 = 0,
+    revenue: i64 = 0,
+    /// ISO 8601, e.g. `2026-05-19T12:00:00Z` or `2026-05-19T14:15:00.123Z`.
+    settled_time: []const u8 = "",
+};
+
+pub const SettlementsListTyped = struct {
+    cursor: []const u8 = "",
+    settlements: []SettlementRecord = &.{},
+};
+
 pub const FillsList = struct {
     cursor: []const u8 = "",
     fills: []std.json.Value = &.{},
@@ -58,9 +85,18 @@ pub fn positions(client: *Client, arena: Allocator, opts: ListOptions) !Position
     return getJson(PositionsList, client, arena, "/portfolio/positions", try queryFromList(arena, opts));
 }
 
-/// GET /portfolio/settlements
+/// GET /portfolio/settlements — opaque-value variant; preserves any
+/// undocumented fields that show up at runtime.
 pub fn settlements(client: *Client, arena: Allocator, opts: ListOptions) !SettlementsList {
     return getJson(SettlementsList, client, arena, "/portfolio/settlements", try queryFromList(arena, opts));
+}
+
+/// GET /portfolio/settlements — typed variant. The orchestrator uses this
+/// path because it needs deterministic per-field access (held side, counts,
+/// costs) to feed `src/kb/settlements.zig::transform`. Unknown fields are
+/// ignored so a server-side schema addition won't break the orchestrator.
+pub fn settlementsTyped(client: *Client, arena: Allocator, opts: ListOptions) !SettlementsListTyped {
+    return getJson(SettlementsListTyped, client, arena, "/portfolio/settlements", try queryFromList(arena, opts));
 }
 
 /// GET /portfolio/fills
@@ -229,13 +265,40 @@ test "parses /portfolio/positions fixture (empty arrays)" {
     try std.testing.expectEqual(@as(usize, 0), parsed.event_positions.len);
 }
 
-test "parses /portfolio/settlements fixture" {
+test "parses /portfolio/settlements fixture (untyped values)" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
 
     const parsed = try std.json.parseFromSliceLeaky(SettlementsList, a, fixture_settlements, .{ .ignore_unknown_fields = true });
-    try std.testing.expectEqual(@as(usize, 0), parsed.settlements.len);
+    try std.testing.expectEqualStrings("next-page-token", parsed.cursor);
+    try std.testing.expectEqual(@as(usize, 4), parsed.settlements.len);
+}
+
+test "parses /portfolio/settlements fixture (typed records)" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const parsed = try std.json.parseFromSliceLeaky(SettlementsListTyped, a, fixture_settlements, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("next-page-token", parsed.cursor);
+    try std.testing.expectEqual(@as(usize, 4), parsed.settlements.len);
+
+    // First record: yes-resolved, only yes side held.
+    try std.testing.expectEqualStrings("KX-YES-WIN", parsed.settlements[0].ticker);
+    try std.testing.expectEqualStrings("yes", parsed.settlements[0].market_result);
+    try std.testing.expectEqual(@as(u32, 5), parsed.settlements[0].yes_count);
+    try std.testing.expectEqual(@as(u32, 0), parsed.settlements[0].no_count);
+    try std.testing.expectEqual(@as(i64, 150), parsed.settlements[0].yes_total_cost);
+    try std.testing.expectEqual(@as(i64, 500), parsed.settlements[0].revenue);
+
+    // Both-held record covers the split case.
+    try std.testing.expectEqualStrings("KX-BOTH-HELD", parsed.settlements[2].ticker);
+    try std.testing.expectEqual(@as(u32, 2), parsed.settlements[2].yes_count);
+    try std.testing.expectEqual(@as(u32, 1), parsed.settlements[2].no_count);
+
+    // Voided record's market_result is preserved verbatim.
+    try std.testing.expectEqualStrings("void", parsed.settlements[3].market_result);
 }
 
 test "parses /portfolio/fills fixture" {

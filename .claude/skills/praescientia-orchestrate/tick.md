@@ -199,10 +199,28 @@ reflection leaves the cursor unchanged so the next tick retries.
 ### 5.a Fetch new settlements
 
 ```bash
-praescientia-portfolio settlements \
-  --kb-root="${KB}" --demo \
+praescientia-portfolio settlements --demo \
   --since-cursor-file="${KB}/.ticks/.last_settlement.json" \
   > "/tmp/settlements_${TICK_ID}.json"
+```
+
+Output shape (the `--since-cursor-file` flag switches to the orchestrator
+format — one entry per non-zero held side, voided markets skipped):
+
+```json
+{
+  "next_cursor": "<kalshi-cursor-string>",
+  "settlements": [
+    {
+      "ticker": "...",
+      "resolved_yes": true,
+      "resolution_ts_ms": 1779200100000,
+      "our_held_side": "yes",
+      "our_contracts": 5,
+      "realized_pnl_cents": 350
+    }
+  ]
+}
 ```
 
 The cursor file shape (read at step 5.a, written at the end of step 5):
@@ -211,11 +229,13 @@ The cursor file shape (read at step 5.a, written at the end of step 5):
 {"cursor": "<kalshi-cursor-string>", "as_of_ts_ms": 1779300000000}
 ```
 
-If `praescientia-portfolio settlements` is not yet wired in your build
-(it lands alongside Kalshi's settlement endpoint), log
-`{"kind":"step_5_unavailable","ts":...}` and proceed to step 6. The
-classifier and validator below stand alone — the only missing piece is
-the upstream feed.
+If the file is missing (first-ever tick) or unparseable, the CLI starts
+with an empty cursor — Kalshi returns the latest settlements page. If
+the CLI exits non-zero (HTTP error, auth missing, etc.), log
+`{"kind":"step_5_fetch_failed","exit":<code>,"ts":...}` and proceed to
+step 6. Pure transform helpers are available for testing without
+network I/O — see `tests/fixtures/settlements/*.json` and
+`src/kb/settlements.zig`.
 
 ### 5.b Classify each settlement
 
