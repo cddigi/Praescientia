@@ -15,6 +15,9 @@
 
 const std = @import("std");
 const common = @import("common");
+const praescientia = @import("praescientia");
+
+const settlements_mod = praescientia.kb.settlements;
 
 pub fn main(init: std.process.Init) !u8 {
     return common.runMain(init, "praescientia-portfolio", &.{
@@ -59,9 +62,44 @@ fn cmdPositions(ctx: *common.Context) !u8 {
 fn cmdSettlements(ctx: *common.Context) !u8 {
     var opts: common.kalshi.portfolio.ListOptions = .{};
     if (ctx.flagValue("--limit")) |v| opts.limit = parseU32(v);
+
+    // Orchestrator-facing mode: read prior cursor from a file and emit a
+    // §8-shaped page (one entry per non-zero held side, voided markets
+    // skipped). The orchestrator handles cursor-file writeback in step 5.g.
+    if (ctx.flagValue("--since-cursor-file")) |path| {
+        if (readCursorFromFile(ctx, path)) |c| opts.cursor = c;
+        const raw = try common.kalshi.portfolio.settlementsTyped(ctx.client, ctx.arena, opts);
+        const page = try settlements_mod.transformPage(ctx.arena, raw);
+        try common.printJson(page, ctx.stdout);
+        return 0;
+    }
+
+    // Default: dump the raw Kalshi shape for operator debugging.
     const result = try common.kalshi.portfolio.settlements(ctx.client, ctx.arena, opts);
     try common.printJson(result, ctx.stdout);
     return 0;
+}
+
+/// Helper struct mirroring `kb/.ticks/.last_settlement.json` shape. We only
+/// care about the `cursor` field; `as_of_ts_ms` is read-only metadata for
+/// human operators.
+const CursorFile = struct {
+    cursor: []const u8 = "",
+    as_of_ts_ms: ?i64 = null,
+};
+
+/// Read the cursor field from a `--since-cursor-file=PATH` argument. Returns
+/// `null` if the file is missing (first-time run) or unparseable. Other
+/// I/O errors silently degrade to `null` so a malformed cursor file can't
+/// stall the orchestrator — the worst case is one extra full settlement
+/// fetch.
+fn readCursorFromFile(ctx: *common.Context, path: []const u8) ?[]const u8 {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(ctx.io, path, ctx.arena, .unlimited) catch return null;
+    const parsed = std.json.parseFromSliceLeaky(CursorFile, ctx.arena, bytes, .{
+        .ignore_unknown_fields = true,
+    }) catch return null;
+    if (parsed.cursor.len == 0) return null;
+    return parsed.cursor;
 }
 
 fn cmdFills(ctx: *common.Context) !u8 {
