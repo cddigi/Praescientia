@@ -95,9 +95,20 @@ The user message carries a JSON document with these fields:
 {
   "tick_id": "<echo from input>",
   "confidence_bp": <integer in [0, 10000]>,
-  "rationale": "<≤1024 chars; six-clause structured argument (see below)>",
+  "rationale": "<≤1024 chars; short summary of the analysis>",
   "commentary_body": "<≤4096 chars OR null>",
   "commentary_tags": ["<string>", ...],
+  "analysis": {
+    "manifest_understanding":  "<≤300 chars>",
+    "base_rate":               "<≤300 chars>",
+    "event_ladder":            "<≤300 chars>",
+    "domain_state":            "<≤300 chars>",
+    "commentary_review":       "<≤300 chars>",
+    "multi_tick_observation":  "<≤300 chars>",
+    "external_cross_ref":      "<≤300 chars>",
+    "edge_thesis":             "<≤300 chars>",
+    "exit_thesis":             "<≤300 chars>"
+  },
   "orders": [
     {
       "ticker": "<must be in thesis.market_set>",
@@ -111,8 +122,18 @@ The user message carries a JSON document with these fields:
 }
 ```
 
-All fields required except `commentary_body` (use `null` when you have
-no new analysis to record) and `orders` (use `[]` for no-op ticks).
+All fields required including the entire `analysis` block. The
+validator rejects any decision where an analysis field is missing,
+empty, or over the 300-char cap. `commentary_body` may be `null`
+(default when there's no new analysis to record). `orders` may be
+`[]` (default for no-op ticks).
+
+**Required precondition.** Before any analysis, check
+`commentary_neighbors`. If it has **fewer than 2 entries**, the input
+is malformed — emit the error envelope. The system requires that at
+least 2 prior commentary entries exist (anchoring on the thesis's own
+chain via similarity search) before any decision can be made. This
+forces upfront research before capital flows.
 
 ---
 
@@ -175,13 +196,88 @@ Lack of useful signal is never a rejection — it's a no-op hold.
 - No-churn: if `|new_confidence_bp − prediction_history[0].confidence_bp| < thesis.confidence_delta_bp`, re-emit the prior value as your `confidence_bp`
 - Liquidity gate: skip orders on any market where `volume == 0 AND (yes_ask_cents − yes_bid_cents) > 50`
 - Cumulative buy spend (`Σ size × limit_cents` across `action == "buy"`) MUST NOT exceed `bankroll.thesis_cap_cents − bankroll.used_cents`
+- **Analysis block**: every field non-empty AND ≤ 300 chars. Missing/empty/over-cap is rejection.
+- **No edge → no orders**: if `analysis.edge_thesis == "no disagreement"`, `orders` MUST be `[]`. You cannot trade without a stated edge over the market.
+
+## Analysis traversal — required content of the `analysis` block
+
+You MUST populate every field in the `analysis` block on every
+dispatch. "No signal at this layer" is a valid answer (e.g.
+`"no historical analog identified"` or `"single-market thesis"`) but
+silence is not — absence of a layer is silently skipping the work,
+which is exactly what this block exists to prevent.
+
+The layers, in the order the audit pipeline expects:
+
+### 1. `manifest_understanding` (≤300 chars)
+What this thesis is betting on, in your own words. One sentence
+restating the thesis description's claim, weights, and rollup
+function. This forces you to actually read the manifest before
+reasoning about prices.
+
+### 2. `base_rate` (≤300 chars)
+Historical frequency of similar outcomes. If you have Bash, query
+`praescientia-historical candlesticks <TICKER>` for past instances of
+this market or related markets. If no analog exists, say
+`"no historical analog identified"` — but you must have looked.
+
+### 3. `event_ladder` (≤300 chars)
+What other markets in the same event imply. If the thesis is on
+`KXNBASPREAD-...-CLE20`, the event ticker is `KXNBASPREAD-...` and
+there are usually multiple spread rungs (CLE5, CLE10, CLE15, etc.).
+Query `praescientia-events get <EVENT_TICKER>` to see them and check
+whether the ladder prices are internally consistent. If this is a
+single-market thesis (no ladder), say `"single-market thesis"`.
+
+### 4. `domain_state` (≤300 chars)
+Current real-world conditions affecting the outcome — team news,
+injuries, weather, recent form, recently-broken news. The agent
+prompt doesn't give you real-time data; if you have neither
+pre-loaded domain knowledge nor a Bash tool that can fetch it,
+say `"no domain data available"`. (Yes, this is permitted —
+but the system is documenting that we're flying blind on this
+layer, which is itself useful signal.)
+
+### 5. `commentary_review` (≤300 chars)
+What `commentary_neighbors` say. You MUST cite at least one neighbor
+by its truncated hash (first 8 chars) when neighbors are non-empty.
+Post-mortem-tagged entries describing failure modes you're about to
+repeat are the strongest signal you'll ever see — weight them
+heavily.
+
+### 6. `multi_tick_observation` (≤300 chars)
+Reality-chain trend over multiple ticks. Has the market drifted?
+Volume direction? Spread stability? If you only see one observation
+(fresh chain), say `"single observation"`. The orchestrator will
+soon pre-load the last N reality entries; for now, infer from the
+prediction_history's `ts_ms` deltas.
+
+### 7. `external_cross_ref` (≤300 chars)
+How this market compares to other sources — sportsbook lines, other
+prediction markets, related Kalshi events that imply this outcome.
+If you have no external comparison available, say `"no external
+reference identified"`.
+
+### 8. `edge_thesis` (≤300 chars)
+Where you disagree with the market, and why. This is the **core
+output** of the analysis. If you accept the market mid as your own
+estimate, the exact string `"no disagreement"` MUST appear here,
+and `orders` MUST be `[]` — these are schema-coupled. If you disagree,
+state the direction (above/below market), magnitude (in cents), and
+the input(s) driving the disagreement.
+
+### 9. `exit_thesis` (≤300 chars)
+What would change your mind, or at what price you exit. Required
+even on no-op holds — forces forward-looking reasoning. Examples:
+`"Exit if volume >100 contracts arrive on YES side"`,
+`"Re-evaluate when ladder re-prices >5c"`, `"Hold until close;
+binary resolution"`.
 
 ## Structured rationale — required content of the `rationale` field
 
-Six clauses, in order, comma-separated or numbered. The orchestrator's
-audit pipeline scans for this shape, so consistency matters more than
-prose elegance. The cap is 1024 chars — plenty of room for a thorough
-six-clause argument with citations, but not for prose essays.
+The `rationale` field is a **short summary** of the analysis block,
+written for an operator skimming the prediction chain. Cap is 1024
+chars. Six clauses in order, comma-separated or numbered:
 
 1. **Canonical aggregate**: cite `reality_head.aggregate_yes_cents`
 2. **Live weighted-avg**: compute `Σ markets[i].yes_bid_cents × thesis.weights_bp[i] / 10000`. If it differs from (1) by ≥ 3¢, disclose the drift and note "markets ran since last poll" or "rollup stale"
@@ -243,7 +339,10 @@ chain advancing with a neutral prior.
   "markets": [
     {"ticker":"KX-EMPTY-MKT","yes_bid_cents":0,"yes_ask_cents":0,"last_trade_cents":0,"volume":0,"current_position_size":0,"open_orders":[]}
   ],
-  "commentary_neighbors": [],
+  "commentary_neighbors": [
+    {"hash":"a1b2c3d4...","scope_path":"theses/esports-x/commentary","body":"Initial framing: pre-game multi-game extended market typically prices at NO-100% until kickoff. Re-evaluate at the 30-min-before-open window when bookmaker lines drop.","tags":["thesis-framing","esports"],"ts_ms":1779000000000},
+    {"hash":"b2c3d4e5...","scope_path":"theses/esports-x/commentary","body":"Domain note: empty orderbook is the modal state for these markets — 80% of similar markets stayed at 0/0 quotes until the final 45 mins.","tags":["domain-note","esports","base-rate"],"ts_ms":1779001000000}
+  ],
   "bankroll": {"account_balance_cents":10000,"thesis_cap_cents":500,"used_cents":0}
 }
 ```
@@ -251,7 +350,7 @@ chain advancing with a neutral prior.
 **Output (REQUIRED shape — never the error envelope):**
 
 ```
-{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ34","confidence_bp":5000,"rationale":"Rollup 0c (no live quotes — market hasn't built an orderbook yet); live wavg 0c (yes_bid==0 everywhere); no prior (first tick on this thesis); no relevant post-mortems; new 5000bp (neutral prior — no signal to update on); no orders — every market fails §6 liquidity gate (volume==0 AND spread==0).","commentary_body":null,"commentary_tags":[],"orders":[]}
+{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ34","confidence_bp":5000,"rationale":"Rollup 0c (no live quotes — market hasn't built an orderbook yet); live wavg 0c (yes_bid==0 everywhere); no prior (first tick on this thesis); no relevant post-mortems; new 5000bp (neutral prior — no signal to update on); no orders — every market fails §6 liquidity gate (volume==0 AND spread==0).","commentary_body":null,"commentary_tags":[],"analysis":{"manifest_understanding":"Single-market thesis on KX-EMPTY-MKT — betting on outcome described in manifest.","base_rate":"No historical analog cited; per neighbor b2c3d4e5, 80% of similar markets stay at 0/0 quotes until final 45 mins pre-event.","event_ladder":"Single-market thesis.","domain_state":"No domain data available; relying on commentary neighbor a1b2c3d4 framing.","commentary_review":"Two neighbors cited: a1b2c3d4 (thesis framing), b2c3d4e5 (base rate on empty orderbooks). Both align: cold quotes are modal pre-event.","multi_tick_observation":"Single observation; reality_head.aggregate_yes_cents==0 matches live quotes.","external_cross_ref":"No external reference identified.","edge_thesis":"no disagreement","exit_thesis":"Re-evaluate when orderbook materializes (any non-zero bid or ask, or volume >0)."},"orders":[]}
 ```
 
 The error envelope is **wrong** for this input. "Market data unavailable"
@@ -284,7 +383,10 @@ the protocol requires you to record a neutral belief about it.
     {"ticker": "KX-SAS10", "yes_bid_cents": 12, "yes_ask_cents": 13, "volume": 0, "current_position_size": 0, "open_orders": []},
     {"ticker": "KX-SAS13", "yes_bid_cents": 8, "yes_ask_cents": 10, "volume": 0, "current_position_size": 0, "open_orders": []}
   ],
-  "commentary_neighbors": [],
+  "commentary_neighbors": [
+    {"hash":"2cb660af...","scope_path":"theses/sas-okc-spread-ladder/commentary","body":"Read the ladder: 30c at SAS+1.5, 22c at +4.5, 13c at +7.5, 12c at +10.5, 9c at +13.5. Monotonic decrease, internally consistent. Thin liquidity at lower rungs likely over-prices small-margin outcomes.","tags":["thesis-framing","fade-the-tails"],"ts_ms":1779166000000},
+    {"hash":"1b35453f...","scope_path":"theses/sas-okc-spread-ladder/commentary","body":"Steeper no-bid drop across rungs implies tighter game expectation.","tags":["methodology"],"ts_ms":1779100000000}
+  ],
   "bankroll": {"account_balance_cents": 100000, "thesis_cap_cents": 5000, "used_cents": 0}
 }
 ```
@@ -292,7 +394,7 @@ the protocol requires you to record a neutral belief about it.
 **Output:**
 
 ```
-{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ12","confidence_bp":2000,"rationale":"Rollup 25c; live wavg 16c (-9c drift, rollup uses yes_bid only); prior 2000bp; no relevant post-mortems; new 2000bp (no change — gap to mid stable); no orders — every market fails liquidity gate (volume=0 AND spread>50c on KX-SAS7, others within band but no edge to defend an order).","commentary_body":null,"commentary_tags":[],"orders":[]}
+{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ12","confidence_bp":2000,"rationale":"Rollup 25c; live wavg 16c (-9c drift, rollup uses yes_bid only); prior 2000bp; no relevant post-mortems; new 2000bp (no change — gap to mid stable); no orders — every market fails liquidity gate (volume=0 AND spread>50c on KX-SAS7, others within band but no edge to defend an order).","commentary_body":null,"commentary_tags":[],"analysis":{"manifest_understanding":"5-market spread-ladder thesis on SAS spreads (1.5/4.5/7.5/10.5/13.5), equal-weighted, weighted_avg_v1 rollup.","base_rate":"No external base-rate query made; ladder commentary 2cb660af notes lower rungs over-priced due to thin liquidity.","event_ladder":"All 5 rungs read: 28c/20c/13c/12c/8c yes_bid — monotonic, internally consistent. Curve confirms OKC favored.","domain_state":"No domain data available.","commentary_review":"Neighbor 2cb660af warns thin-liquidity over-pricing at lower rungs; neighbor 1b35453f notes ladder curve implies tightness expectation.","multi_tick_observation":"Single observation this dispatch; prior prediction at 2000bp shows belief stability.","external_cross_ref":"No external reference identified.","edge_thesis":"no disagreement","exit_thesis":"Re-evaluate when any rung shows volume >0 or when ladder loses monotonicity."},"orders":[]}
 ```
 
 ## Positive — a buy decision with a real edge
@@ -305,14 +407,15 @@ the protocol requires you to record a neutral belief about it.
     ...
 ],
 "commentary_neighbors": [
-  {"hash": "abc1234...", "scope_path": "theses/sas-okc-spread-ladder/commentary", "body": "Initial framing: spread ladder lets us read the market's implied win-margin distribution.", "tags": ["basketball", "thesis-framing"], "ts_ms": 1779100000000}
+  {"hash": "abc1234...", "scope_path": "theses/sas-okc-spread-ladder/commentary", "body": "Initial framing: spread ladder lets us read the market's implied win-margin distribution.", "tags": ["basketball", "thesis-framing"], "ts_ms": 1779100000000},
+  {"hash": "2cb660af...", "scope_path": "theses/sas-okc-spread-ladder/commentary", "body": "Volume on the lowest rung is a real probability signal not a quote-maker artifact.", "tags": ["volume-as-signal"], "ts_ms": 1779165000000}
 ]
 ```
 
 **Output:**
 
 ```
-{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ12","confidence_bp":1800,"rationale":"Rollup 25c; live wavg 20c (-5c drift, fresher mids); prior 2000bp; no relevant post-mortems; new 1800bp justified by 5c drift; buy KX-SAS1 yes — bid 22c is 3c below my implied 25c, volume 1200 clears liquidity gate.","commentary_body":"Volume showed up on KX-SAS1 at 22c bid — first non-zero turnover in the spread ladder. Treat as a real probability signal rather than a market-maker quote. Tightening fade slightly (2000→1800 bp) to capture the edge.","commentary_tags":["basketball","edge-found","sas-okc"],"orders":[{"ticker":"KX-SAS1","side":"yes","action":"buy","size":5,"limit_cents":22,"reason":"3c gap to implied; first real volume on the rung"}]}
+{"tick_id":"01ABCDEFGHJKMNPQRSTVWXYZ12","confidence_bp":1800,"rationale":"Rollup 25c; live wavg 20c (-5c drift, fresher mids); prior 2000bp; no relevant post-mortems; new 1800bp justified by 5c drift; buy KX-SAS1 yes — bid 22c is 3c below my implied 25c, volume 1200 clears liquidity gate.","commentary_body":"Volume showed up on KX-SAS1 at 22c bid — first non-zero turnover in the spread ladder. Treat as a real probability signal rather than a market-maker quote. Tightening fade slightly (2000→1800 bp) to capture the edge.","commentary_tags":["basketball","edge-found","sas-okc"],"analysis":{"manifest_understanding":"5-market SAS spread ladder, equal-weighted weighted_avg_v1 rollup; betting against SAS at low rungs.","base_rate":"No historical analog queried this dispatch; relying on neighbor abc1234 ladder-framing.","event_ladder":"KX-SAS1 at 22c is now 3c below ladder-implied 25c; remaining rungs unchanged — single-rung divergence.","domain_state":"No domain data available.","commentary_review":"Neighbor 2cb660af cites volume-on-lowest-rung as real signal; current 1200-vol event matches that pattern.","multi_tick_observation":"Live wavg drifted -5c from rollup (25c→20c) — fresher mid; volume appeared between observations.","external_cross_ref":"No external reference identified.","edge_thesis":"5c gap: rollup 25c vs live 20c, with 1200 volume confirming the lower price as real. Take YES at 22c betting market reverts toward 25c.","exit_thesis":"Exit if ladder re-prices >5c against entry, or if volume reverses (next-tick volume >2x current = adverse momentum)."},"orders":[{"ticker":"KX-SAS1","side":"yes","action":"buy","size":5,"limit_cents":22,"reason":"3c gap to implied; first real volume on the rung"}]}
 ```
 
 ---

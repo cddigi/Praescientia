@@ -122,6 +122,48 @@ fn cmdFinish(ctx: *common.Context) !u8 {
 // validate --thesis-manifest=PATH --decision=PATH [--bankroll-cap-cents=N]
 // ---------------------------------------------------------------------------
 
+/// Structured analysis block — required on every decision. The agent
+/// MUST populate every field; empty or missing fields are schema
+/// rejections. "No signal at this layer" is a valid value (e.g.
+/// `"no historical analog identified"`) but silence is not — absence
+/// of a layer is silently skipping the work, which is what this block
+/// exists to prevent.
+///
+/// Cap per field: 300 chars. The cap forces the agent to be concise
+/// — these are claims with evidence pointers, not essays. Detailed
+/// reasoning belongs in `commentary_body`.
+const AnalysisBlock = struct {
+    /// What this thesis is betting on, in the agent's own words.
+    manifest_understanding: []const u8 = "",
+    /// Historical frequency of similar outcomes, or "no analog found".
+    base_rate: []const u8 = "",
+    /// What related markets in the same event imply, or
+    /// "single-market thesis".
+    event_ladder: []const u8 = "",
+    /// Current real-world conditions affecting the outcome (team news,
+    /// weather, etc.), or "no domain data available".
+    domain_state: []const u8 = "",
+    /// What prior commentary anchored on this thesis says. Should cite
+    /// at least one neighbor hash when neighbors are non-empty.
+    commentary_review: []const u8 = "",
+    /// Reality-chain trend over multiple ticks (price drift, volume
+    /// direction, spread stability), or "single observation".
+    multi_tick_observation: []const u8 = "",
+    /// How this market compares to other sources (sportsbooks, other
+    /// prediction markets, related Kalshi events), or "no external
+    /// reference identified".
+    external_cross_ref: []const u8 = "",
+    /// Where we disagree with the market, and why. Use the exact
+    /// string "no disagreement" when we accept the market mid as our
+    /// own estimate. NOTE: `edge_thesis == "no disagreement"` AND
+    /// `orders.len > 0` is a schema rejection — you can't trade
+    /// without a stated edge.
+    edge_thesis: []const u8 = "",
+    /// What would change our mind, or at what price we exit. Required
+    /// even on no-op holds — forces forward-looking reasoning.
+    exit_thesis: []const u8 = "",
+};
+
 /// Shape of a sub-agent's decision JSON. The orchestrator builds the
 /// prompt that produces this; here we parse and validate one before it's
 /// allowed to drive chain writes or order placement.
@@ -132,7 +174,15 @@ const DecisionDoc = struct {
     commentary_body: []const u8 = "",
     commentary_tags: []const []const u8 = &.{},
     orders: []const DecisionOrder = &.{},
+    /// Hard schema — every analysis field must be non-empty and
+    /// within the per-field 300-char cap. See `AnalysisBlock` for
+    /// per-field semantics.
+    analysis: AnalysisBlock = .{},
 };
+
+/// Per-field cap for `AnalysisBlock` fields. Public so the agent
+/// definition can cite one source of truth.
+pub const analysis_field_cap: usize = 300;
 
 const DecisionOrder = struct {
     ticker: []const u8,
@@ -222,6 +272,38 @@ pub fn validateDecision(
         try err.print(
             "{{\"ok\":false,\"reason\":\"RationaleTooLong\",\"got\":{d},\"max\":1024}}\n",
             .{decision.rationale.len},
+        );
+        return 1;
+    }
+
+    // 1.5. Analysis block — required on every decision (hard schema). Every
+    //      field must be non-empty AND within `analysis_field_cap` chars.
+    //      Comptime iteration: adding a 10th field to AnalysisBlock only
+    //      requires touching the struct, not this validator.
+    inline for (@typeInfo(AnalysisBlock).@"struct".fields) |field| {
+        const value = @field(decision.analysis, field.name);
+        if (value.len == 0) {
+            try err.print(
+                "{{\"ok\":false,\"reason\":\"AnalysisFieldEmpty\",\"field\":\"{s}\"}}\n",
+                .{field.name},
+            );
+            return 1;
+        }
+        if (value.len > analysis_field_cap) {
+            try err.print(
+                "{{\"ok\":false,\"reason\":\"AnalysisFieldTooLong\",\"field\":\"{s}\",\"got\":{d},\"max\":{d}}}\n",
+                .{ field.name, value.len, analysis_field_cap },
+            );
+            return 1;
+        }
+    }
+
+    // 1.6. edge_thesis == "no disagreement" AND orders.len > 0 → reject.
+    //      Can't trade without a stated edge over the market.
+    if (std.mem.eql(u8, decision.analysis.edge_thesis, "no disagreement") and decision.orders.len > 0) {
+        try err.print(
+            "{{\"ok\":false,\"reason\":\"NoEdgeWithOrders\",\"orders_count\":{d}}}\n",
+            .{decision.orders.len},
         );
         return 1;
     }
@@ -729,6 +811,26 @@ test "validate rejects orders against tickers not in the manifest (bad_ticker.js
 
 test "validate rejects size-zero orders (bad_size.json)" {
     const exit = try validateFixture("bad_size.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate rejects a missing analysis block (bad_analysis_missing.json)" {
+    const exit = try validateFixture("bad_analysis_missing.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate rejects an empty analysis field (bad_analysis_empty.json)" {
+    const exit = try validateFixture("bad_analysis_empty.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate rejects an over-cap analysis field (bad_analysis_long.json)" {
+    const exit = try validateFixture("bad_analysis_long.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate rejects orders when edge_thesis is 'no disagreement' (bad_no_edge_with_orders.json)" {
+    const exit = try validateFixture("bad_no_edge_with_orders.json");
     try std.testing.expectEqual(@as(u8, 1), exit);
 }
 

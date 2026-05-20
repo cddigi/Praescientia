@@ -1,0 +1,19 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 5000,
+  "rationale": "Decision with an empty analysis field — silence is not a valid value.",
+  "commentary_body": "Should be rejected.",
+  "commentary_tags": ["fixture"],
+  "analysis": {
+    "manifest_understanding": "fixture",
+    "base_rate": "fixture",
+    "event_ladder": "",
+    "domain_state": "fixture",
+    "commentary_review": "fixture",
+    "multi_tick_observation": "fixture",
+    "external_cross_ref": "fixture",
+    "edge_thesis": "fixture",
+    "exit_thesis": "fixture"
+  },
+  "orders": []
+}

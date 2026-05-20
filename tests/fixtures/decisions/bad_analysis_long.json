@@ -1,0 +1,19 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 5000,
+  "rationale": "Decision with an analysis field exceeding the 300-char cap.",
+  "commentary_body": "Should be rejected.",
+  "commentary_tags": ["fixture"],
+  "analysis": {
+    "manifest_understanding": "fixture",
+    "base_rate": "Padding repeated to blow the per-field 300-char cap. AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.",
+    "event_ladder": "fixture",
+    "domain_state": "fixture",
+    "commentary_review": "fixture",
+    "multi_tick_observation": "fixture",
+    "external_cross_ref": "fixture",
+    "edge_thesis": "fixture",
+    "exit_thesis": "fixture"
+  },
+  "orders": []
+}

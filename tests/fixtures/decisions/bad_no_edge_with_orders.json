@@ -1,8 +1,8 @@
 {
   "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
-  "confidence_bp": 1800,
-  "rationale": "Decision with size 0 — Kalshi rejects these so we shouldn't ship them.",
-  "commentary_body": "Should be rejected by validate.",
+  "confidence_bp": 5000,
+  "rationale": "Agent claims no disagreement with market but still emits an order — internally inconsistent.",
+  "commentary_body": "Should be rejected.",
   "commentary_tags": ["fixture"],
   "analysis": {
     "manifest_understanding": "fixture",
@@ -12,10 +12,10 @@
     "commentary_review": "fixture",
     "multi_tick_observation": "fixture",
     "external_cross_ref": "fixture",
-    "edge_thesis": "fixture edge to provoke size rejection",
+    "edge_thesis": "no disagreement",
     "exit_thesis": "fixture"
   },
   "orders": [
-    {"ticker": "KX-A", "side": "yes", "action": "buy", "size": 0, "limit_cents": 28, "reason": "fixture"}
+    {"ticker": "KX-A", "side": "yes", "action": "buy", "size": 5, "limit_cents": 28, "reason": "should be rejected — no edge claimed"}
   ]
 }
