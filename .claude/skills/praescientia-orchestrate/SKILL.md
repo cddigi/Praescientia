@@ -65,6 +65,17 @@ Wall-clock interval between tick starts. Accepted forms: `60s`,
 runtime clamps to `[60, 3600]`; pick an interval inside that window or
 the wake-up will be retargeted.
 
+**Interaction with daemon `--per-thesis-cadence`.** When the
+`praescientia-orchestrate-daemon` is running in per-thesis cadence
+mode, `--interval` becomes the *maximum sleep duration* between
+iterations rather than a uniform tick spacing. Per-thesis intervals
+(driven by `praescientia-game-state classify`) override the global
+default: in-game sports get 30s, near_game 2min, scheduled (>24h
+out) 30min, unknown/non-sport falls back to the standard 5min. The
+skill itself doesn't change — it still runs one full tick lifecycle
+per invocation. The difference is in *which* theses the daemon
+dispatches to the skill on each iteration.
+
 ### `--max-ticks=N` (default `unbounded`)
 
 Bounded-run mode. After completing the Nth tick, do **not** call

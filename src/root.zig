@@ -32,6 +32,7 @@ pub const kb = struct {
     pub const ticks = @import("kb/ticks.zig");
     pub const settlements = @import("kb/settlements.zig");
     pub const screener = @import("kb/screener.zig");
+    pub const game_state = @import("kb/game_state.zig");
 };
 
 pub const canonical_json = @import("canonical_json.zig");
@@ -65,6 +66,7 @@ test {
     _ = kb.ticks;
     _ = kb.settlements;
     _ = kb.screener;
+    _ = kb.game_state;
     _ = canonical_json;
     _ = state_chain;
     _ = txlog;

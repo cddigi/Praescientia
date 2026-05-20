@@ -187,6 +187,8 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Loss-reflector sub-agent (Haiku) | `Agent({subagent_type:"praescientia-loss-reflector", prompt:<§8 JSON>})` | `.claude/agents/praescientia-loss-reflector.md` |
 | Market-screener sub-agent (Opus) | `Agent({subagent_type:"praescientia-market-screener", prompt:<candidates JSON>})` | `.claude/agents/praescientia-market-screener.md` |
 | Screener CLI | `./zig-out/bin/praescientia-screener validate\|apply --output=PATH --kb-root=PATH [--bucket=...] [--dry-run] [--cap-safe=N\|--cap-moderate=N\|--cap-high-risk=N]` | `tools/screener.zig` + `src/kb/screener.zig` |
+| Game-state classifier | `./zig-out/bin/praescientia-game-state classify --ticker=T [--now=...]` or `inspect --kb-root=PATH` | `tools/game_state.zig` + `src/kb/game_state.zig` |
+| Daemon (per-thesis) | `./zig-out/bin/praescientia-orchestrate-daemon --kb-root=PATH --per-thesis-cadence [--interval=DUR] [--max-ticks=N]` | `tools/orchestrate_daemon.zig` (opt-in via flag) |
 | Commentary indexer | `python tools/indexer/index_commentary.py --kb-root=PATH [--once\|--serve]` | `tools/indexer/index_commentary.py` |
 | KB poller | `zig build run-poll-markets -- --kb-root=./kb` | `tools/poll_markets.zig` |
 | Demo loop smoke | `./scripts/demo_loop_smoke.sh` | `scripts/demo_loop_smoke.sh` |
