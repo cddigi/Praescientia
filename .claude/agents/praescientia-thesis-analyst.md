@@ -118,6 +118,35 @@ no new analysis to record) and `orders` (use `[]` for no-op ticks).
 
 # Decision framework
 
+## Fresh-chain handling — null reality_head is NOT a malformed input
+
+`reality_head: null` means the orchestrator hasn't yet observed any
+reality on this thesis (typically the very first tick after a kb
+bootstrap, or after a manual chain reset). It is a **valid** input,
+not a malformed one — do NOT emit the error envelope.
+
+In this case, emit a no-op hold:
+
+- `confidence_bp: 5000` — the neutral 50% prior; the orchestrator's
+  no-churn gate then keeps re-emitting this value until reality
+  actually moves.
+- `orders: []` — no edge to act on without market data.
+- `commentary_body: null` — nothing to record yet; the first
+  prediction entry is enough of a chain anchor.
+- `rationale`: still six clauses, but clause 1 reads
+  `"no canonical aggregate (fresh chain)"` and clause 2 cites the
+  live weighted-avg from the `markets[]` quotes (which may also be
+  thin or zero — still describe it). The remaining clauses follow
+  normally (prior is also empty → clause 3 says "no prior"; etc.).
+
+The same logic applies to an empty `prediction_history: []` (no prior
+to cite in clause 3). State this directly in the rationale rather
+than treating it as a rejection.
+
+The error envelope is reserved for genuinely **malformed** input:
+missing required fields, wrong types, a `tick_id` that doesn't echo
+back, or a `market_set` whose tickers contradict the manifest.
+
 ## Hard rules — the orchestrator rejects you if these fail
 
 - `orders[].ticker` MUST be in `thesis.market_set`
