@@ -170,7 +170,7 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 |---------|-----|------------------------|
 | Dashboard server | `zig build run-server -- --port=8080 [--kb-root=PATH]` | `server/{main,handlers}.zig` |
 | Exchange | `zig build run-exchange -- status\|schedule\|announcements` | `src/kalshi/exchange.zig` |
-| Markets | `zig build run-markets -- list\|get TICKER\|orderbook TICKER\|trades\|candlesticks\|orderbooks` | `src/kalshi/markets.zig` |
+| Markets | `zig build run-markets -- list\|get TICKER\|orderbook TICKER\|trades\|candlesticks\|orderbooks\|candidates` | `src/kalshi/markets.zig` + `tools/markets.zig` |
 | Events | `zig build run-events -- list\|multivariate\|get\|metadata\|candlesticks\|forecast\|collection` | `src/kalshi/events.zig` |
 | Historical | `zig build run-historical -- cutoff\|candlesticks\|fills\|orders\|trades\|markets\|market` | `src/kalshi/historical.zig` |
 | Portfolio | `zig build run-portfolio -- balance\|positions\|settlements\|fills\|resting_value\|subaccounts_*` | `src/kalshi/portfolio.zig` |
@@ -185,10 +185,13 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Orchestrator (Opus) | `/praescientia-orchestrate --kb-root=PATH --interval=300s [--max-ticks=N] [--theses=...] [--dry-run] [--pause\|--resume]` | `.claude/skills/praescientia-orchestrate/{SKILL.md,tick.md}` |
 | Thesis sub-agent (Haiku) | `Agent({subagent_type:"praescientia-thesis-analyst", prompt:<§2 JSON>})` | `.claude/agents/praescientia-thesis-analyst.md` |
 | Loss-reflector sub-agent (Haiku) | `Agent({subagent_type:"praescientia-loss-reflector", prompt:<§8 JSON>})` | `.claude/agents/praescientia-loss-reflector.md` |
+| Market-screener sub-agent (Opus) | `Agent({subagent_type:"praescientia-market-screener", prompt:<candidates JSON>})` | `.claude/agents/praescientia-market-screener.md` |
+| Screener CLI | `./zig-out/bin/praescientia-screener validate\|apply --output=PATH --kb-root=PATH [--bucket=...] [--dry-run] [--cap-safe=N\|--cap-moderate=N\|--cap-high-risk=N]` | `tools/screener.zig` + `src/kb/screener.zig` |
 | Commentary indexer | `python tools/indexer/index_commentary.py --kb-root=PATH [--once\|--serve]` | `tools/indexer/index_commentary.py` |
 | KB poller | `zig build run-poll-markets -- --kb-root=./kb` | `tools/poll_markets.zig` |
 | Demo loop smoke | `./scripts/demo_loop_smoke.sh` | `scripts/demo_loop_smoke.sh` |
 | Orchestrator smoke | `./scripts/orchestrator_smoke.sh` | `scripts/orchestrator_smoke.sh` (uses mock sub-agents) |
+| Screener smoke | `./scripts/screener_smoke.sh` | `scripts/screener_smoke.sh` (deterministic stub for the screener agent) |
 | Metrics | `GET /metrics` on the dashboard server | `src/kb/metrics.zig` |
 | CoinGecko spot | `zig build run-poll -- prices` | `tools/poll_resolved_markets.zig` |
 | Smoke harness | `./zig-out/bin/praescientia-test-conn [--env=demo\|live] [--capture-dir=PATH]` | exercises every above CLI |
