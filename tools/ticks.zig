@@ -171,11 +171,17 @@ const DecisionDoc = struct {
     tick_id: ?[]const u8 = null,
     confidence_bp: u32,
     rationale: []const u8 = "",
-    commentary_body: []const u8 = "",
+    /// Free-form commentary the agent attaches to the prediction.
+    /// **Optional** because the agent's protocol explicitly allows
+    /// `null` when there's no new analysis worth recording (typical
+    /// for no-op holds). Previously this was non-optional and JSON
+    /// `null` failed `parseFromSlice` with a misleading
+    /// `UnexpectedToken` error before reaching the cap check.
+    commentary_body: ?[]const u8 = null,
     commentary_tags: []const []const u8 = &.{},
     orders: []const DecisionOrder = &.{},
     /// Hard schema — every analysis field must be non-empty and
-    /// within the per-field 300-char cap. See `AnalysisBlock` for
+    /// within the per-field 750-char cap. See `AnalysisBlock` for
     /// per-field semantics.
     analysis: AnalysisBlock = .{},
 };
@@ -268,12 +274,14 @@ pub fn validateDecision(
         );
         return 1;
     }
-    if (decision.commentary_body.len > 4096) {
-        try err.print(
-            "{{\"ok\":false,\"reason\":\"CommentaryBodyTooLong\",\"got\":{d},\"max\":4096}}\n",
-            .{decision.commentary_body.len},
-        );
-        return 1;
+    if (decision.commentary_body) |body| {
+        if (body.len > 4096) {
+            try err.print(
+                "{{\"ok\":false,\"reason\":\"CommentaryBodyTooLong\",\"got\":{d},\"max\":4096}}\n",
+                .{body.len},
+            );
+            return 1;
+        }
     }
     if (decision.rationale.len > 1024) {
         try err.print(
@@ -839,6 +847,11 @@ test "validate rejects an over-cap analysis field (bad_analysis_long.json)" {
 test "validate rejects orders when edge_thesis is 'no disagreement' (bad_no_edge_with_orders.json)" {
     const exit = try validateFixture("bad_no_edge_with_orders.json");
     try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate accepts commentary_body=null on no-op holds (ok_null_body.json)" {
+    const exit = try validateFixture("ok_null_body.json");
+    try std.testing.expectEqual(@as(u8, 0), exit);
 }
 
 test "rollbackFromSnapshot forks each non-empty chain at its pre-tick head" {
