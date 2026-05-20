@@ -1,26 +1,31 @@
 //! praescientia-orchestrate-daemon — long-running tick scheduler.
 //!
 //! Owns the wall-clock loop for the autonomous prediction agent. At each
-//! tick, the daemon will (eventually) spawn `claude -p '/praescientia-
-//! orchestrate --kb-root=... --max-ticks=1'` to execute one tick body via
-//! Claude Code. This skeleton commit lays down the scheduling + signal
-//! handling + lifecycle event log; the actual claude-spawn is wired in a
-//! follow-up.
+//! tick the daemon walks the tick.md §3 lifecycle by spawning the
+//! existing `praescientia-*` CLIs as subprocesses, plus one `claude -p
+//! '/praescientia-orchestrate ...'` invocation for the AI dispatch step.
 //!
-//! Why a Zig daemon vs. a long-lived Claude Code session: a Zig process is
-//! cheap, restarts cleanly, owns SIGINT/SIGTERM properly, and survives
-//! Claude Code restarts/upgrades. The skill model remains valid for
-//! interactive use; this daemon is for unattended operation.
+//! Why a Zig daemon vs. a long-lived Claude Code session: a Zig process
+//! is cheap, restarts cleanly, owns SIGINT/SIGTERM properly, and
+//! survives Claude Code restarts/upgrades. The skill model remains
+//! valid for interactive use; this daemon is for unattended operation.
 //!
 //! Flags:
-//!   --kb-root=PATH       (default ./kb) Knowledge base root passed through to claude.
-//!   --interval=DUR       (default 300s) Seconds between tick starts. Forms: 30s, 5m, 1h.
-//!   --max-ticks=N        (optional)     Stop after N ticks. Useful for smoke runs.
-//!   --dry-run            (optional)     Pass --dry-run to the per-tick claude invocation.
+//!   --kb-root=PATH       (default ./kb)           Knowledge base root.
+//!   --bin-dir=PATH       (default ./zig-out/bin)  Where to find the praescientia-* CLIs.
+//!   --interval=DUR       (default 300s)           Tick interval. Forms: 30s, 5m, 1h.
+//!   --max-ticks=N        (optional)               Stop after N ticks.
+//!   --dry-run            (optional)               Pass --dry-run through to claude.
+//!   --no-dispatch        (optional)               Skip the claude step (lifecycle smoke).
 //!
 //! Signals:
-//!   SIGINT / SIGTERM     Set a shutdown flag. Daemon finishes the in-flight
-//!                        tick (or short sleep) then exits cleanly.
+//!   SIGINT / SIGTERM     Set a shutdown flag. Daemon finishes the
+//!                        in-flight tick (or short sleep) then exits.
+//!
+//! On startup the daemon scans kb/.ticks/ for orphan ticks (a `.pre.json`
+//! without a matching `.post.json`) and logs them so an operator knows
+//! a prior daemon run was interrupted mid-tick. Recovery itself stays
+//! manual for now (resume semantics live in the orchestrate skill).
 
 const std = @import("std");
 const common = @import("common");
@@ -42,9 +47,11 @@ pub fn main(init: std.process.Init) !u8 {
 
 fn cmdRun(ctx: *common.Context) !u8 {
     const kb_root = ctx.flagValue("--kb-root") orelse "./kb";
+    const bin_dir = ctx.flagValue("--bin-dir") orelse "./zig-out/bin";
     const interval_str = ctx.flagValue("--interval") orelse "300s";
     const max_ticks_str = ctx.flagValue("--max-ticks");
-    const dry_run = ctx.flagValue("--dry-run") != null or hasBareFlag(ctx, "--dry-run");
+    const dry_run = hasBareFlag(ctx, "--dry-run");
+    const no_dispatch = hasBareFlag(ctx, "--no-dispatch");
 
     const interval_seconds = parseDuration(interval_str) catch {
         try ctx.stderr.print(
@@ -73,10 +80,12 @@ fn cmdRun(ctx: *common.Context) !u8 {
     try installSignalHandlers();
 
     try ctx.stdout.print(
-        "[startup] praescientia-orchestrate-daemon kb_root={s} interval={d}s max_ticks={?d} dry_run={}\n",
-        .{ kb_root, interval_seconds, max_ticks, dry_run },
+        "[startup] praescientia-orchestrate-daemon kb_root={s} bin_dir={s} interval={d}s max_ticks={?d} dry_run={} no_dispatch={}\n",
+        .{ kb_root, bin_dir, interval_seconds, max_ticks, dry_run, no_dispatch },
     );
     try ctx.stdout.flush();
+
+    try reapOrphanTicks(ctx, kb_root);
 
     var tick_count: u32 = 0;
     while (!shutdown_requested.load(.seq_cst)) {
@@ -86,7 +95,7 @@ fn cmdRun(ctx: *common.Context) !u8 {
             break;
         };
 
-        try runTickStubbed(ctx, tick_count, max_ticks, kb_root, dry_run);
+        try runTick(ctx, tick_count, max_ticks, kb_root, bin_dir, dry_run, no_dispatch);
         if (shutdown_requested.load(.seq_cst)) break;
 
         // Terminal tick — skip sleep, exit cleanly.
@@ -110,43 +119,450 @@ fn cmdRun(ctx: *common.Context) !u8 {
     return 0;
 }
 
-/// One stubbed tick. Logs each step boundary so the operator can see the
-/// scheduling working before the AI dispatch is wired. Real implementation
-/// (follow-up PR) will spawn `claude -p '/praescientia-orchestrate ...'`
-/// and capture/log the response in place of the dispatch-stub line.
-fn runTickStubbed(
+/// Run one full tick. Walks the tick.md §3 lifecycle by spawning the
+/// existing CLIs as subprocesses. Each step is best-effort: failures
+/// are logged and the tick continues (matches the graceful-degradation
+/// pattern documented in tick.md). Returns normally even when a step
+/// fails — the daemon's responsibility is keeping the tick clock
+/// running; chain integrity is the CLIs' responsibility.
+fn runTick(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    kb_root: []const u8,
+    bin_dir: []const u8,
+    dry_run: bool,
+    no_dispatch: bool,
+) !void {
+    try logTick(ctx, n, max, "starting");
+
+    // Pre-step 0: KILL / PAUSED sentinel gates. The pause sentinel
+    // doesn't stop the tick — it tells the orchestrator skill to skip
+    // step 9. The daemon just reports state; orchestrator handles the
+    // semantics. KILL is a hard abort.
+    if (try sentinelExists(ctx, kb_root, "KILL")) {
+        try logTickStep(ctx, n, max, 0, "KILL sentinel present — requesting shutdown");
+        shutdown_requested.store(true, .seq_cst);
+        return;
+    }
+    const paused = try sentinelExists(ctx, kb_root, "PAUSED");
+    if (paused) {
+        try logTickStep(ctx, n, max, 0, "PAUSED sentinel present — orchestrator will skip step 9");
+    } else {
+        try logTickStep(ctx, n, max, 0, "gates clear (no KILL, no PAUSED)");
+    }
+
+    // Step 1: begin. Captures tick_id from stdout.
+    const tick_id = runBegin(ctx, n, max, kb_root, bin_dir) catch |e| {
+        try logTickStep(ctx, n, max, 1, "begin failed — skipping rest of tick");
+        try ctx.stderr.print("  begin error: {t}\n", .{e});
+        try ctx.stderr.flush();
+        return;
+    };
+
+    // Step 4: poll markets. Best-effort.
+    runPoll(ctx, n, max, kb_root, bin_dir) catch |e| {
+        try ctx.stderr.print(
+            "[tick {d}] step 4 poll error: {t} (continuing)\n",
+            .{ n, e },
+        );
+        try ctx.stderr.flush();
+    };
+
+    // Step 5: settlements. Best-effort.
+    runSettle(ctx, n, max, kb_root, bin_dir) catch |e| {
+        try ctx.stderr.print(
+            "[tick {d}] step 5 settle error: {t} (continuing)\n",
+            .{ n, e },
+        );
+        try ctx.stderr.flush();
+    };
+
+    // Step 7: dispatch via claude -p. The big one. May take minutes.
+    if (no_dispatch) {
+        try logTickStep(ctx, n, max, 7, "dispatch SKIPPED (--no-dispatch)");
+    } else {
+        runDispatch(ctx, n, max, kb_root, dry_run) catch |e| {
+            try ctx.stderr.print(
+                "[tick {d}] step 7 dispatch error: {t} (continuing to step 10)\n",
+                .{ n, e },
+            );
+            try ctx.stderr.flush();
+        };
+    }
+
+    // Step 10: finish. Writes the post-snapshot.
+    runFinish(ctx, n, max, kb_root, bin_dir, &tick_id) catch |e| {
+        try ctx.stderr.print(
+            "[tick {d}] step 10 finish error: {t}\n",
+            .{ n, e },
+        );
+        try ctx.stderr.flush();
+    };
+
+    try logTick(ctx, n, max, "complete");
+}
+
+const tick_id_len = 26;
+const TickId = [tick_id_len]u8;
+
+fn runBegin(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    kb_root: []const u8,
+    bin_dir: []const u8,
+) !TickId {
+    const argv = try buildArgv(ctx.arena, &.{
+        bin_dir, "/praescientia-ticks",
+    }, &.{
+        "begin",
+        "--kb-root=", kb_root,
+    });
+
+    const r = try runCmd(ctx, argv);
+    if (r.exit != 0) {
+        try logTickStep(ctx, n, max, 1, "begin: non-zero exit");
+        return error.BeginFailed;
+    }
+
+    // begin prints the 26-char ULID to stdout (followed by newline).
+    const out_trimmed = std.mem.trim(u8, r.stdout, " \r\n\t");
+    if (out_trimmed.len != tick_id_len) {
+        try logTickStep(ctx, n, max, 1, "begin: stdout did not contain a 26-char ULID");
+        return error.BadTickId;
+    }
+    var tick_id: TickId = undefined;
+    @memcpy(&tick_id, out_trimmed);
+
+    if (max) |m| {
+        try ctx.stdout.print("[tick {d}/{d}] step  1: begin OK tick_id={s}\n", .{ n, m, &tick_id });
+    } else {
+        try ctx.stdout.print("[tick {d}] step  1: begin OK tick_id={s}\n", .{ n, &tick_id });
+    }
+    try ctx.stdout.flush();
+    return tick_id;
+}
+
+fn runPoll(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    kb_root: []const u8,
+    bin_dir: []const u8,
+) !void {
+    const argv = try buildArgv(ctx.arena, &.{
+        bin_dir, "/praescientia-poll-markets",
+    }, &.{
+        "--kb-root=", kb_root,
+        "--demo",
+    });
+
+    const r = try runCmd(ctx, argv);
+    // poll-markets returns 0 even with per-market errors; the summary is
+    // on stdout (e.g. "polled N markets, M errors"). Log the trimmed
+    // summary.
+    const summary = firstLine(r.stdout);
+    try logTickStep(ctx, n, max, 4, summary);
+    if (r.exit != 0) return error.PollFailed;
+}
+
+fn runSettle(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    kb_root: []const u8,
+    bin_dir: []const u8,
+) !void {
+    const cursor_path = try std.fmt.allocPrint(
+        ctx.arena,
+        "{s}/.ticks/.last_settlement.json",
+        .{kb_root},
+    );
+    const since_flag = try std.fmt.allocPrint(
+        ctx.arena,
+        "--since-cursor-file={s}",
+        .{cursor_path},
+    );
+
+    // Build the argv manually — settlements is a subcommand, not a
+    // path-suffix, so the prefix-join helper doesn't fit.
+    var av = std.array_list.Managed([]const u8).init(ctx.arena);
+    const bin_path = try std.fmt.allocPrint(ctx.arena, "{s}/praescientia-portfolio", .{bin_dir});
+    try av.append(bin_path);
+    try av.append("settlements");
+    try av.append("--demo");
+    try av.append(since_flag);
+
+    const r = try runCmd(ctx, av.items);
+    if (r.exit != 0) {
+        try logTickStep(ctx, n, max, 5, "settle: non-zero exit (Kalshi may be down; continuing)");
+        return;
+    }
+    // The response is JSON; report empty-page vs. page-received without
+    // trying to parse it. Operators read kb/.ticks/.last_settlement.json
+    // for substantive content.
+    if (std.mem.indexOf(u8, r.stdout, "\"settlements\": []") != null or
+        std.mem.indexOf(u8, r.stdout, "\"settlements\":[]") != null)
+    {
+        try logTickStep(ctx, n, max, 5, "settle: empty page (no new settlements)");
+    } else {
+        if (max) |m| {
+            try ctx.stdout.print(
+                "[tick {d}/{d}] step  5: settle: received {d} bytes of response\n",
+                .{ n, m, r.stdout.len },
+            );
+        } else {
+            try ctx.stdout.print(
+                "[tick {d}] step  5: settle: received {d} bytes of response\n",
+                .{ n, r.stdout.len },
+            );
+        }
+        try ctx.stdout.flush();
+    }
+}
+
+fn runDispatch(
     ctx: *common.Context,
     n: u32,
     max: ?u32,
     kb_root: []const u8,
     dry_run: bool,
 ) !void {
-    try logTick(ctx, n, max, "starting");
+    const dr: []const u8 = if (dry_run) " --dry-run" else "";
+    const slash_cmd = try std.fmt.allocPrint(
+        ctx.arena,
+        "/praescientia-orchestrate --kb-root={s} --max-ticks=1{s}",
+        .{ kb_root, dr },
+    );
 
-    // Per tick.md §3 lifecycle. Each step is currently a log-only
-    // placeholder; subprocess wiring lands in the follow-up.
-    try logTickStep(ctx, n, max, 0, "pre-step: kill/paused/breaker gates (stub)");
-    try logTickStep(ctx, n, max, 1, "begin: praescientia-ticks begin --kb-root=... (stub)");
-    try logTickStep(ctx, n, max, 4, "poll: praescientia-poll-markets (stub)");
-    try logTickStep(ctx, n, max, 5, "settle: praescientia-portfolio settlements (stub)");
-
-    const dr_suffix: []const u8 = if (dry_run) " --dry-run" else "";
     if (max) |m| {
         try ctx.stdout.print(
-            "[tick {d}/{d}] step  7: would spawn `claude -p \"/praescientia-orchestrate --kb-root={s} --max-ticks=1{s}\"`\n",
-            .{ n, m, kb_root, dr_suffix },
+            "[tick {d}/{d}] step  7: spawn claude -p \"{s}\" (may take several minutes)\n",
+            .{ n, m, slash_cmd },
         );
     } else {
         try ctx.stdout.print(
-            "[tick {d}] step  7: would spawn `claude -p \"/praescientia-orchestrate --kb-root={s} --max-ticks=1{s}\"`\n",
-            .{ n, kb_root, dr_suffix },
+            "[tick {d}] step  7: spawn claude -p \"{s}\" (may take several minutes)\n",
+            .{ n, slash_cmd },
         );
     }
     try ctx.stdout.flush();
 
-    try logTickStep(ctx, n, max, 10, "finish: praescientia-ticks finish (stub)");
-    try logTickStep(ctx, n, max, 11, "summary: global commentary write (stub)");
-    try logTick(ctx, n, max, "complete");
+    var av = std.array_list.Managed([]const u8).init(ctx.arena);
+    try av.append("claude");
+    try av.append("-p");
+    try av.append(slash_cmd);
+
+    const r = try runCmd(ctx, av.items);
+    if (r.exit != 0) {
+        try logTickStep(ctx, n, max, 7, "claude exited non-zero");
+        return error.DispatchFailed;
+    }
+    // Log a one-line summary; the full output is in claude's chain.
+    const trimmed = std.mem.trim(u8, r.stdout, " \r\n\t");
+    if (trimmed.len == 0) {
+        try logTickStep(ctx, n, max, 7, "claude returned no stdout");
+    } else {
+        const first = firstLine(trimmed);
+        try logTickStep(ctx, n, max, 7, "claude dispatch complete; first line follows");
+        if (max) |m| {
+            try ctx.stdout.print("[tick {d}/{d}]            > {s}\n", .{ n, m, first });
+        } else {
+            try ctx.stdout.print("[tick {d}]            > {s}\n", .{ n, first });
+        }
+        try ctx.stdout.flush();
+    }
+}
+
+fn runFinish(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    kb_root: []const u8,
+    bin_dir: []const u8,
+    tick_id: *const TickId,
+) !void {
+    const tick_flag = try std.fmt.allocPrint(ctx.arena, "--tick-id={s}", .{tick_id});
+    const kb_flag = try std.fmt.allocPrint(ctx.arena, "--kb-root={s}", .{kb_root});
+    const bin_path = try std.fmt.allocPrint(ctx.arena, "{s}/praescientia-ticks", .{bin_dir});
+
+    var av = std.array_list.Managed([]const u8).init(ctx.arena);
+    try av.append(bin_path);
+    try av.append("finish");
+    try av.append(kb_flag);
+    try av.append(tick_flag);
+
+    const r = try runCmd(ctx, av.items);
+    if (r.exit != 0) {
+        try logTickStep(ctx, n, max, 10, "finish: non-zero exit");
+        return error.FinishFailed;
+    }
+    const summary = firstLine(r.stderr);
+    if (summary.len > 0) {
+        try logTickStep(ctx, n, max, 10, summary);
+    } else {
+        try logTickStep(ctx, n, max, 10, "finish OK (post.json written)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subprocess + filesystem helpers
+// ---------------------------------------------------------------------------
+
+const RunResult = struct {
+    exit: u8,
+    stdout: []const u8,
+    stderr: []const u8,
+};
+
+const max_output_bytes: usize = 16 * 1024 * 1024;
+
+/// Spawn a subprocess, capture stdout + stderr, wait for exit. Allocates
+/// stdout/stderr from `ctx.arena` so they live as long as the tick.
+fn runCmd(ctx: *common.Context, argv: []const []const u8) !RunResult {
+    var child = try std.process.spawn(ctx.io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+
+    var stdout_reader = child.stdout.?.readerStreaming(ctx.io, &.{});
+    var stderr_reader = child.stderr.?.readerStreaming(ctx.io, &.{});
+
+    const stdout_bytes = stdout_reader.interface.allocRemaining(
+        ctx.arena,
+        .limited(max_output_bytes),
+    ) catch &[_]u8{};
+    const stderr_bytes = stderr_reader.interface.allocRemaining(
+        ctx.arena,
+        .limited(max_output_bytes),
+    ) catch &[_]u8{};
+
+    const term = try child.wait(ctx.io);
+    const exit_code: u8 = switch (term) {
+        .exited => |c| c,
+        .signal => 130, // typical for SIGINT
+        .stopped => 137,
+        .unknown => 1,
+    };
+
+    return .{ .exit = exit_code, .stdout = stdout_bytes, .stderr = stderr_bytes };
+}
+
+/// First non-empty line of `s`, trimmed. Used to summarize subprocess
+/// output for log lines without dumping the whole stdout buffer.
+fn firstLine(s: []const u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, s, '\n')) |nl_pos| {
+        return std.mem.trim(u8, s[0..nl_pos], " \r\t");
+    }
+    return std.mem.trim(u8, s, " \r\n\t");
+}
+
+/// Build argv by joining a `prefix` path-parts list and appending `suffix`
+/// args. The prefix is joined with no separator (so caller controls slash
+/// placement); the suffix args are passed through as-is. Useful for
+/// `["bin_dir", "/tool"]` + `["subcommand", "--flag=", "value"]`.
+fn buildArgv(
+    arena: std.mem.Allocator,
+    prefix: []const []const u8,
+    suffix: []const []const u8,
+) ![]const []const u8 {
+    var out = std.array_list.Managed([]const u8).init(arena);
+    var joined = std.array_list.Managed(u8).init(arena);
+    for (prefix) |p| try joined.appendSlice(p);
+    try out.append(try joined.toOwnedSlice());
+
+    // Join consecutive "--flag=" and "value" pairs into a single arg.
+    var i: usize = 0;
+    while (i < suffix.len) : (i += 1) {
+        const a = suffix[i];
+        if (std.mem.endsWith(u8, a, "=") and i + 1 < suffix.len) {
+            const flag = try std.fmt.allocPrint(arena, "{s}{s}", .{ a, suffix[i + 1] });
+            try out.append(flag);
+            i += 1;
+        } else {
+            try out.append(a);
+        }
+    }
+    return out.items;
+}
+
+/// Simpler shape — caller passes everything as-is. Kept around for
+/// callers that don't want the "--flag=" + "value" join behavior of
+/// buildArgv. Currently unused (settle's call site builds its argv
+/// directly) but retained for symmetry.
+fn buildArgvList(arena: std.mem.Allocator, parts: []const []const u8) ![]const []const u8 {
+    var out = std.array_list.Managed([]const u8).init(arena);
+    var joined = std.array_list.Managed(u8).init(arena);
+    for (parts) |p| try joined.appendSlice(p);
+    try out.append(try joined.toOwnedSlice());
+    return out.items;
+}
+
+/// Check whether `kb_root/.ticks/<name>` exists. Used for KILL/PAUSED
+/// sentinel checks. Missing file is the common case; other errors
+/// propagate to the caller.
+fn sentinelExists(
+    ctx: *common.Context,
+    kb_root: []const u8,
+    name: []const u8,
+) !bool {
+    const path = try std.fmt.allocPrint(ctx.arena, "{s}/.ticks/{s}", .{ kb_root, name });
+    std.Io.Dir.cwd().access(ctx.io, path, .{}) catch |e| switch (e) {
+        error.FileNotFound => return false,
+        else => return e,
+    };
+    return true;
+}
+
+/// Scan kb/.ticks/ for orphan ticks (a .pre.json without a matching
+/// .post.json). Logs them so the operator knows a prior daemon run was
+/// interrupted mid-tick. Recovery itself stays manual for now —
+/// resume semantics live in the orchestrate skill.
+fn reapOrphanTicks(ctx: *common.Context, kb_root: []const u8) !void {
+    const ticks_path = try std.fmt.allocPrint(ctx.arena, "{s}/.ticks", .{kb_root});
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, ticks_path, .{ .iterate = true }) catch |e| switch (e) {
+        error.FileNotFound => {
+            try ctx.stdout.print(
+                "[startup] reaper: {s} not present yet (fresh kb)\n",
+                .{ticks_path},
+            );
+            try ctx.stdout.flush();
+            return;
+        },
+        else => return e,
+    };
+    defer dir.close(ctx.io);
+
+    var orphans: u32 = 0;
+    var it = dir.iterate();
+    while (try it.next(ctx.io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".pre.json")) continue;
+        const tick_id = entry.name[0 .. entry.name.len - ".pre.json".len];
+        const post_name = try std.fmt.allocPrint(ctx.arena, "{s}.post.json", .{tick_id});
+        dir.access(ctx.io, post_name, .{}) catch |e| switch (e) {
+            error.FileNotFound => {
+                orphans += 1;
+                try ctx.stdout.print(
+                    "[startup] reaper: orphan tick {s} (pre.json without post.json — prior run interrupted)\n",
+                    .{tick_id},
+                );
+            },
+            else => return e,
+        };
+    }
+    if (orphans == 0) {
+        try ctx.stdout.print("[startup] reaper: no orphan ticks found\n", .{});
+    } else {
+        try ctx.stdout.print(
+            "[startup] reaper: {d} orphan tick(s) detected; recovery is manual (see tick.md resume semantics)\n",
+            .{orphans},
+        );
+    }
+    try ctx.stdout.flush();
 }
 
 /// Note: no wall-clock timestamps in log lines (Zig 0.16 std.time
