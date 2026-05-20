@@ -419,9 +419,59 @@ One input JSON file per thesis. Each parses as a single JSON object.
 - **Missing manifest**: log
   `{"kind":"thesis_skipped","thesis":"...","reason":"manifest_missing"}`
   and omit from the fan-out array. Other theses proceed normally.
-- **Similarity API down**: emit the input with empty
-  `commentary_neighbors`; the sub-agent will see `[]` and degrade
-  gracefully (no post-mortem signal this tick).
+- **Similarity API down**: log
+  `{"kind":"thesis_skipped","thesis":"...","reason":"similarity_api_down"}`
+  and omit. The agent rejects empty / <2 neighbor inputs (see § 6.b),
+  so dispatching without neighbors is wasted effort.
+
+### 6.b Pre-dispatch precondition — `commentary_neighbors.length >= 2`
+
+**Before** adding a thesis to the fan-out array, verify the input
+includes at least 2 commentary neighbors. The agent prompt enforces
+this on the other end (treats <2 neighbors as malformed input, emits
+error envelope), but the orchestrator checks upfront so the dispatch
+isn't wasted.
+
+```bash
+NEIGHBORS=$(jq '.commentary_neighbors | length' "/tmp/thesis_input_${TICK_ID}_${THESIS_ID}.json")
+if (( NEIGHBORS < 2 )); then
+  echo "{\"kind\":\"thesis_skipped\",\"thesis\":\"${THESIS_ID}\",\"reason\":\"step_7_research_required\",\"neighbors\":${NEIGHBORS},\"required\":2,\"ts\":$(now_ms)}" \
+    >> "${KB}/.ticks/${TICK_ID}.events.jsonl"
+  # Operator instruction: seed at least 2 commentary entries on
+  # theses/${THESIS_ID}/commentary/ before the next tick.
+  continue
+fi
+```
+
+**Why this is hard-required.** The agent's analysis block has a
+mandatory `commentary_review` field (≤300 chars) that must cite at
+least one neighbor by hash. Empty `commentary_neighbors` makes
+populating that field impossible — the agent has nothing to cite.
+More fundamentally, the system's value compounds through commentary
+similarity search: a thesis with no prior research is a thesis we
+haven't thought about yet, and capital shouldn't flow into something
+we haven't thought about. (See § decision: research-first capital
+allocation.)
+
+**Operator workflow on first thesis registration:**
+
+```bash
+praescientia-kb add-market <TICKER> --kb-root=./kb
+praescientia-kb add-thesis <ID> --description='...' --weights='{...}' --kb-root=./kb
+
+# Seed at least 2 commentary entries with actual research:
+praescientia-kb commentary write --thesis=<ID> --agent-model=human \
+  --body="Thesis framing: <why we think this market is mispriced>" \
+  --tags=thesis-framing --kb-root=./kb
+praescientia-kb commentary write --thesis=<ID> --agent-model=human \
+  --body="Domain notes: <base rate, ladder analysis, recent events>" \
+  --tags=domain-notes --kb-root=./kb
+
+# Index so similarity search returns them:
+python tools/indexer/index_commentary.py --kb-root=./kb --once
+```
+
+Only after that 4-command setup is the thesis ready for dispatch.
 
 ---
 

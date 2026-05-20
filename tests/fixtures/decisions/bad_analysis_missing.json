@@ -1,0 +1,8 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 5000,
+  "rationale": "Decision missing the required analysis block entirely.",
+  "commentary_body": "Should be rejected.",
+  "commentary_tags": ["fixture"],
+  "orders": []
+}

@@ -4,6 +4,17 @@
   "rationale": "Fading the lower rungs: ladder priced 25c implied, my view 18c.",
   "commentary_body": "Ladder is internally consistent; OKC favored; fading per the prior post-mortem on tight-game overpricing.",
   "commentary_tags": ["basketball", "fade", "sas-okc"],
+  "analysis": {
+    "manifest_understanding": "Spread-ladder thesis: betting against SAS winning the matchup at the lower rungs.",
+    "base_rate": "Sub-3pt favorite covering at home ~52% historically (kb commentary #abc1234).",
+    "event_ladder": "Five rungs (1.5/4.5/7.5/10.5/13.5) priced 30c/22c/13c/12c/9c — internally consistent monotonic decrease.",
+    "domain_state": "No starter changes noted; OKC line stable across sportsbooks past 6h.",
+    "commentary_review": "Prior thesis-framing #2cb660af warns thin-liquidity rungs over-price small margins.",
+    "multi_tick_observation": "Single observation this dispatch; rollup head 25c, no drift detected since last poll.",
+    "external_cross_ref": "FanDuel SAS spread implies similar 53% NO; market consensus aligned.",
+    "edge_thesis": "Buy YES at 28c when implied probability is ~25c — 3c gap, exact edge-gate threshold.",
+    "exit_thesis": "Exit if ladder re-prices >5c against entry or volume spikes opposing direction."
+  },
   "orders": [
     {"ticker": "KX-A", "side": "yes", "action": "buy", "size": 5, "limit_cents": 28, "reason": "below market mid"},
     {"ticker": "KX-B", "side": "no", "action": "buy", "size": 3, "limit_cents": 70, "reason": "hedge"}
