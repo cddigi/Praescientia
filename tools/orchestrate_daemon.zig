@@ -225,12 +225,14 @@ fn runDispatch(
     const r = try runCmd(ctx, av.items);
     if (r.exit != 0) {
         try logTickStep(ctx, n, max, 7, "claude exited non-zero");
+        try logSubprocessFailure(ctx, n, max, "claude", r);
         return error.DispatchFailed;
     }
     // Log a one-line summary; the full output is in claude's chain.
     const trimmed = std.mem.trim(u8, r.stdout, " \r\n\t");
     if (trimmed.len == 0) {
         try logTickStep(ctx, n, max, 7, "claude returned no stdout");
+        try logStderrTail(ctx, n, max, r.stderr, "claude (zero-stdout)");
     } else {
         const first = firstLine(trimmed);
         try logTickStep(ctx, n, max, 7, "claude dispatch complete; first line follows");
@@ -633,11 +635,14 @@ fn runDispatchTheses(
     const r = try runCmd(ctx, av.items);
     if (r.exit != 0) {
         try logTickStep(ctx, n, max, 7, "claude exited non-zero");
+        try logSubprocessFailure(ctx, n, max, "claude", r);
         return error.DispatchFailed;
     }
     const trimmed = std.mem.trim(u8, r.stdout, " \r\n\t");
     if (trimmed.len == 0) {
         try logTickStep(ctx, n, max, 7, "claude returned no stdout");
+        // Diagnostic: also tail stderr in case there's a clue.
+        try logStderrTail(ctx, n, max, r.stderr, "claude (zero-stdout)");
     } else {
         const first = firstLine(trimmed);
         try logTickStep(ctx, n, max, 7, "claude dispatch complete; first line follows");
@@ -648,6 +653,56 @@ fn runDispatchTheses(
         }
         try ctx.stdout.flush();
     }
+}
+
+/// Log the last ~2KB of a failing subprocess's stderr, plus the exit code.
+/// Critical diagnostic when claude exits non-zero — without this we're
+/// blind to why dispatches fail.
+fn logSubprocessFailure(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    cmd_label: []const u8,
+    r: RunResult,
+) !void {
+    const prefix = if (max) |m|
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}/{d}]", .{ n, m })
+    else
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}]", .{n});
+
+    try ctx.stderr.print("{s} {s} exit={d} stdout_bytes={d} stderr_bytes={d}\n", .{
+        prefix, cmd_label, r.exit, r.stdout.len, r.stderr.len,
+    });
+    // Tail stderr (last 2KB) so we see the actual error message.
+    const stderr_tail = if (r.stderr.len > 2048) r.stderr[r.stderr.len - 2048 ..] else r.stderr;
+    if (stderr_tail.len > 0) {
+        try ctx.stderr.print("{s} {s} stderr tail (last {d}B):\n", .{ prefix, cmd_label, stderr_tail.len });
+        try ctx.stderr.print("---8<---\n{s}\n--->8---\n", .{stderr_tail});
+    }
+    // Also tail stdout if non-empty (sometimes claude writes errors there too).
+    const stdout_tail = if (r.stdout.len > 1024) r.stdout[r.stdout.len - 1024 ..] else r.stdout;
+    if (stdout_tail.len > 0) {
+        try ctx.stderr.print("{s} {s} stdout tail (last {d}B):\n", .{ prefix, cmd_label, stdout_tail.len });
+        try ctx.stderr.print("---8<---\n{s}\n--->8---\n", .{stdout_tail});
+    }
+    try ctx.stderr.flush();
+}
+
+fn logStderrTail(
+    ctx: *common.Context,
+    n: u32,
+    max: ?u32,
+    stderr_bytes: []const u8,
+    label: []const u8,
+) !void {
+    if (stderr_bytes.len == 0) return;
+    const tail = if (stderr_bytes.len > 512) stderr_bytes[stderr_bytes.len - 512 ..] else stderr_bytes;
+    const prefix = if (max) |m|
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}/{d}]", .{ n, m })
+    else
+        try std.fmt.allocPrint(ctx.arena, "[tick {d}]", .{n});
+    try ctx.stderr.print("{s} {s} stderr tail:\n{s}\n", .{ prefix, label, tail });
+    try ctx.stderr.flush();
 }
 
 /// Main loop for --per-thesis-cadence mode.
