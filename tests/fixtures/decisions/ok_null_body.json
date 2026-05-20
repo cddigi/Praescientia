@@ -1,0 +1,19 @@
+{
+  "tick_id": "01KRZ12345678ABCDEFGHJKMNP",
+  "confidence_bp": 5000,
+  "rationale": "No-op hold; agent has no new analysis worth recording so commentary_body is null per the spec.",
+  "commentary_body": null,
+  "commentary_tags": [],
+  "analysis": {
+    "manifest_understanding": "Single-market thesis on KX-A; betting on outcome described in manifest.",
+    "base_rate": "No historical analog queried this dispatch.",
+    "event_ladder": "Single-market thesis.",
+    "domain_state": "No domain data available.",
+    "commentary_review": "Two neighbors cited inline; no post-mortem tags apply.",
+    "multi_tick_observation": "Single observation; no trend yet.",
+    "external_cross_ref": "No external reference identified.",
+    "edge_thesis": "no disagreement",
+    "exit_thesis": "Re-evaluate when reality_head delta exceeds confidence_delta_bp threshold."
+  },
+  "orders": []
+}
