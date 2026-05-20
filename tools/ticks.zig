@@ -25,6 +25,8 @@ pub fn main(init: std.process.Init) !u8 {
         .{ .name = "begin", .description = "Generate a tick_id and write its pre-state snapshot", .run = cmdBegin },
         .{ .name = "finish", .description = "Write the post-state snapshot for an in-progress tick", .run = cmdFinish },
         .{ .name = "validate", .description = "Validate a sub-agent decision file against a thesis manifest", .run = cmdValidate },
+        .{ .name = "validate-loss-reflection", .description = "Validate a loss-reflector response against schema caps + stoplist", .run = cmdValidateLossReflection },
+        .{ .name = "classify-resolution", .description = "Classify a settlement as win/loss given the held side", .run = cmdClassifyResolution },
         .{ .name = "status", .description = "Show the most recent ticks under kb/.ticks/", .run = cmdStatus },
         .{ .name = "rollback", .description = "Fork every pre-tick head as a 'pre-{tick_id}' branch for operator rollback", .run = cmdRollback },
     });
@@ -523,6 +525,141 @@ fn hexNibble(c: u8) !u8 {
 }
 
 // ---------------------------------------------------------------------------
+// validate-loss-reflection --decision=PATH
+// ---------------------------------------------------------------------------
+
+const LossReflectionDoc = struct {
+    tick_id: ?[]const u8 = null,
+    what_we_believed: []const u8 = "",
+    what_actually_happened: []const u8 = "",
+    why_we_were_wrong: []const u8 = "",
+    decision_pattern_to_avoid: []const u8 = "",
+    tags: []const []const u8 = &.{},
+};
+
+fn cmdValidateLossReflection(ctx: *common.Context) !u8 {
+    const decision_path = ctx.flagValue("--decision") orelse {
+        try ctx.stderr.print("validate-loss-reflection requires --decision=PATH\n", .{});
+        return 2;
+    };
+
+    const decision_json = try std.Io.Dir.cwd().readFileAlloc(ctx.io, decision_path, ctx.gpa, .unlimited);
+    defer ctx.gpa.free(decision_json);
+
+    var parsed = std.json.parseFromSlice(LossReflectionDoc, ctx.gpa, decision_json, .{
+        .ignore_unknown_fields = true,
+    }) catch |e| {
+        try ctx.stderr.print(
+            "{{\"ok\":false,\"reason\":\"LossReflectionSchemaInvalid\",\"detail\":\"{t}\"}}\n",
+            .{e},
+        );
+        return 1;
+    };
+    defer parsed.deinit();
+
+    return validateLossReflectionDoc(parsed.value, ctx.stdout, ctx.stderr);
+}
+
+/// Pure validation entry point. Returns 0 on `OK` (and prints `OK` to
+/// `out`), 1 on rejection (and prints a JSON envelope to `err`). Extracted
+/// so inline tests can drive it without a `common.Context`.
+pub fn validateLossReflectionDoc(
+    doc: LossReflectionDoc,
+    out: *std.Io.Writer,
+    err: *std.Io.Writer,
+) !u8 {
+    const reflection = ticks.LossReflection{
+        .what_we_believed = doc.what_we_believed,
+        .what_actually_happened = doc.what_actually_happened,
+        .why_we_were_wrong = doc.why_we_were_wrong,
+        .decision_pattern_to_avoid = doc.decision_pattern_to_avoid,
+        .tags = doc.tags,
+    };
+
+    ticks.validateLossReflection(reflection) catch |e| {
+        const reason = @errorName(e);
+        try err.print(
+            "{{\"ok\":false,\"reason\":\"{s}\"}}\n",
+            .{reason},
+        );
+        return 1;
+    };
+
+    try out.print("OK\n", .{});
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// classify-resolution --settlement=PATH
+// ---------------------------------------------------------------------------
+
+const SettlementDoc = struct {
+    ticker: []const u8 = "",
+    resolved_yes: bool,
+    resolution_ts_ms: i64 = 0,
+    our_held_side: []const u8, // "yes" or "no"
+    our_contracts: u32 = 0,
+    realized_pnl_cents: i64 = 0,
+};
+
+fn cmdClassifyResolution(ctx: *common.Context) !u8 {
+    const settlement_path = ctx.flagValue("--settlement") orelse {
+        try ctx.stderr.print("classify-resolution requires --settlement=PATH\n", .{});
+        return 2;
+    };
+
+    const settlement_json = try std.Io.Dir.cwd().readFileAlloc(ctx.io, settlement_path, ctx.gpa, .unlimited);
+    defer ctx.gpa.free(settlement_json);
+
+    var parsed = std.json.parseFromSlice(SettlementDoc, ctx.gpa, settlement_json, .{
+        .ignore_unknown_fields = true,
+    }) catch |e| {
+        try ctx.stderr.print(
+            "{{\"ok\":false,\"reason\":\"SettlementSchemaInvalid\",\"detail\":\"{t}\"}}\n",
+            .{e},
+        );
+        return 1;
+    };
+    defer parsed.deinit();
+
+    return classifyResolutionDoc(parsed.value, ctx.stdout, ctx.stderr);
+}
+
+/// Pure classification entry point. Maps the doc's `our_held_side` string
+/// to the typed `ticks.Side`, calls `ticks.classifyResolution`, and prints
+/// `"win"` or `"loss"` to `out`. Returns 1 on schema rejection.
+pub fn classifyResolutionDoc(
+    doc: SettlementDoc,
+    out: *std.Io.Writer,
+    err: *std.Io.Writer,
+) !u8 {
+    const side: ticks.Side = blk: {
+        if (std.mem.eql(u8, doc.our_held_side, "yes")) break :blk .yes;
+        if (std.mem.eql(u8, doc.our_held_side, "no")) break :blk .no;
+        try err.print(
+            "{{\"ok\":false,\"reason\":\"InvalidHeldSide\",\"got\":\"{s}\"}}\n",
+            .{doc.our_held_side},
+        );
+        return 1;
+    };
+
+    const settlement = ticks.Settlement{
+        .ticker = doc.ticker,
+        .resolved_yes = doc.resolved_yes,
+        .resolution_ts_ms = doc.resolution_ts_ms,
+        .our_held_side = side,
+        .our_contracts = doc.our_contracts,
+        .realized_pnl_cents = doc.realized_pnl_cents,
+    };
+
+    switch (ticks.classifyResolution(settlement)) {
+        .win => try out.print("win\n", .{}),
+        .loss => try out.print("loss\n", .{}),
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 
 fn missing(ctx: *common.Context, usage: []const u8) !u8 {
     try ctx.stderr.print("usage: praescientia-ticks {s}\n", .{usage});
@@ -711,4 +848,102 @@ test "runSnapshot writes canonical-JSON entries to disk" {
     defer std.testing.allocator.free(read_back);
     try std.testing.expect(std.mem.startsWith(u8, read_back, "{\"entries\":["));
     try std.testing.expect(std.mem.endsWith(u8, read_back, "]}"));
+}
+
+// --- validate-loss-reflection tests against tests/fixtures/loss_reflections/ ---
+
+fn validateLossReflectionFixture(fixture_name: []const u8) !u8 {
+    const io = std.testing.io;
+    var path_buf: [256]u8 = undefined;
+    const fixture_path = try std.fmt.bufPrint(&path_buf, "tests/fixtures/loss_reflections/{s}", .{fixture_name});
+    const json = try std.Io.Dir.cwd().readFileAlloc(io, fixture_path, std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice(LossReflectionDoc, std.testing.allocator, json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err.deinit();
+
+    return validateLossReflectionDoc(parsed.value, &out.writer, &err.writer);
+}
+
+test "validate-loss-reflection accepts a specific diagnostic (ok.json)" {
+    const exit = try validateLossReflectionFixture("ok.json");
+    try std.testing.expectEqual(@as(u8, 0), exit);
+}
+
+test "validate-loss-reflection rejects over-length fields (bad_cap.json)" {
+    const exit = try validateLossReflectionFixture("bad_cap.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+test "validate-loss-reflection rejects stoplisted phrases (stoplist.json)" {
+    const exit = try validateLossReflectionFixture("stoplist.json");
+    try std.testing.expectEqual(@as(u8, 1), exit);
+}
+
+// --- classify-resolution tests against tests/fixtures/settlements/ ---
+
+fn classifyResolutionFixture(fixture_name: []const u8) ![]u8 {
+    const io = std.testing.io;
+    var path_buf: [256]u8 = undefined;
+    const fixture_path = try std.fmt.bufPrint(&path_buf, "tests/fixtures/settlements/{s}", .{fixture_name});
+    const json = try std.Io.Dir.cwd().readFileAlloc(io, fixture_path, std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice(SettlementDoc, std.testing.allocator, json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err.deinit();
+
+    const exit = try classifyResolutionDoc(parsed.value, &out.writer, &err.writer);
+    try std.testing.expectEqual(@as(u8, 0), exit);
+    return std.testing.allocator.dupe(u8, std.mem.trim(u8, out.written(), "\n"));
+}
+
+test "classify-resolution: held yes + resolved yes -> 'win' (win_yes.json)" {
+    const verdict = try classifyResolutionFixture("win_yes.json");
+    defer std.testing.allocator.free(verdict);
+    try std.testing.expectEqualStrings("win", verdict);
+}
+
+test "classify-resolution: held no + resolved no -> 'win' (win_no.json)" {
+    const verdict = try classifyResolutionFixture("win_no.json");
+    defer std.testing.allocator.free(verdict);
+    try std.testing.expectEqualStrings("win", verdict);
+}
+
+test "classify-resolution: held no + resolved yes -> 'loss' (loss_no_holding.json)" {
+    const verdict = try classifyResolutionFixture("loss_no_holding.json");
+    defer std.testing.allocator.free(verdict);
+    try std.testing.expectEqualStrings("loss", verdict);
+}
+
+test "classify-resolution rejects invalid held_side value" {
+    const doc = SettlementDoc{
+        .ticker = "KX-X",
+        .resolved_yes = true,
+        .resolution_ts_ms = 0,
+        .our_held_side = "maybe", // not yes/no
+        .our_contracts = 1,
+        .realized_pnl_cents = 0,
+    };
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    var err: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer err.deinit();
+
+    const exit = try classifyResolutionDoc(doc, &out.writer, &err.writer);
+    try std.testing.expectEqual(@as(u8, 1), exit);
+    try std.testing.expect(std.mem.indexOf(u8, err.written(), "InvalidHeldSide") != null);
 }

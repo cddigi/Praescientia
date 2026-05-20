@@ -189,87 +189,179 @@ chains (or none, if Kalshi reported no changes since last poll).
 
 ---
 
-## Step 5 — settle and reflect (depends on Stage 8 wiring)
+## Step 5 — settle and reflect
 
-### CLI
+The §8 asymmetry lives here: wins log one line, losses dispatch a
+post-mortem sub-agent whose output writes commentary into **two**
+scopes (the responsible thesis + the resolved market). A failed
+reflection leaves the cursor unchanged so the next tick retries.
+
+### 5.a Fetch new settlements
 
 ```bash
 praescientia-portfolio settlements \
   --kb-root="${KB}" --demo \
-  --since-cursor="${KB}/.ticks/.last_settlement.json" \
+  --since-cursor-file="${KB}/.ticks/.last_settlement.json" \
   > "/tmp/settlements_${TICK_ID}.json"
 ```
 
-Then for each settlement entry:
+The cursor file shape (read at step 5.a, written at the end of step 5):
 
-```bash
-python3 - <<'PY' < "/tmp/settlements_${TICK_ID}.json"
-# (Stage 8 helper) — read settlements, classify win/loss per held side,
-# emit:
-#   wins  → append one-line JSON to events.jsonl
-#   losses → emit one dispatch payload per loss to /tmp/loss_inputs/<ticker>.json
-PY
+```json
+{"cursor": "<kalshi-cursor-string>", "as_of_ts_ms": 1779300000000}
 ```
 
-For each `/tmp/loss_inputs/<ticker>.json`:
+If `praescientia-portfolio settlements` is not yet wired in your build
+(it lands alongside Kalshi's settlement endpoint), log
+`{"kind":"step_5_unavailable","ts":...}` and proceed to step 6. The
+classifier and validator below stand alone — the only missing piece is
+the upstream feed.
+
+### 5.b Classify each settlement
+
+For each `settlement` JSON object in the fetched array, write it to a
+temp file and call:
+
+```bash
+VERDICT=$(praescientia-ticks classify-resolution \
+  --settlement="/tmp/settlement_${TICK_ID}_${IDX}.json")
+```
+
+The CLI prints `win` or `loss` on stdout. It rejects with exit 1 if
+the held side isn't `"yes"` or `"no"` (treat as a data error and skip
+that settlement).
+
+**Skip silently** if `our_contracts == 0` — we had no position; the
+classifier output is meaningless. The orchestrator filters these
+before invoking the CLI.
+
+### 5.c Win path (asymmetric — log only)
+
+```bash
+echo "{\"kind\":\"win\",\"ticker\":\"${TICKER}\",\"contracts\":${N},\"realized_pnl_cents\":${PNL},\"ts\":$(date +%s%3N)}" \
+  >> "${KB}/.ticks/${TICK_ID}.events.jsonl"
+```
+
+No chain writes. Cursor advances unconditionally for wins.
+
+### 5.d Loss path — mandatory reflection
+
+For each loss, build the loss-reflector input prompt by assembling
+(from chain reads):
+
+- `tick_id`, `thesis` manifest, `market_resolution` (the settlement
+  shape from 5.b)
+- `prediction_history` — full thesis prediction chain
+- `market_reality_chain` — every reality entry on the resolved ticker
+- `commentary_neighbors` — top-8 from similarity search anchored on
+  the thesis's latest commentary head
+
+Write the assembled input to `/tmp/loss_input_${TICK_ID}_${TICKER}.json`,
+then dispatch:
 
 ```
 Agent({
   subagent_type: "praescientia-loss-reflector",
-  prompt: <file contents>,
-  description: "post-mortem for <ticker>"
+  prompt: <contents of /tmp/loss_input_${TICK_ID}_${TICKER}.json>,
+  description: "post-mortem for ${TICKER}"
 })
 ```
 
-Parse each loss-reflector response through the **same** fence-stripping
-pipeline used in step 8 (see below). Validate via:
+Parse the response through the **same** prose-stripping pipeline as
+step 8.a (greedy outer-`{}` extractor). Validate via:
 
 ```bash
-praescientia-ticks validate-loss-reflection --decision="/tmp/loss_out.json"
-# (Stage 8 follow-up: this subcommand wraps validateLossReflection)
+praescientia-ticks validate-loss-reflection \
+  --decision="/tmp/loss_out_${TICKER}.json"
 ```
 
-On valid output, write commentary entries to **both** scopes:
+Exit 0 = accepted. Exit 1 = a JSON `{"ok":false,"reason":"..."}`
+envelope on stderr. Rejection reasons map directly to
+`LossReflectionError` variants in `src/kb/ticks.zig`:
+`EmptyField`, `WhatWeBelievedTooLong`, `WhatActuallyHappenedTooLong`,
+`WhyWeWereWrongTooLong`, `DecisionPatternTooLong`, `GenericPhrase`.
+
+On rejection: log `{"kind":"loss_reflection_rejected","ticker":"...","reason":"...","ts":...}`
+and **do not advance the cursor**. The settlement queues for the next
+tick.
+
+### 5.e Idempotency — skip already-reflected settlements
+
+Before dispatching the loss-reflector, check whether a commentary
+entry already exists in the responsible thesis's chain whose
+`references` list contains the resolution hash:
 
 ```bash
-praescientia-kb commentary write \
+RESOLUTION_HASH=$(jq -r '.resolution_hash' "/tmp/settlement_${TICK_ID}_${IDX}.json")
+ALREADY=$(praescientia-kb commentary list \
+  --thesis="${THESIS_ID}" \
   --kb-root="${KB}" \
-  --scope="theses/<thesis_id>/commentary" \
-  --body-file="/tmp/loss_commentary.md" \
-  --tags="post-mortem,loss,<emitted-tags>"
-
-praescientia-kb commentary write \
-  --kb-root="${KB}" \
-  --scope="markets/<TICKER>/commentary" \
-  --body-file="/tmp/loss_commentary.md" \
-  --tags="post-mortem,loss,<emitted-tags>"
+  --references-include="${RESOLUTION_HASH}" 2>/dev/null | wc -l)
+if [ "${ALREADY}" -gt 0 ]; then
+  echo "{\"kind\":\"loss_reflection_skipped\",\"reason\":\"already_reflected\",\"ts\":$(date +%s%3N)}" \
+    >> "${KB}/.ticks/${TICK_ID}.events.jsonl"
+  continue
+fi
 ```
 
-Advance the cursor (`.last_settlement.json`) **only after both writes
-succeed**. A failed reflection leaves the cursor unchanged and the
-next tick retries.
+(The `--references-include` filter is a Stage 9 follow-up if not yet
+wired. Until then, the cursor advancement after a successful write
+provides the dedup floor — re-running a settlement that already
+advanced the cursor is a no-op.)
 
-### Success
+### 5.f Write commentary into both scopes
 
-All settlements processed. Wins logged, losses written to both scopes,
-cursor advanced.
+On accepted reflection, write to **both** the responsible thesis and
+the resolved market. Failure to write either rolls back: the cursor
+stays put and the next tick retries.
 
-### Failure
+```bash
+jq -r '.why_we_were_wrong + "\n\n" + .decision_pattern_to_avoid' \
+  "/tmp/loss_out_${TICKER}.json" > "/tmp/loss_commentary_${TICKER}.md"
 
-- **Loss-reflector emits invalid JSON or stoplist-rejected
-  `why_we_were_wrong`**: skip this settlement (cursor does NOT
-  advance), log `{"kind":"loss_reflection_rejected","step":5,...}`,
-  continue. Next tick retries.
-- **Commentary write fails**: same — cursor stays, retry next tick.
+TAGS_FROM_AGENT="$(jq -r '.tags | join(",")' "/tmp/loss_out_${TICKER}.json")"
+FULL_TAGS="post-mortem,loss,${TAGS_FROM_AGENT},tick:${TICK_ID}"
 
-### Stage 8 dependency
+praescientia-kb commentary write \
+  --kb-root="${KB}" \
+  --thesis="${THESIS_ID}" \
+  --agent-model=loss-reflector \
+  --body-file="/tmp/loss_commentary_${TICKER}.md" \
+  --tags="${FULL_TAGS}" || {
+    echo "{\"kind\":\"loss_commentary_write_failed\",\"scope\":\"thesis\",\"ts\":...}" \
+      >> "${KB}/.ticks/${TICK_ID}.events.jsonl"
+    continue
+}
 
-This step's full behavior depends on Stage 8 (settlement classifier +
-`validate-loss-reflection` CLI subcommand). Until Stage 8 lands,
-`praescientia-portfolio settlements` may not exist as a CLI; the
-orchestrator should log `{"kind":"step_5_stub","ts":...}` and proceed
-to step 6 instead of crashing. The step body is documented here so
-operators reading top-to-bottom see the full intended flow.
+praescientia-kb commentary write \
+  --kb-root="${KB}" \
+  --market="${TICKER}" \
+  --agent-model=loss-reflector \
+  --body-file="/tmp/loss_commentary_${TICKER}.md" \
+  --tags="${FULL_TAGS}" || {
+    echo "{\"kind\":\"loss_commentary_write_failed\",\"scope\":\"market\",\"ts\":...}" \
+      >> "${KB}/.ticks/${TICK_ID}.events.jsonl"
+    continue
+}
+```
+
+The orchestrator stamps `post-mortem` and `loss` tags automatically;
+the agent contributes the specific failure-mode tags.
+
+### 5.g Advance cursor
+
+Only after **every** settlement in the batch has been classified and —
+for losses — successfully reflected and written to both scopes:
+
+```bash
+NEW_CURSOR=$(jq -r '.next_cursor' "/tmp/settlements_${TICK_ID}.json")
+echo "{\"cursor\":\"${NEW_CURSOR}\",\"as_of_ts_ms\":$(date +%s%3N)}" \
+  > "${KB}/.ticks/.last_settlement.json"
+```
+
+Partial-batch failure leaves the cursor at the prior value so the
+unfinished settlements re-enter the pipeline on the next tick. The
+classifier and validator are pure; re-running is cheap.
 
 ---
 
