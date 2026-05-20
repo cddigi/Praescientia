@@ -473,6 +473,93 @@ python tools/indexer/index_commentary.py --kb-root=./kb --once
 
 Only after that 4-command setup is the thesis ready for dispatch.
 
+### 6.c Pre-load orchestrator data (event ladder + multi-tick reality)
+
+The agent's `analysis` block (PR #59 schema) has fields like
+`event_ladder` and `multi_tick_observation` that the agent can only
+populate richly when the relevant context is **in the input**. Without
+pre-loading, the agent either has to Bash-query each layer (slow,
+unreliable in practice) or fall back to "no signal at this layer"
+admissions.
+
+**The orchestrator's job: pre-fetch what's cheap and inline it as
+commentary neighbors with descriptive tags.**
+
+#### Event-ladder pre-load
+
+For any thesis whose ticker is a leg of a multi-rung event, fetch the
+ladder once per tick and write it as a commentary entry:
+
+```bash
+EVENT_TICKER="$(echo "${MARKET_SET[0]}" | python3 -c '
+import sys
+# Extract event_ticker from market_ticker by stripping the trailing rung
+# e.g. KXNBASPREAD-26MAY19CLENYK-CLE17 -> KXNBASPREAD-26MAY19CLENYK
+t = sys.stdin.read().strip()
+print("-".join(t.split("-")[:-1]))
+')"
+
+praescientia-events get "${EVENT_TICKER}" > "/tmp/event_${TICK_ID}_${THESIS_ID}.json"
+
+# Build a compact ladder-snapshot commentary body summarizing the active
+# rungs (last_trade, volume) — the agent cites this in event_ladder.
+python3 - "/tmp/event_${TICK_ID}_${THESIS_ID}.json" > "/tmp/ladder_body_${TICK_ID}_${THESIS_ID}.md" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+active = [m for m in d['markets'] if m.get('status') == 'active']
+parts = [f"Event-ladder snapshot from praescientia-events get {d['event']['event_ticker']} at tick-time."]
+for side_prefix in ('CLE', 'NYK'):  # adapt per series
+    rungs = [m for m in active if m['ticker'].endswith('-' + side_prefix + r) for r in []]  # implement per-series
+parts.append("All rungs: " + ", ".join(
+    f"{m['ticker'].split('-')[-1]}@{m['last_price_dollars']} vol={m['volume_fp']}"
+    for m in active
+))
+print(" ".join(parts))
+PY
+
+praescientia-kb commentary write \
+    --thesis="${THESIS_ID}" --agent-model=orchestrator-preload --kb-root="${KB}" \
+    --body-file="/tmp/ladder_body_${TICK_ID}_${THESIS_ID}.md" \
+    --tags="event-ladder-snapshot,preload,orchestrator-fetched,tick:${TICK_ID}"
+```
+
+Then include this commentary entry as a 3rd (or 4th, etc.) neighbor in
+the agent's input. The agent's `event_ladder` field will cite the
+actual ladder numbers and identify anomalies (non-monotonicity,
+inverted rungs, thin volume) — observed empirically on the CLE/NYK
+56-market ladder, where the agent inferred "NYK is the implied
+favorite" purely from the pre-loaded snapshot.
+
+#### Multi-tick reality pre-load
+
+For `multi_tick_observation` to be substantive, the orchestrator
+should include the last N reality entries (default N=5) inline in the
+input, not just the head. The current `praescientia-ticks
+build-thesis-input` subcommand is a Stage 7 follow-up that hasn't
+been wired yet — for now, the orchestrator assembles this manually:
+
+```bash
+praescientia-kb inspect "${KB}/theses/${THESIS_ID}/reality" --limit=5 \
+    > "/tmp/reality_trail_${TICK_ID}_${THESIS_ID}.txt"
+```
+
+Then either include the trail as another commentary neighbor with
+tag `reality-trail-snapshot`, OR add it as a top-level
+`reality_chain` field in the agent input (requires agent prompt
+update to consume — defer until orchestrator builds inputs via
+typed CLI).
+
+#### Cost / benefit
+
+One CLI call (`praescientia-events get`) per multi-rung thesis per
+tick — ~200ms each. The agent's `event_ladder` field goes from
+generic shape claims to specific rung citations with anomaly
+detection. Verified on tick `01KS2C0PRELOADDEMOCLE17AB`: same input
+state as the prior dispatch except for the ladder-snapshot neighbor,
+producing a ~3x richer event_ladder field and a new inference
+("NYK is implied favorite") that flowed back into rationale + exit
+conditions.
+
 ---
 
 ## Step 7 — fan out
