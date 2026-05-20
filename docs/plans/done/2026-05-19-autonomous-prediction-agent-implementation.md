@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Ship the orchestrator-and-sub-agent stack described in `docs/plans/2026-05-19-autonomous-prediction-agent-design.md`. Each tick: poll, settle, fan out to per-thesis Haiku sub-agents under an Opus orchestrator session, validate, persist, place demo orders, snapshot. Losses trigger post-mortem sub-agents whose output flows back into commentary.
+**Goal:** Ship the orchestrator-and-sub-agent stack described in `docs/plans/done/2026-05-19-autonomous-prediction-agent-design.md`. Each tick: poll, settle, fan out to per-thesis Haiku sub-agents under an Opus orchestrator session, validate, persist, place demo orders, snapshot. Losses trigger post-mortem sub-agents whose output flows back into commentary.
 
 **Architecture:** New Zig module `src/kb/ticks.zig` (tick primitives, validation, clamps). New `tools/ticks.zig` CLI (`praescientia-ticks snapshot|begin|finish|validate|status|rollback`). Two new Claude Code sub-agents at `.claude/agents/`. One new slash-command skill at `.claude/skills/praescientia-orchestrate/`. End-to-end smoke at `scripts/orchestrator_smoke.sh` using a mock sub-agent.
 
