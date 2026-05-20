@@ -601,6 +601,45 @@ pub fn validateLossReflection(r: LossReflection) LossReflectionError!void {
 }
 
 // ---------------------------------------------------------------------------
+// Settlement classification (Stage 8)
+// ---------------------------------------------------------------------------
+
+/// Resolution outcome from the perspective of a held position. The §8
+/// asymmetry rides on this enum: `Win` triggers a single event-log line and
+/// no chain writes; `Loss` triggers a mandatory loss-reflector dispatch and
+/// blocks the settlement cursor from advancing until reflection persists.
+pub const Outcome = enum { win, loss };
+
+/// One settled position the orchestrator observed via
+/// `praescientia-portfolio settlements`. The orchestrator's step-5 loop
+/// consumes this shape, classifies via `classifyResolution`, and either
+/// logs (win) or dispatches the loss-reflector (loss). `our_contracts`
+/// and `realized_pnl_cents` are only needed for downstream logging; the
+/// classifier itself depends solely on `our_held_side` and `resolved_yes`.
+pub const Settlement = struct {
+    ticker: []const u8,
+    resolved_yes: bool,
+    resolution_ts_ms: i64,
+    our_held_side: Side,
+    our_contracts: u32 = 0,
+    realized_pnl_cents: i64 = 0,
+};
+
+/// Classify a settlement against the side we held. Pure function; no I/O.
+/// `our_held_side == .yes && resolved_yes` is a win; `our_held_side == .no
+/// && !resolved_yes` is also a win. Anything else is a loss.
+///
+/// The orchestrator-side caller is responsible for filtering out
+/// `our_contracts == 0` settlements (we have no position; classification
+/// is meaningless). See the design doc §8 ("no-position-held edge case
+/// skip silently").
+pub fn classifyResolution(s: Settlement) Outcome {
+    const we_picked_yes = s.our_held_side == .yes;
+    if (we_picked_yes == s.resolved_yes) return .win;
+    return .loss;
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1125,4 +1164,78 @@ test "validateLossReflection stoplist match is case-insensitive" {
     var r = validReflection();
     r.why_we_were_wrong = "THE MARKET MOVED in ways we could not have predicted.";
     try std.testing.expectError(LossReflectionError.GenericPhrase, validateLossReflection(r));
+}
+
+// --- classifyResolution tests ---
+
+test "classifyResolution: held yes, resolved yes -> win" {
+    const s = Settlement{
+        .ticker = "KX-A",
+        .resolved_yes = true,
+        .resolution_ts_ms = 1_700_000_000_000,
+        .our_held_side = .yes,
+        .our_contracts = 5,
+        .realized_pnl_cents = 250,
+    };
+    try std.testing.expectEqual(Outcome.win, classifyResolution(s));
+}
+
+test "classifyResolution: held no, resolved no -> win" {
+    const s = Settlement{
+        .ticker = "KX-A",
+        .resolved_yes = false,
+        .resolution_ts_ms = 1_700_000_000_000,
+        .our_held_side = .no,
+        .our_contracts = 5,
+        .realized_pnl_cents = 250,
+    };
+    try std.testing.expectEqual(Outcome.win, classifyResolution(s));
+}
+
+test "classifyResolution: held yes, resolved no -> loss" {
+    const s = Settlement{
+        .ticker = "KX-A",
+        .resolved_yes = false,
+        .resolution_ts_ms = 1_700_000_000_000,
+        .our_held_side = .yes,
+        .our_contracts = 5,
+        .realized_pnl_cents = -250,
+    };
+    try std.testing.expectEqual(Outcome.loss, classifyResolution(s));
+}
+
+test "classifyResolution: held no, resolved yes -> loss" {
+    const s = Settlement{
+        .ticker = "KX-A",
+        .resolved_yes = true,
+        .resolution_ts_ms = 1_700_000_000_000,
+        .our_held_side = .no,
+        .our_contracts = 5,
+        .realized_pnl_cents = -250,
+    };
+    try std.testing.expectEqual(Outcome.loss, classifyResolution(s));
+}
+
+test "classifyResolution ignores pnl + contracts + ticker" {
+    // The classifier depends only on (held_side, resolved_yes). Different
+    // values in other fields must not change the outcome.
+    const win_s = Settlement{
+        .ticker = "",
+        .resolved_yes = true,
+        .resolution_ts_ms = 0,
+        .our_held_side = .yes,
+        .our_contracts = 0,
+        .realized_pnl_cents = std.math.minInt(i64),
+    };
+    try std.testing.expectEqual(Outcome.win, classifyResolution(win_s));
+
+    const loss_s = Settlement{
+        .ticker = "",
+        .resolved_yes = true,
+        .resolution_ts_ms = 0,
+        .our_held_side = .no,
+        .our_contracts = std.math.maxInt(u32),
+        .realized_pnl_cents = std.math.maxInt(i64),
+    };
+    try std.testing.expectEqual(Outcome.loss, classifyResolution(loss_s));
 }

@@ -1,0 +1,8 @@
+{
+  "tick_id": "01XYZRESOLUTIONTICKABC123",
+  "what_we_believed": "1800bp confidence (18% NO) held flat from ts 1779166607 through 1779240000 despite volume arrival.",
+  "what_actually_happened": "yes_bid fell to 22c with 1200 volume at ts 1779210000; resolved YES at 95c. We lost 150c on 5 NO contracts.",
+  "why_we_were_wrong": "We treated the 1200-volume event at 22c as 'quote-maker recalibration' instead of a real probability update. The illiquidity-cap framing our prior commentary relied on stopped applying the moment real volume showed up.",
+  "decision_pattern_to_avoid": "When a thesis predicates an edge on a market condition (thin liquidity, tight spread), force a re-evaluation as soon as that condition demonstrably changes.",
+  "tags": ["illiquidity-edge-invalidation", "ignored-volume-signal"]
+}

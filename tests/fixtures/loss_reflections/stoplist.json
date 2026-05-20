@@ -1,0 +1,8 @@
+{
+  "tick_id": "01XYZRESOLUTIONTICKABC123",
+  "what_we_believed": "1800bp NO confidence on the spread ladder.",
+  "what_actually_happened": "Resolved YES; we lost 150c.",
+  "why_we_were_wrong": "The market moved against us in ways we could not predict.",
+  "decision_pattern_to_avoid": "Avoid this thesis next time.",
+  "tags": ["outcome-naming"]
+}
