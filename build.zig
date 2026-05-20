@@ -61,6 +61,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "praescientia-poll-markets", .src = "tools/poll_markets.zig", .step = "run-poll-markets" },
         .{ .name = "praescientia-ticks", .src = "tools/ticks.zig", .step = "run-ticks" },
         .{ .name = "praescientia-orchestrate-daemon", .src = "tools/orchestrate_daemon.zig", .step = "run-orchestrate-daemon" },
+        .{ .name = "praescientia-screener", .src = "tools/screener.zig", .step = "run-screener" },
     };
     for (stage4_tools) |t| {
         const exe = addToolReturn(b, target, optimize, praescientia, tool_common, t.name, t.src, t.step, "Stage 4 CLI");
@@ -145,6 +146,22 @@ pub fn build(b: *std.Build) void {
     const markets_tests = b.addTest(.{ .root_module = markets_test_mod });
     const run_markets_tests = b.addRunArtifact(markets_tests);
     test_step.dependOn(&run_markets_tests.step);
+
+    // tools/screener.zig has inline helper tests for the `validate` /
+    // `apply` subcommands of the market-screener CLI.
+    const screener_test_mod = b.createModule(.{
+        .root_source_file = b.path("tools/screener.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+            .{ .name = "common", .module = tool_common },
+        },
+    });
+    const screener_tests = b.addTest(.{ .root_module = screener_test_mod });
+    const run_screener_tests = b.addRunArtifact(screener_tests);
+    test_step.dependOn(&run_screener_tests.step);
 
     test_step.dependOn(smoke_step);
 }
