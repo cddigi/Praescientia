@@ -33,6 +33,7 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/zig-out/bin"
 MOCK="$ROOT/tests/fixtures/mock_thesis_analyst.sh"
+LOSS_MOCK="$ROOT/tests/fixtures/mock_loss_reflector.sh"
 
 # --- Prerequisite checks ----------------------------------------------------
 
@@ -52,6 +53,10 @@ if [ ! -x "$MOCK" ]; then
     echo "FAIL: $MOCK missing or not executable" >&2
     exit 2
 fi
+if [ ! -x "$LOSS_MOCK" ]; then
+    echo "FAIL: $LOSS_MOCK missing or not executable" >&2
+    exit 2
+fi
 
 # --- Setup ------------------------------------------------------------------
 
@@ -67,6 +72,10 @@ trap cleanup EXIT
 
 step() { echo "==> $1"; }
 fail() { echo "FAIL: $1" >&2; exit 1; }
+
+# Portable millisecond timestamp — `date +%s%3N` doesn't work on macOS
+# (BSD date treats %3N as literal "3N"), so route through Python.
+now_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
 
 # --- Step 0 — bootstrap kb + assert sentinel paths --------------------------
 
@@ -106,8 +115,60 @@ echo "{\"kind\":\"tick_begin\",\"step\":1,\"tick_id\":\"${TICK_ID}\",\"ts\":$(da
 step "4/12 poll reality (skipped in smoke)"
 echo "{\"kind\":\"poll_skipped\",\"step\":4,\"ts\":$(date +%s)}" >> "$EVENTS"
 
-step "5/12 settle (no positions held in smoke)"
-echo "{\"kind\":\"step_5_stub\",\"step\":5,\"ts\":$(date +%s)}" >> "$EVENTS"
+step "5a/12 settle — synthesize a loss settlement (mock Kalshi feed)"
+SETTLEMENT="$TMPROOT/settlement.json"
+cat > "$SETTLEMENT" <<EOF
+{"ticker":"$TICKER","resolved_yes":true,"resolution_ts_ms":$(now_ms),"our_held_side":"no","our_contracts":5,"realized_pnl_cents":-150}
+EOF
+
+step "5b/12 classify-resolution"
+VERDICT=$("$BIN/praescientia-ticks" classify-resolution --settlement="$SETTLEMENT")
+if [ "$VERDICT" != "loss" ]; then fail "expected verdict=loss, got '$VERDICT'"; fi
+echo "    verdict=$VERDICT"
+
+step "5d/12 dispatch mock loss-reflector + prose-strip"
+LOSS_RAW=$("$LOSS_MOCK" "$TICK_ID" "$THESIS_ID" "$TICKER")
+LOSS_OUT="$TMPROOT/loss_out.json"
+python3 - <<'PY' "$LOSS_RAW" > "$LOSS_OUT"
+import sys, re, json
+raw = sys.argv[1]
+m = re.search(r'\{.*\}', raw, re.DOTALL)
+print(json.dumps(json.loads(m.group(0))) if m else json.dumps({"error":"no_json"}))
+PY
+if jq -e '.error' "$LOSS_OUT" >/dev/null 2>&1; then fail "loss-reflector strip failed"; fi
+
+step "5e/12 validate-loss-reflection"
+if ! "$BIN/praescientia-ticks" validate-loss-reflection --decision="$LOSS_OUT" >/dev/null 2>&1; then
+    fail "validate-loss-reflection rejected mock output (it should be valid)"
+fi
+
+step "5f/12 write loss commentary to thesis scope"
+LOSS_BODY="$TMPROOT/loss_body.md"
+jq -r '.why_we_were_wrong + "\n\n" + .decision_pattern_to_avoid' "$LOSS_OUT" > "$LOSS_BODY"
+LOSS_TAGS_FROM_AGENT="$(jq -r '.tags | join(",")' "$LOSS_OUT")"
+LOSS_FULL_TAGS="post-mortem,loss,${LOSS_TAGS_FROM_AGENT},tick:${TICK_ID}"
+THESIS_LOSS_HASH=$("$BIN/praescientia-kb" commentary write \
+    --thesis="$THESIS_ID" \
+    --agent-model=loss-reflector \
+    --body-file="$LOSS_BODY" \
+    --tags="$LOSS_FULL_TAGS" \
+    --kb-root="$KB" | jq -r .hash)
+if [ -z "$THESIS_LOSS_HASH" ] || [ "$THESIS_LOSS_HASH" = "null" ]; then fail "thesis-scope loss commentary returned no hash"; fi
+
+step "5f/12 write loss commentary to market scope"
+MARKET_LOSS_HASH=$("$BIN/praescientia-kb" commentary write \
+    --market="$TICKER" \
+    --agent-model=loss-reflector \
+    --body-file="$LOSS_BODY" \
+    --tags="$LOSS_FULL_TAGS" \
+    --kb-root="$KB" | jq -r .hash)
+if [ -z "$MARKET_LOSS_HASH" ] || [ "$MARKET_LOSS_HASH" = "null" ]; then fail "market-scope loss commentary returned no hash"; fi
+echo "    thesis_loss=${THESIS_LOSS_HASH:0:12} market_loss=${MARKET_LOSS_HASH:0:12}"
+
+echo "{\"kind\":\"loss_reflected\",\"step\":5,\"ticker\":\"${TICKER}\",\"thesis_hash\":\"${THESIS_LOSS_HASH}\",\"market_hash\":\"${MARKET_LOSS_HASH}\",\"ts\":$(date +%s)}" >> "$EVENTS"
+
+step "5g/12 advance cursor (synthetic — no real Kalshi pagination)"
+echo "{\"cursor\":\"smoke-${TICK_ID}\",\"as_of_ts_ms\":$(now_ms)}" > "$KB/.ticks/.last_settlement.json"
 
 # --- Step 6-7 — build input + fan out (run the mock) ------------------------
 
@@ -236,11 +297,33 @@ fi
 # --- Event log assertions ---------------------------------------------------
 
 step "events.jsonl assertions"
-for kind in tick_begin commentary_written prediction_written dry_run_order; do
+for kind in tick_begin commentary_written prediction_written dry_run_order loss_reflected; do
     if ! grep -q "\"kind\":\"${kind}\"" "$EVENTS"; then
         fail "events.jsonl missing line of kind=${kind}"
     fi
 done
+
+step "dry_run_order schema check"
+# Verify the dry-run line has the expected fields per tick.md § step 9.c.
+DRY_LINE=$(grep '"kind":"dry_run_order"' "$EVENTS" | head -1)
+for field in thesis tick_id order ts; do
+    if ! echo "$DRY_LINE" | jq -e ".${field}" >/dev/null 2>&1; then
+        fail "dry_run_order missing field '${field}': $DRY_LINE"
+    fi
+done
+for ofield in ticker side action size limit_cents; do
+    if ! echo "$DRY_LINE" | jq -e ".order.${ofield}" >/dev/null 2>&1; then
+        fail "dry_run_order.order missing field '${ofield}': $DRY_LINE"
+    fi
+done
+
+step "settlement cursor file written"
+if [ ! -f "$KB/.ticks/.last_settlement.json" ]; then
+    fail ".last_settlement.json not written by step 5.g"
+fi
+if ! jq -e '.cursor and .as_of_ts_ms' "$KB/.ticks/.last_settlement.json" >/dev/null 2>&1; then
+    fail ".last_settlement.json missing cursor/as_of_ts_ms"
+fi
 
 # --- Done -------------------------------------------------------------------
 
