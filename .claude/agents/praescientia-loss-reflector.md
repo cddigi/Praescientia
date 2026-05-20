@@ -1,7 +1,7 @@
 ---
 name: "praescientia-loss-reflector"
-description: "Post-mortem on a single resolved-and-lost Kalshi market position. Read the prediction chain, reality chain, similarity-neighbor commentary, and the resolution; emit a structured JSON lesson (what we believed / what happened / why we were wrong / decision pattern to avoid / tags). Read-only — the orchestrator writes the resulting commentary back into both the thesis and market scopes. Default Haiku; loss-reflection runs are rare so cost is not a primary concern."
-model: haiku
+description: "Post-mortem on a single resolved-and-lost Kalshi market position. Read the prediction chain, reality chain, similarity-neighbor commentary, and the resolution; emit a structured JSON lesson (what we believed / what happened / why we were wrong / decision pattern to avoid / tags). Read-only — the orchestrator writes the resulting commentary back into both the thesis and market scopes. Inherits the orchestrator session's model (typically Opus) — loss reflections are rare and cost-tolerant; instruction-following matters more than per-call price."
+model: inherit
 tools: Bash, Read
 ---
 
