@@ -36,22 +36,35 @@ pub const SettlementsList = struct {
 
 /// Typed shape for one record returned by `/portfolio/settlements`.
 ///
-/// Kalshi documents the response as a per-market record with both sides'
-/// counts and costs and a `market_result` describing how the market settled.
-/// `revenue` is the cash credited to the account from this settlement; the
-/// per-side P&L split is derived in `src/kb/settlements.zig::transform`.
+/// **Field names match the real Kalshi demo API**, captured against a
+/// settled position on 2026-05-19. Earlier versions of this struct used
+/// shorter names (`yes_count`, `yes_total_cost`, etc.) synthesized from
+/// API docs; the real responses use the `_fp` (string-formatted float)
+/// and `_dollars` (string-formatted dollars) suffixes. The Zig JSON
+/// parser silently defaulted the mismatched fields to zero, masking
+/// the loss-reflector pipeline. See memory entry
+/// `project_settlements_struct_shape_mismatch` for the debugging trail.
+///
+/// Counts are string-formatted floats ("10.00"); costs are
+/// string-formatted dollars ("0.400000"); `revenue` and `value` are
+/// integer cents. The transformer in `src/kb/settlements.zig`
+/// converts the string fields via `dollarStringToCents` and
+/// `countStringToInt` before emitting §8 Settlement records.
 ///
 /// `market_result` is `"yes"`, `"no"`, or `"void"`. Voided markets do not
-/// have a winning side — the transformer skips them rather than synthesizing
-/// a phantom outcome.
+/// have a winning side — the transformer skips them rather than
+/// synthesizing a phantom outcome.
 pub const SettlementRecord = struct {
     ticker: []const u8,
+    event_ticker: []const u8 = "",
     market_result: []const u8,
-    yes_count: u32 = 0,
-    no_count: u32 = 0,
-    yes_total_cost: i64 = 0,
-    no_total_cost: i64 = 0,
+    yes_count_fp: []const u8 = "0",
+    no_count_fp: []const u8 = "0",
+    yes_total_cost_dollars: []const u8 = "0.00",
+    no_total_cost_dollars: []const u8 = "0.00",
+    fee_cost: []const u8 = "0.00",
     revenue: i64 = 0,
+    value: i64 = 0,
     /// ISO 8601, e.g. `2026-05-19T12:00:00Z` or `2026-05-19T14:15:00.123Z`.
     settled_time: []const u8 = "",
 };
@@ -287,15 +300,15 @@ test "parses /portfolio/settlements fixture (typed records)" {
     // First record: yes-resolved, only yes side held.
     try std.testing.expectEqualStrings("KX-YES-WIN", parsed.settlements[0].ticker);
     try std.testing.expectEqualStrings("yes", parsed.settlements[0].market_result);
-    try std.testing.expectEqual(@as(u32, 5), parsed.settlements[0].yes_count);
-    try std.testing.expectEqual(@as(u32, 0), parsed.settlements[0].no_count);
-    try std.testing.expectEqual(@as(i64, 150), parsed.settlements[0].yes_total_cost);
+    try std.testing.expectEqualStrings("5.00", parsed.settlements[0].yes_count_fp);
+    try std.testing.expectEqualStrings("0.00", parsed.settlements[0].no_count_fp);
+    try std.testing.expectEqualStrings("1.500000", parsed.settlements[0].yes_total_cost_dollars);
     try std.testing.expectEqual(@as(i64, 500), parsed.settlements[0].revenue);
 
     // Both-held record covers the split case.
     try std.testing.expectEqualStrings("KX-BOTH-HELD", parsed.settlements[2].ticker);
-    try std.testing.expectEqual(@as(u32, 2), parsed.settlements[2].yes_count);
-    try std.testing.expectEqual(@as(u32, 1), parsed.settlements[2].no_count);
+    try std.testing.expectEqualStrings("2.00", parsed.settlements[2].yes_count_fp);
+    try std.testing.expectEqualStrings("1.00", parsed.settlements[2].no_count_fp);
 
     // Voided record's market_result is preserved verbatim.
     try std.testing.expectEqualStrings("void", parsed.settlements[3].market_result);

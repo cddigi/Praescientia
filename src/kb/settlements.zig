@@ -37,6 +37,10 @@ pub const TransformedPage = struct {
 /// Transform one Kalshi record. Returns 0/1/2 entries appended to `out`.
 /// `arena` owns any duplicated strings; the caller must keep it alive for
 /// the lifetime of the emitted entries.
+///
+/// Parses the string-formatted Kalshi fields into typed values:
+///   yes_count_fp / no_count_fp      ("10.00") → u32 via countStringToInt
+///   yes_total_cost_dollars / no_..  ("0.400000") → i64 cents via dollarStringToCents
 pub fn transformOne(
     arena: std.mem.Allocator,
     record: portfolio.SettlementRecord,
@@ -49,30 +53,91 @@ pub fn transformOne(
     const resolved_yes = std.mem.eql(u8, record.market_result, "yes");
     const ts_ms = parseIso8601Ms(record.settled_time) catch 0;
 
+    // Parse string-formatted counts and costs. Bad input → zero (silent
+    // skip is safer than crashing the orchestrator on a single malformed
+    // record).
+    const yes_count = countStringToInt(record.yes_count_fp) catch 0;
+    const no_count = countStringToInt(record.no_count_fp) catch 0;
+    const yes_total_cost_cents = dollarStringToCents(record.yes_total_cost_dollars) catch 0;
+    const no_total_cost_cents = dollarStringToCents(record.no_total_cost_dollars) catch 0;
+
     // Per-side realized P&L. A contract pays 100c if its side won, 0
     // otherwise. Total cost is what we paid for that side's contracts.
-    if (record.yes_count > 0) {
-        const yes_revenue: i64 = if (resolved_yes) 100 * @as(i64, record.yes_count) else 0;
+    if (yes_count > 0) {
+        const yes_revenue: i64 = if (resolved_yes) 100 * @as(i64, yes_count) else 0;
         try out.append(.{
             .ticker = try arena.dupe(u8, record.ticker),
             .resolved_yes = resolved_yes,
             .resolution_ts_ms = ts_ms,
             .our_held_side = "yes",
-            .our_contracts = record.yes_count,
-            .realized_pnl_cents = yes_revenue - record.yes_total_cost,
+            .our_contracts = yes_count,
+            .realized_pnl_cents = yes_revenue - yes_total_cost_cents,
         });
     }
-    if (record.no_count > 0) {
-        const no_revenue: i64 = if (!resolved_yes) 100 * @as(i64, record.no_count) else 0;
+    if (no_count > 0) {
+        const no_revenue: i64 = if (!resolved_yes) 100 * @as(i64, no_count) else 0;
         try out.append(.{
             .ticker = try arena.dupe(u8, record.ticker),
             .resolved_yes = resolved_yes,
             .resolution_ts_ms = ts_ms,
             .our_held_side = "no",
-            .our_contracts = record.no_count,
-            .realized_pnl_cents = no_revenue - record.no_total_cost,
+            .our_contracts = no_count,
+            .realized_pnl_cents = no_revenue - no_total_cost_cents,
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Kalshi-API string parsing helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a Kalshi count string like "10.00" or "0.00" into u32.
+/// Kalshi reports counts as floats with trailing ".00" because the
+/// underlying field type is shared with non-integer-valued data (fees,
+/// costs). For contract counts the value is always integer-valued.
+pub fn countStringToInt(s: []const u8) !u32 {
+    if (s.len == 0) return 0;
+    const dot = std.mem.indexOfScalar(u8, s, '.');
+    const int_part = if (dot) |d| s[0..d] else s;
+    if (int_part.len == 0) return 0;
+    return std.fmt.parseInt(u32, int_part, 10);
+}
+
+/// Parse a Kalshi dollar string like "0.400000", "1.500000", "-1.50"
+/// into i64 cents. Two-decimal precision retained; deeper precision
+/// truncated toward zero. Negatives supported.
+pub fn dollarStringToCents(s: []const u8) !i64 {
+    if (s.len == 0) return 0;
+    var negative = false;
+    var idx: usize = 0;
+    if (s[0] == '-') {
+        negative = true;
+        idx = 1;
+    }
+    const remainder = s[idx..];
+
+    const dot = std.mem.indexOfScalar(u8, remainder, '.');
+    var int_part: i64 = 0;
+    var frac_cents: i64 = 0;
+
+    if (dot) |d| {
+        if (d > 0) {
+            int_part = try std.fmt.parseInt(i64, remainder[0..d], 10);
+        }
+        const frac_str = remainder[d + 1 ..];
+        if (frac_str.len >= 2) {
+            frac_cents = try std.fmt.parseInt(i64, frac_str[0..2], 10);
+        } else if (frac_str.len == 1) {
+            // ".5" → 50 cents (one fractional digit = tens)
+            frac_cents = (try std.fmt.parseInt(i64, frac_str, 10)) * 10;
+        }
+    } else {
+        int_part = try std.fmt.parseInt(i64, remainder, 10);
+    }
+
+    var result = int_part * 100 + frac_cents;
+    if (negative) result = -result;
+    return result;
 }
 
 /// Transform every record in a `SettlementsListTyped` and return the
@@ -162,10 +227,10 @@ test "transformOne: yes-resolved, only yes side held" {
     try transformOne(arena.allocator(), .{
         .ticker = "KX-YES-WIN",
         .market_result = "yes",
-        .yes_count = 5,
-        .no_count = 0,
-        .yes_total_cost = 150, // 30c per contract avg
-        .no_total_cost = 0,
+        .yes_count_fp = "5.00",
+        .no_count_fp = "0.00",
+        .yes_total_cost_dollars = "1.500000", // 150c = $1.50 average 30c × 5 contracts
+        .no_total_cost_dollars = "0.000000",
         .revenue = 500, // 100c per contract × 5
         .settled_time = "2026-05-19T12:00:00Z",
     }, &out);
@@ -188,10 +253,10 @@ test "transformOne: no-resolved, only no side held" {
     try transformOne(arena.allocator(), .{
         .ticker = "KX-NO-WIN",
         .market_result = "no",
-        .yes_count = 0,
-        .no_count = 3,
-        .yes_total_cost = 0,
-        .no_total_cost = 90,
+        .yes_count_fp = "0.00",
+        .no_count_fp = "3.00",
+        .yes_total_cost_dollars = "0.000000",
+        .no_total_cost_dollars = "0.900000", // 90c = $0.90 (3 × 30c avg)
         .revenue = 300,
         .settled_time = "2026-05-19T13:30:00Z",
     }, &out);
@@ -213,10 +278,10 @@ test "transformOne: yes-resolved, both sides held (split into two entries)" {
     try transformOne(arena.allocator(), .{
         .ticker = "KX-BOTH-HELD",
         .market_result = "yes",
-        .yes_count = 2,
-        .no_count = 1,
-        .yes_total_cost = 50, // win side: 100*2 - 50 = +150
-        .no_total_cost = 35, //  loss side: 0 - 35 = -35
+        .yes_count_fp = "2.00",
+        .no_count_fp = "1.00",
+        .yes_total_cost_dollars = "0.500000", // 50c: win side, 100*2 - 50 = +150
+        .no_total_cost_dollars = "0.350000",  // 35c: loss side, 0 - 35 = -35
         .revenue = 200,
         .settled_time = "2026-05-19T14:15:00.123Z",
     }, &out);
@@ -238,10 +303,10 @@ test "transformOne: voided market emits nothing" {
     try transformOne(arena.allocator(), .{
         .ticker = "KX-VOIDED",
         .market_result = "void",
-        .yes_count = 4,
-        .no_count = 0,
-        .yes_total_cost = 100,
-        .no_total_cost = 0,
+        .yes_count_fp = "4.00",
+        .no_count_fp = "0.00",
+        .yes_total_cost_dollars = "1.000000",
+        .no_total_cost_dollars = "0.000000",
         .revenue = 100, // full refund
         .settled_time = "2026-05-19T15:00:00Z",
     }, &out);
@@ -305,4 +370,47 @@ test "parseIso8601Ms rejects garbage" {
         Iso8601Error.InvalidFormat,
         parseIso8601Ms("not-a-timestamp"),
     );
+}
+
+// --- countStringToInt tests ---
+
+test "countStringToInt: typical Kalshi count" {
+    try std.testing.expectEqual(@as(u32, 10), try countStringToInt("10.00"));
+    try std.testing.expectEqual(@as(u32, 0), try countStringToInt("0.00"));
+    try std.testing.expectEqual(@as(u32, 5), try countStringToInt("5"));
+}
+
+test "countStringToInt: empty string returns 0" {
+    try std.testing.expectEqual(@as(u32, 0), try countStringToInt(""));
+}
+
+// --- dollarStringToCents tests ---
+
+test "dollarStringToCents: typical Kalshi values" {
+    // "0.400000" → 40c
+    try std.testing.expectEqual(@as(i64, 40), try dollarStringToCents("0.400000"));
+    // "1.500000" → 150c
+    try std.testing.expectEqual(@as(i64, 150), try dollarStringToCents("1.500000"));
+    // "10.00" → 1000c
+    try std.testing.expectEqual(@as(i64, 1000), try dollarStringToCents("10.00"));
+    // "0.030000" → 3c (fee)
+    try std.testing.expectEqual(@as(i64, 3), try dollarStringToCents("0.030000"));
+}
+
+test "dollarStringToCents: integer-only" {
+    try std.testing.expectEqual(@as(i64, 500), try dollarStringToCents("5"));
+}
+
+test "dollarStringToCents: single fractional digit pads to tens" {
+    // ".5" → 50c (5 in tens place)
+    try std.testing.expectEqual(@as(i64, 50), try dollarStringToCents("0.5"));
+}
+
+test "dollarStringToCents: negative values" {
+    try std.testing.expectEqual(@as(i64, -150), try dollarStringToCents("-1.50"));
+    try std.testing.expectEqual(@as(i64, -5), try dollarStringToCents("-0.05"));
+}
+
+test "dollarStringToCents: empty string returns 0" {
+    try std.testing.expectEqual(@as(i64, 0), try dollarStringToCents(""));
 }
