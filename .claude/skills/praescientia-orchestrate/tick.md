@@ -419,10 +419,30 @@ One input JSON file per thesis. Each parses as a single JSON object.
 - **Missing manifest**: log
   `{"kind":"thesis_skipped","thesis":"...","reason":"manifest_missing"}`
   and omit from the fan-out array. Other theses proceed normally.
-- **Similarity API down**: log
-  `{"kind":"thesis_skipped","thesis":"...","reason":"similarity_api_down"}`
-  and omit. The agent rejects empty / <2 neighbor inputs (see § 6.b),
-  so dispatching without neighbors is wasted effort.
+- **Similarity API down — degraded-mode fallback first**: before
+  skipping, try reading the thesis's own commentary chain directly:
+
+  ```bash
+  # Last 8 entries from theses/${THESIS_ID}/commentary/ — JSON array of
+  # {entry_hash, body, ts_ms, parent_hash, scope}
+  praescientia-kb commentary list \
+    --kb-root="${KB}" \
+    --thesis="${THESIS_ID}" \
+    --limit=8 \
+    > /tmp/commentary_fallback_${TICK_ID}_${THESIS_ID}.json
+  ```
+
+  Splice that array into the input's `commentary_neighbors` slot. This
+  loses *cross-thesis* signal (a comment on KXFED that's relevant to
+  KXBTC won't appear) but keeps the per-thesis chain available. The
+  thesis's own commentary is usually the strongest signal anyway —
+  cross-thesis neighbors are tie-breakers, not load-bearing.
+
+  Only after the fallback also returns <2 entries do you log
+  `{"kind":"thesis_skipped","thesis":"...","reason":"similarity_api_down","fallback_attempted":true,"fallback_entries":N}`
+  and omit. The § 6.b two-neighbors precondition still applies to the
+  fallback array — degrading to fewer neighbors isn't an escape hatch
+  from the research-first rule.
 
 ### 6.b Pre-dispatch precondition — `commentary_neighbors.length >= 2`
 

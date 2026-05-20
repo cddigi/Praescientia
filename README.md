@@ -435,4 +435,4 @@ For prediction markets, the market IS the source of truth. When our model diverg
 
 ---
 
-*Grace Hopper is our hero.*
+*"Never let your sense of morals prevent you from doing what is right." — Salvor Hardin*
