@@ -31,6 +31,7 @@ pub const kb = struct {
     pub const commentary = @import("kb/commentary.zig");
     pub const ticks = @import("kb/ticks.zig");
     pub const settlements = @import("kb/settlements.zig");
+    pub const screener = @import("kb/screener.zig");
 };
 
 pub const canonical_json = @import("canonical_json.zig");
@@ -63,6 +64,7 @@ test {
     _ = kb.commentary;
     _ = kb.ticks;
     _ = kb.settlements;
+    _ = kb.screener;
     _ = canonical_json;
     _ = state_chain;
     _ = txlog;
