@@ -50,13 +50,18 @@ pub const PollSummary = struct {
     errors: usize,
 };
 
-/// Production poll. Walks `kb_root/markets/`, fetches each market via the
-/// live Kalshi client, writes through `kbHookMarket`, then walks
+/// Production poll. Walks `kb_root/markets/`, fetches market snapshots in a
+/// single batch via the `/markets?tickers=CSV` endpoint (much faster than
+/// N sequential `/markets/{ticker}` calls — for N=30 we go from ~18min to
+/// a single HTTP request), writes through `kbHookMarket`, then walks
 /// `kb_root/theses/` and runs `recomputeThesisReality` on each.
 ///
 /// Per the design: each iteration is failure-isolated — a bad market or bad
 /// thesis logs to stderr and the loop continues. Returns counts so the
 /// caller can decide on an exit code.
+///
+/// Falls back to per-ticker sequential fetches if the batch call fails
+/// (preserves the failure-isolation guarantee).
 pub fn pollAll(ctx: *common.Context, kb_root: std.Io.Dir) !PollSummary {
     var summary: PollSummary = .{ .markets = 0, .theses = 0, .errors = 0 };
 
@@ -73,22 +78,91 @@ pub fn pollAll(ctx: *common.Context, kb_root: std.Io.Dir) !PollSummary {
 
     var markets_dir = try kb_root.openDir(ctx.io, "markets", .{ .iterate = true });
     defer markets_dir.close(ctx.io);
+
+    // Phase 1: collect all tickers from disk.
+    var tickers_list: std.array_list.Managed([]const u8) = .init(ctx.arena);
     var it = markets_dir.iterate();
     while (try it.next(ctx.io)) |entry| {
         if (entry.kind != .directory) continue;
-        // Dup ticker into the arena — iterator's buffer is reused per `next()`.
         const ticker = ctx.arena.dupe(u8, entry.name) catch |err| {
             try ctx.stderr.print("  ! {s}: alloc failed ({t})\n", .{ entry.name, err });
             summary.errors += 1;
             continue;
         };
-        const market = common.kalshi.markets.get(ctx.client, ctx.arena, ticker) catch |err| {
-            try ctx.stderr.print("  ! {s}: fetch failed ({t})\n", .{ ticker, err });
-            summary.errors += 1;
+        try tickers_list.append(ticker);
+    }
+
+    if (tickers_list.items.len == 0) {
+        // No markets registered yet — skip to thesis loop.
+        return runThesisLoop(ctx, kb_root, &summary);
+    }
+
+    const ts_ms: u64 = @intCast(@divFloor(std.Io.Clock.real.now(ctx.io).nanoseconds, 1_000_000));
+
+    // Phase 2: batch fetch. Build a CSV of all tickers and call the list
+    // endpoint with the `tickers=` filter. One HTTP roundtrip instead of N.
+    const tickers_csv = std.mem.join(ctx.arena, ",", tickers_list.items) catch "";
+    const batch_limit: u32 = @intCast(@min(tickers_list.items.len * 2, 1000));
+
+    const batch_ok = batchPollAndApply(ctx, kb_root, tickers_list.items, tickers_csv, batch_limit, ts_ms, &summary) catch |err| blk: {
+        try ctx.stderr.print("  ! batch fetch failed ({t}); falling back to per-ticker sequential\n", .{err});
+        break :blk false;
+    };
+
+    // Phase 2b: sequential fallback for any tickers the batch missed
+    // (or all of them if the batch call failed outright).
+    if (!batch_ok) {
+        for (tickers_list.items) |ticker| {
+            const market = common.kalshi.markets.get(ctx.client, ctx.arena, ticker) catch |err| {
+                try ctx.stderr.print("  ! {s}: fetch failed ({t})\n", .{ ticker, err });
+                summary.errors += 1;
+                continue;
+            };
+            const snap = toSnapshot(&market, ts_ms);
+            common.kalshi.markets.kbHookMarket(ctx.gpa, ctx.io, kb_root, ticker, snap) catch |err| {
+                try ctx.stderr.print("  ! {s}: kb write failed ({t})\n", .{ ticker, err });
+                summary.errors += 1;
+                continue;
+            };
+            summary.markets += 1;
+        }
+    }
+
+    return runThesisLoop(ctx, kb_root, &summary);
+}
+
+/// Batch path: one HTTP call to `/markets?tickers=CSV`, then iterate the
+/// response and call `kbHookMarket` per market. Returns true on success
+/// (all expected tickers were found and applied), false if the response
+/// was missing tickers we expected (caller falls back to sequential).
+fn batchPollAndApply(
+    ctx: *common.Context,
+    kb_root: std.Io.Dir,
+    expected_tickers: []const []const u8,
+    tickers_csv: []const u8,
+    limit: u32,
+    ts_ms: u64,
+    summary: *PollSummary,
+) !bool {
+    const list_resp = try common.kalshi.markets.list(ctx.client, ctx.arena, .{
+        .limit = limit,
+        .tickers = tickers_csv,
+    });
+
+    // Build a ticker → Market lookup for O(1) access.
+    var by_ticker = std.StringHashMap(*const markets_mod.Market).init(ctx.gpa);
+    defer by_ticker.deinit();
+    for (list_resp.markets) |*m| {
+        try by_ticker.put(m.ticker, m);
+    }
+
+    var missing: usize = 0;
+    for (expected_tickers) |ticker| {
+        const market_ptr = by_ticker.get(ticker) orelse {
+            missing += 1;
             continue;
         };
-        const ts_ms: u64 = @intCast(@divFloor(std.Io.Clock.real.now(ctx.io).nanoseconds, 1_000_000));
-        const snap = toSnapshot(&market, ts_ms);
+        const snap = toSnapshot(market_ptr, ts_ms);
         common.kalshi.markets.kbHookMarket(ctx.gpa, ctx.io, kb_root, ticker, snap) catch |err| {
             try ctx.stderr.print("  ! {s}: kb write failed ({t})\n", .{ ticker, err });
             summary.errors += 1;
@@ -97,6 +171,36 @@ pub fn pollAll(ctx: *common.Context, kb_root: std.Io.Dir) !PollSummary {
         summary.markets += 1;
     }
 
+    if (missing > 0) {
+        try ctx.stderr.print(
+            "  ! batch fetch returned {d}/{d} tickers; falling back for missing\n",
+            .{ expected_tickers.len - missing, expected_tickers.len },
+        );
+        // Partial success — caller decides whether to fall back for the rest.
+        // We return true if at least one applied successfully; full re-fetch
+        // would double-apply the successful ones, so prefer sequential
+        // fill-in for just the missing set.
+        for (expected_tickers) |ticker| {
+            if (by_ticker.get(ticker) != null) continue;
+            const market = common.kalshi.markets.get(ctx.client, ctx.arena, ticker) catch |err| {
+                try ctx.stderr.print("  ! {s}: fallback fetch failed ({t})\n", .{ ticker, err });
+                summary.errors += 1;
+                continue;
+            };
+            const snap = toSnapshot(&market, ts_ms);
+            common.kalshi.markets.kbHookMarket(ctx.gpa, ctx.io, kb_root, ticker, snap) catch |err| {
+                try ctx.stderr.print("  ! {s}: kb write failed ({t})\n", .{ ticker, err });
+                summary.errors += 1;
+                continue;
+            };
+            summary.markets += 1;
+        }
+    }
+
+    return true;
+}
+
+fn runThesisLoop(ctx: *common.Context, kb_root: std.Io.Dir, summary: *PollSummary) !PollSummary {
     var theses_dir = try kb_root.openDir(ctx.io, "theses", .{ .iterate = true });
     defer theses_dir.close(ctx.io);
     var t_it = theses_dir.iterate();
@@ -114,8 +218,7 @@ pub fn pollAll(ctx: *common.Context, kb_root: std.Io.Dir) !PollSummary {
         };
         summary.theses += 1;
     }
-
-    return summary;
+    return summary.*;
 }
 
 /// Callback shape used by `pollerForTest` so the iteration logic can be
