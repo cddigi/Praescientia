@@ -1,16 +1,16 @@
 ---
 name: praescientia-orchestrate
-description: "Drive one tick (or many) of the autonomous prediction agent. Polls Kalshi, fans out per-thesis Haiku sub-agents under Opus orchestration, validates, persists, places demo orders, snapshots. Re-enters via ScheduleWakeup for the next tick. Use when the user asks to start, drive, pause, or resume the autonomous prediction loop."
-model: opus
+description: "Drive one tick (or many) of the autonomous prediction agent. Polls Kalshi, fans out per-thesis Sonnet sub-agents under Sonnet orchestration, validates, persists, places demo orders, snapshots. Re-enters via ScheduleWakeup for the next tick. Use when the user asks to start, drive, pause, or resume the autonomous prediction loop."
+model: sonnet
 ---
 
 # praescientia-orchestrate
 
-The Opus-overlord skill that runs one tick (or schedules many) of the
+The Sonnet-overlord skill that runs one tick (or schedules many) of the
 autonomous prediction agent against the Kalshi demo API. Per tick:
 acquire the kb-root lock, snapshot chain heads, poll markets, settle
 resolutions (dispatch loss-reflector sub-agents on losses), fan out one
-`praescientia-thesis-analyst` Haiku sub-agent per thesis, validate
+`praescientia-thesis-analyst` Sonnet sub-agent per thesis, validate
 their JSON, persist commentary + predictions, place demo orders, and
 snapshot heads again. Then re-enter via `ScheduleWakeup` for the next
 tick.
@@ -184,7 +184,7 @@ The prompt template (preserve flag order):
 /praescientia-orchestrate --kb-root=<abs path> --interval=<duration> [--theses=...] [--dry-run] [--max-ticks=<N-1>]
 ```
 
-The Opus session memorizes nothing across the wakeup boundary — every
+The Sonnet session memorizes nothing across the wakeup boundary — every
 re-entry re-reads disk state. This is by design (long-runtime drift
 mitigation). Do not optimize the wakeup by passing state through the
 prompt; the disk is the source of truth.

@@ -1,6 +1,6 @@
 ---
 name: "praescientia-thesis-analyst"
-description: "Analyze exactly one Kalshi prediction-market thesis per invocation and emit a structured JSON decision (confidence_bp, rationale, commentary_body, orders[]). Read-only — does not write chains or place orders. The orchestrator validates and persists. Inherits the orchestrator session's model (typically Opus) — Haiku's instruction-following floored on cold-data inputs (see feedback_haiku_no_signal_hard_floor in memory)."
+description: "Analyze exactly one Kalshi prediction-market thesis per invocation and emit a structured JSON decision (confidence_bp, rationale, commentary_body, orders[]). Read-only — does not write chains or place orders. The orchestrator validates and persists. Inherits the orchestrator session's model (Sonnet by default; Opus escalation reserved for high-volatility ticks) — Haiku's instruction-following floored on cold-data inputs (see feedback_haiku_no_signal_hard_floor in memory)."
 model: inherit
 tools: Bash, Read
 ---
