@@ -33,8 +33,26 @@ pub fn build(b: *std.Build) void {
     // Stage 3 demo API smoke check.
     addTool(b, target, optimize, praescientia, null, "praescientia-test-conn", "tools/test_conn.zig", "test-conn", "End-to-end smoke check against the Kalshi demo (or live) API");
 
-    // Stage 9 / Ollama routing — local-model dispatch worker.
-    addTool(b, target, optimize, praescientia, null, "praescientia-ollama-agent", "tools/ollama_agent.zig", "run-ollama-agent", "Stage 9 Ollama dispatch worker (stub — argparse/HTTP/role prompts land in Tasks 2.2-2.5)");
+    // Stage 9 / Ollama routing — local-model dispatch worker. Inlined (rather
+    // than going through addTool) because the binary needs the role-prompt
+    // `.md` files registered as anonymous imports so `@embedFile` can pick
+    // them up from outside the tool's package root.
+    const ollama_agent_mod = b.createModule(.{
+        .root_source_file = b.path("tools/ollama_agent.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+        },
+    });
+    addOllamaAgentRolePrompts(b, ollama_agent_mod, target, optimize);
+    const ollama_agent_exe = b.addExecutable(.{ .name = "praescientia-ollama-agent", .root_module = ollama_agent_mod });
+    b.installArtifact(ollama_agent_exe);
+    const run_ollama_agent = b.addRunArtifact(ollama_agent_exe);
+    if (b.args) |args| run_ollama_agent.addArgs(args);
+    const run_ollama_agent_step = b.step("run-ollama-agent", "Stage 9 Ollama dispatch worker (stub — argparse/HTTP land in Tasks 2.4-2.5)");
+    run_ollama_agent_step.dependOn(&run_ollama_agent.step);
 
     // Stage 4: shared tools/common.zig + one Zig CLI per Julia script.
     const tool_common = b.createModule(.{
@@ -200,7 +218,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_orchestrate_daemon_tests.step);
 
     // tools/ollama_agent.zig — inline tests for extractJsonEnvelope (prose-strip
-    // pipeline). Pure helper; HTTP/role dispatch land in later Stage 2 tasks.
+    // pipeline) and rolePrompt/parseRole dispatch. Mirrors the executable
+    // module's anonymous imports so `@embedFile` resolves the role .md files.
     const ollama_agent_test_mod = b.createModule(.{
         .root_source_file = b.path("tools/ollama_agent.zig"),
         .target = target,
@@ -211,6 +230,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "common", .module = tool_common },
         },
     });
+    addOllamaAgentRolePrompts(b, ollama_agent_test_mod, target, optimize);
     const ollama_agent_tests = b.addTest(.{ .root_module = ollama_agent_test_mod });
     const run_ollama_agent_tests = b.addRunArtifact(ollama_agent_tests);
     test_step.dependOn(&run_ollama_agent_tests.step);
@@ -247,6 +267,30 @@ fn addToolReturn(
     const step = b.step(step_name, step_description);
     step.dependOn(&run.step);
     return exe;
+}
+
+/// Register the three role-prompt `.md` files as anonymous imports on `mod`,
+/// so the Stage 9 Ollama agent's `@embedFile("role_*")` calls resolve to the
+/// canonical files under `.claude/agents/` (which live outside the tool's
+/// package root and therefore can't be embedded via a relative path).
+fn addOllamaAgentRolePrompts(
+    b: *std.Build,
+    mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const roles = [_]struct { name: []const u8, path: []const u8 }{
+        .{ .name = "role_thesis_analyst", .path = ".claude/agents/praescientia-thesis-analyst.md" },
+        .{ .name = "role_loss_reflector", .path = ".claude/agents/praescientia-loss-reflector.md" },
+        .{ .name = "role_market_screener", .path = ".claude/agents/praescientia-market-screener.md" },
+    };
+    for (roles) |r| {
+        mod.addAnonymousImport(r.name, .{
+            .root_source_file = b.path(r.path),
+            .target = target,
+            .optimize = optimize,
+        });
+    }
 }
 
 fn addTool(
