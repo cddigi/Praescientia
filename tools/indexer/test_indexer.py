@@ -162,6 +162,43 @@ def test_ollama_embedder_happy_path(httpserver):
     assert out[1][0] == 0.2
 
 
+def test_ollama_embedder_connection_refused():
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url="http://127.0.0.1:1")  # unused port
+    with pytest.raises(EmbedderUnavailable):
+        e.embed_batch(["alpha"])
+
+
+def test_ollama_embedder_404_model_missing(httpserver):
+    httpserver.expect_request("/api/embed", method="POST").respond_with_data(
+        '{"error":"model not found"}', status=404
+    )
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    with pytest.raises(EmbedderUnavailable):
+        e.embed_batch(["alpha"])
+
+
+def test_ollama_embedder_dim_mismatch(httpserver):
+    httpserver.expect_request("/api/embed", method="POST").respond_with_json({
+        "embeddings": [[0.1] * 512]
+    })
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    with pytest.raises(EmbedderUnavailable):
+        e.embed_batch(["alpha"])
+
+
+def test_ollama_embedder_count_mismatch(httpserver):
+    httpserver.expect_request("/api/embed", method="POST").respond_with_json({
+        "embeddings": [[0.1] * 1024]  # 1 vector for 2 inputs
+    })
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    with pytest.raises(EmbedderUnavailable):
+        e.embed_batch(["alpha", "beta"])
+
+
 def test_embed_batch_calls_llama_server_with_input_list() -> None:
     # llama-server's /embedding returns one object per input with .embedding.
     fake = _FakeHttpClient([{"embedding": [0.0] * 1024}, {"embedding": [1.0] * 1024}])
