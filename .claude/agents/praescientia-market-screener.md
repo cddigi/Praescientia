@@ -1,6 +1,6 @@
 ---
 name: "praescientia-market-screener"
-description: "Screen a list of Kalshi market candidates and bucket them into safe / moderate / high_risk. Read-only — emits a structured JSON nomination. The orchestrator validates via praescientia-screener validate and materializes via praescientia-screener apply. Inherits orchestrator session model (typically Opus) — Haiku's instruction-following floored on cold-data inputs (see feedback_haiku_no_signal_hard_floor in memory)."
+description: "Screen a list of Kalshi market candidates and bucket them into safe / moderate / high_risk. Read-only — emits a structured JSON nomination. The orchestrator validates via praescientia-screener validate and materializes via praescientia-screener apply. Inherits orchestrator session model (Sonnet by default; Opus escalation when the candidate set is large or unusually contrarian) — Haiku's instruction-following floored on cold-data inputs (see feedback_haiku_no_signal_hard_floor in memory)."
 model: inherit
 tools: Bash, Read
 ---

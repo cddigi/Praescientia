@@ -98,10 +98,10 @@ praescientia/
 │       └── mock_loss_reflector.sh   # Mock post-mortem stand-in (prose-wrapped reflection JSON)
 ├── .claude/
 │   ├── agents/
-│   │   ├── praescientia-thesis-analyst.md   # Haiku — one thesis per invocation, JSON decision
-│   │   └── praescientia-loss-reflector.md   # Haiku — post-mortem per resolved-and-lost market
+│   │   ├── praescientia-thesis-analyst.md   # Sonnet — one thesis per invocation, JSON decision
+│   │   └── praescientia-loss-reflector.md   # Sonnet — post-mortem per resolved-and-lost market
 │   └── skills/
-│       └── praescientia-orchestrate/        # Opus orchestrator skill (SKILL.md + tick.md)
+│       └── praescientia-orchestrate/        # Sonnet orchestrator skill (SKILL.md + tick.md)
 ├── vendor/
 │   └── mbedtls/                 # 3.6 LTS submodule (RSA-PSS)
 ├── .secret/                     # gitignored — Kalshi API key + id
@@ -182,10 +182,10 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Live Data | `zig build run-live-data -- milestones\|milestone\|live\|live_legacy\|batch\|game_stats` | `src/kalshi/live_data.zig` |
 | Knowledge base | `zig build run-kb -- inspect\|branches\|fork\|divergence\|init\|predict\|add-market\|add-thesis\|commentary` | `src/kb/*` |
 | Tick lifecycle | `zig build run-ticks -- snapshot\|begin\|finish\|validate\|validate-loss-reflection\|classify-resolution\|status\|rollback` | `src/kb/ticks.zig` + `tools/ticks.zig` |
-| Orchestrator (Opus) | `/praescientia-orchestrate --kb-root=PATH --interval=300s [--max-ticks=N] [--theses=...] [--dry-run] [--pause\|--resume]` | `.claude/skills/praescientia-orchestrate/{SKILL.md,tick.md}` |
-| Thesis sub-agent (Haiku) | `Agent({subagent_type:"praescientia-thesis-analyst", prompt:<§2 JSON>})` | `.claude/agents/praescientia-thesis-analyst.md` |
-| Loss-reflector sub-agent (Haiku) | `Agent({subagent_type:"praescientia-loss-reflector", prompt:<§8 JSON>})` | `.claude/agents/praescientia-loss-reflector.md` |
-| Market-screener sub-agent (Opus) | `Agent({subagent_type:"praescientia-market-screener", prompt:<candidates JSON>})` | `.claude/agents/praescientia-market-screener.md` |
+| Orchestrator (Sonnet) | `/praescientia-orchestrate --kb-root=PATH --interval=300s [--max-ticks=N] [--theses=...] [--dry-run] [--pause\|--resume]` | `.claude/skills/praescientia-orchestrate/{SKILL.md,tick.md}` |
+| Thesis sub-agent (Sonnet) | `Agent({subagent_type:"praescientia-thesis-analyst", prompt:<§2 JSON>, model:"sonnet"})` | `.claude/agents/praescientia-thesis-analyst.md` |
+| Loss-reflector sub-agent (Sonnet) | `Agent({subagent_type:"praescientia-loss-reflector", prompt:<§8 JSON>, model:"sonnet"})` | `.claude/agents/praescientia-loss-reflector.md` |
+| Market-screener sub-agent (Sonnet) | `Agent({subagent_type:"praescientia-market-screener", prompt:<candidates JSON>, model:"sonnet"})` | `.claude/agents/praescientia-market-screener.md` |
 | Screener CLI | `./zig-out/bin/praescientia-screener validate\|apply --output=PATH --kb-root=PATH [--bucket=...] [--dry-run] [--cap-safe=N\|--cap-moderate=N\|--cap-high-risk=N]` | `tools/screener.zig` + `src/kb/screener.zig` |
 | Game-state classifier | `./zig-out/bin/praescientia-game-state classify --ticker=T [--now=...]` or `inspect --kb-root=PATH` | `tools/game_state.zig` + `src/kb/game_state.zig` |
 | Daemon (per-thesis) | `./zig-out/bin/praescientia-orchestrate-daemon --kb-root=PATH --per-thesis-cadence [--interval=DUR] [--max-ticks=N]` | `tools/orchestrate_daemon.zig` (opt-in via flag) |
