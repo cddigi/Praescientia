@@ -86,7 +86,7 @@ praescientia/
 │   ├── cross_verify.sh          # Stage 1 Zig ↔ OpenSSL RSA-PSS interop check
 │   ├── parity_check.sh          # Historical parity harness (vs Julia, pre-removal)
 │   ├── demo_loop_smoke.sh       # End-to-end KB loop against Kalshi demo API
-│   ├── commentary_smoke.sh      # End-to-end Talmud-commentary loop (requires llama-server)
+│   ├── commentary_smoke.sh      # End-to-end Talmud-commentary loop (requires Ollama + bge-m3)
 │   └── orchestrator_smoke.sh    # End-to-end tick lifecycle (uses mock sub-agents; no Anthropic/Kalshi calls)
 ├── tests/
 │   └── fixtures/
