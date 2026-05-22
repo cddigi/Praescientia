@@ -210,6 +210,13 @@ def test_ollama_embedder_count_mismatch(httpserver):
         e.embed_batch(["alpha", "beta"])
 
 
+def test_bge_embedder_protocol_accepts_ollama_impl():
+    from index_commentary import BGEEmbedder, OllamaEmbedder
+    e: BGEEmbedder = OllamaEmbedder(base_url="http://localhost:11434")
+    assert hasattr(e, "embed_batch")
+    assert hasattr(e, "close")
+
+
 def test_embed_batch_calls_llama_server_with_input_list() -> None:
     # llama-server's /embedding returns one object per input with .embedding.
     fake = _FakeHttpClient([{"embedding": [0.0] * 1024}, {"embedding": [1.0] * 1024}])

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Protocol
 
 import httpx
 import lancedb
@@ -23,6 +23,15 @@ import pyarrow as pa
 
 
 VECTOR_DIM = 1024  # BGE-M3 dense output
+
+
+class BGEEmbedder(Protocol):
+    """Embedding backend contract. Implementations must return
+    `len(texts)` vectors of `VECTOR_DIM` (1024) floats each.
+    Raises EmbedderUnavailable on any backend failure."""
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
+    def close(self) -> None: ...
 
 
 class EmbedderUnavailable(RuntimeError):
@@ -334,7 +343,7 @@ def _row_from_entry(entry: dict, scope_path: str, vector: list[float]) -> dict:
     }
 
 
-def run_once(*, kb_root: Path, lance_dir: Path, embedder, verbose: bool = False) -> int:
+def run_once(*, kb_root: Path, lance_dir: Path, embedder: BGEEmbedder, verbose: bool = False) -> int:
     """One pass over every commentary scope. Returns the number of newly
     indexed rows. Embedder failures (`EmbedderUnavailable`) leave the cursor
     untouched for that scope and the loop continues to the next.
@@ -384,7 +393,7 @@ def run_loop(
     *,
     kb_root: Path,
     lance_dir: Path,
-    embedder,
+    embedder: BGEEmbedder,
     interval_seconds: float = 60.0,
     verbose: bool = False,
 ) -> None:
