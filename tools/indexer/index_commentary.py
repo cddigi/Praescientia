@@ -447,7 +447,7 @@ def build_arg_parser():
     p.add_argument(
         "--embed-model",
         default="bge-m3",
-        help="Embedding model tag to request from Ollama (default: bge-m3).",
+        help="Embedding model tag to request from Ollama (default: bge-m3)",
     )
     p.add_argument(
         "--lance-dir",

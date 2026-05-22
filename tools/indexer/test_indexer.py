@@ -457,6 +457,12 @@ def test_main_accepts_ollama_url_and_embed_model(tmp_path):
     assert args.ollama_url == "http://example:11434"
     assert args.embed_model == "bge-m3"
 
+    defaults = build_arg_parser().parse_args(
+        ["--kb-root", str(tmp_path), "--once"]
+    )
+    assert defaults.ollama_url == "http://localhost:11434"
+    assert defaults.embed_model == "bge-m3"
+
 
 def test_run_once_handles_market_and_global_scopes(tmp_path: Path) -> None:
     kb_root = tmp_path / "kb"
