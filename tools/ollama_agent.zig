@@ -103,7 +103,10 @@ pub fn main(init: std.process.Init) !u8 {
     const stdout = &stdout_w.interface;
     defer stdout.flush() catch {};
 
-    const argv = try init.minimal.args.toSlice(arena_alloc);
+    const argv = init.minimal.args.toSlice(arena_alloc) catch |err| {
+        try stderr.print("failed to read argv: {s}\n", .{@errorName(err)});
+        return 2;
+    };
 
     const parsed = switch (parseArgs(argv[1..], stderr) catch |e| {
         try stderr.print("argparse failed: {s}\n", .{@errorName(e)});
@@ -167,7 +170,10 @@ pub fn main(init: std.process.Init) !u8 {
             );
             return 3;
         },
-        else => return err,
+        else => {
+            try stderr.print("envelope extraction failed: {s}\n", .{@errorName(err)});
+            return 2;
+        },
     };
 
     try stdout.print("{s}", .{envelope});
