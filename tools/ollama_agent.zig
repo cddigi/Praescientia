@@ -136,3 +136,10 @@ test "extractJsonEnvelope returns error on no JSON" {
         extractJsonEnvelope(std.testing.allocator, "no braces here"),
     );
 }
+
+test "extractJsonEnvelope strips trailing prose" {
+    const out = try extractJsonEnvelope(std.testing.allocator,
+        "{\"x\":1}\nThat's the answer.");
+    defer std.testing.allocator.free(out);
+    try std.testing.expectEqualStrings("{\"x\":1}", out);
+}
