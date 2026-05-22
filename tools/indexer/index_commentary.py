@@ -179,6 +179,61 @@ class LlamaServerEmbedder:
         return vectors
 
 
+class OllamaEmbedder:
+    """Posts to a long-lived Ollama daemon's `/api/embed` endpoint.
+
+    Endpoint contract — Ollama's /api/embed accepts
+    `{"model": "<name>", "input": ["text1", ...]}` and returns
+    `{"embeddings": [[...vec...], ...]}` (one vector per input, in order).
+
+    All HTTP failures and shape mismatches surface as `EmbedderUnavailable`
+    so the indexer loop can skip the scope without crashing.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "bge-m3",
+        timeout_s: float = 30.0,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._timeout_s = timeout_s
+        self._client = httpx.Client(timeout=timeout_s)
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        url = f"{self._base_url}/api/embed"
+        try:
+            resp = self._client.post(
+                url, json={"model": self._model, "input": texts}
+            )
+        except httpx.HTTPError as e:
+            raise EmbedderUnavailable(
+                f"ollama unreachable at {url}: {e}"
+            ) from e
+        if resp.status_code != 200:
+            raise EmbedderUnavailable(
+                f"ollama /api/embed returned {resp.status_code}: {resp.text[:200]}"
+            )
+        payload = resp.json()
+        embeddings = payload.get("embeddings")
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            raise EmbedderUnavailable(
+                f"unexpected /api/embed response shape: got {len(embeddings) if isinstance(embeddings, list) else type(embeddings).__name__} vectors for {len(texts)} inputs"
+            )
+        for i, vec in enumerate(embeddings):
+            if not isinstance(vec, list) or len(vec) != VECTOR_DIM:
+                raise EmbedderUnavailable(
+                    f"vector {i}: expected len {VECTOR_DIM}, got {len(vec) if isinstance(vec, list) else type(vec).__name__}"
+                )
+        return embeddings
+
+    def close(self) -> None:
+        self._client.close()
+
+
 # ----- LanceDB ---------------------------------------------------------------
 
 LANCE_TABLE_NAME = "commentary"

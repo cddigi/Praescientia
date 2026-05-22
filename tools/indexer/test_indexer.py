@@ -145,6 +145,21 @@ class _FakeHttpClient:
         pass
 
 
+def test_ollama_embedder_happy_path(httpserver):
+    httpserver.expect_request(
+        "/api/embed", method="POST"
+    ).respond_with_json({
+        "embeddings": [[0.1] * 1024, [0.2] * 1024]
+    })
+    from index_commentary import OllamaEmbedder
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    out = e.embed_batch(["alpha", "beta"])
+    assert len(out) == 2
+    assert len(out[0]) == 1024
+    assert out[0][0] == 0.1
+    assert out[1][0] == 0.2
+
+
 def test_embed_batch_calls_llama_server_with_input_list() -> None:
     # llama-server's /embedding returns one object per input with .embedding.
     fake = _FakeHttpClient([{"embedding": [0.0] * 1024}, {"embedding": [1.0] * 1024}])
