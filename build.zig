@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
     addTool(b, target, optimize, praescientia, null, "praescientia-test-conn", "tools/test_conn.zig", "test-conn", "End-to-end smoke check against the Kalshi demo (or live) API");
 
     // Stage 9 / Ollama routing — local-model dispatch worker.
-    addTool(b, target, optimize, praescientia, null, "praescientia-ollama-agent", "tools/ollama_agent.zig", "run-ollama-agent", "Stage 9 Ollama dispatch worker — posts role JSON to Ollama /api/chat");
+    addTool(b, target, optimize, praescientia, null, "praescientia-ollama-agent", "tools/ollama_agent.zig", "run-ollama-agent", "Stage 9 Ollama dispatch worker (stub — argparse/HTTP/role prompts land in Tasks 2.2-2.5)");
 
     // Stage 4: shared tools/common.zig + one Zig CLI per Julia script.
     const tool_common = b.createModule(.{
