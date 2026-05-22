@@ -199,6 +199,22 @@ pub fn build(b: *std.Build) void {
     const run_orchestrate_daemon_tests = b.addRunArtifact(orchestrate_daemon_tests);
     test_step.dependOn(&run_orchestrate_daemon_tests.step);
 
+    // tools/ollama_agent.zig — inline tests for extractJsonEnvelope (prose-strip
+    // pipeline). Pure helper; HTTP/role dispatch land in later Stage 2 tasks.
+    const ollama_agent_test_mod = b.createModule(.{
+        .root_source_file = b.path("tools/ollama_agent.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+            .{ .name = "common", .module = tool_common },
+        },
+    });
+    const ollama_agent_tests = b.addTest(.{ .root_module = ollama_agent_test_mod });
+    const run_ollama_agent_tests = b.addRunArtifact(ollama_agent_tests);
+    test_step.dependOn(&run_ollama_agent_tests.step);
+
     test_step.dependOn(smoke_step);
 }
 
