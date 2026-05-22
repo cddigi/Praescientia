@@ -3,12 +3,43 @@ const std = @import("std");
 /// Sub-agent role. Each role corresponds to a `.claude/agents/*.md` file whose
 /// contents are baked into the binary at compile time via `@embedFile` (see
 /// `rolePrompt`). The CLI form uses dashes (e.g. `thesis-analyst`); the enum
-/// tag uses underscores. `parseRole` enforces this boundary.
-const Role = enum { thesis_analyst, loss_reflector, market_screener };
+/// tag uses underscores. `Role.parse` enforces this boundary.
+pub const Role = enum {
+    thesis_analyst,
+    loss_reflector,
+    market_screener,
+
+    /// Parse a CLI role string (dash form) into a `Role`. Only the canonical
+    /// dash-separated forms are accepted; underscore forms and unknown strings
+    /// return `null`. Caller pattern: `Role.parse(arg) orelse return error.UnknownRole`.
+    pub fn parse(s: []const u8) ?Role {
+        inline for (roles_table) |spec| {
+            if (std.mem.eql(u8, s, spec.cli)) return spec.tag;
+        }
+        return null;
+    }
+};
+
+/// Single-row spec linking a `Role` tag to its dash-form CLI string and the
+/// anonymous-import name used by `@embedFile`. The table below is the source
+/// of truth for the dash-form mapping; `Role.parse` walks it at comptime.
+const RoleSpec = struct {
+    tag: Role,
+    cli: []const u8,
+    embed_name: []const u8,
+};
+
+const roles_table = [_]RoleSpec{
+    .{ .tag = .thesis_analyst, .cli = "thesis-analyst", .embed_name = "role_thesis_analyst" },
+    .{ .tag = .loss_reflector, .cli = "loss-reflector", .embed_name = "role_loss_reflector" },
+    .{ .tag = .market_screener, .cli = "market-screener", .embed_name = "role_market_screener" },
+};
 
 // Role-prompt files live at `.claude/agents/*.md`, outside this tool's
 // package root, so they're registered as anonymous imports in `build.zig`
 // (`addOllamaAgentRolePrompts`) and resolved here through those names.
+// `@embedFile` requires a comptime string literal, so each decl stays
+// explicit even though `roles_table` records the same name.
 const thesis_prompt = @embedFile("role_thesis_analyst");
 const loss_prompt = @embedFile("role_loss_reflector");
 const screen_prompt = @embedFile("role_market_screener");
@@ -22,16 +53,6 @@ fn rolePrompt(role: Role) []const u8 {
         .loss_reflector => loss_prompt,
         .market_screener => screen_prompt,
     };
-}
-
-/// Parse a CLI role string (dash form) into a `Role`. Only the canonical
-/// dash-separated forms are accepted; underscore forms and unknown strings
-/// return `error.UnknownRole`.
-fn parseRole(s: []const u8) !Role {
-    if (std.mem.eql(u8, s, "thesis-analyst")) return .thesis_analyst;
-    if (std.mem.eql(u8, s, "loss-reflector")) return .loss_reflector;
-    if (std.mem.eql(u8, s, "market-screener")) return .market_screener;
-    return error.UnknownRole;
 }
 
 pub fn main(init: std.process.Init) !u8 {
@@ -186,15 +207,14 @@ test "rolePrompt returns expected embedded content per role" {
     try std.testing.expect(loss.len > 100);
     try std.testing.expect(screen.len > 100);
     try std.testing.expect(!std.mem.eql(u8, thesis, loss));
-    try std.testing.expect(std.mem.indexOf(u8, thesis, "thesis") != null or
-        std.mem.indexOf(u8, thesis, "Thesis") != null);
+    try std.testing.expect(std.ascii.indexOfIgnoreCase(thesis, "thesis") != null);
 }
 
-test "parseRole maps CLI strings to Role enum and rejects unknowns" {
-    try std.testing.expectEqual(Role.thesis_analyst, try parseRole("thesis-analyst"));
-    try std.testing.expectEqual(Role.loss_reflector, try parseRole("loss-reflector"));
-    try std.testing.expectEqual(Role.market_screener, try parseRole("market-screener"));
-    try std.testing.expectError(error.UnknownRole, parseRole("unknown"));
-    try std.testing.expectError(error.UnknownRole, parseRole(""));
-    try std.testing.expectError(error.UnknownRole, parseRole("thesis_analyst")); // underscore form: NOT accepted
+test "Role.parse maps CLI strings to Role enum and rejects unknowns" {
+    try std.testing.expectEqual(@as(?Role, .thesis_analyst), Role.parse("thesis-analyst"));
+    try std.testing.expectEqual(@as(?Role, .loss_reflector), Role.parse("loss-reflector"));
+    try std.testing.expectEqual(@as(?Role, .market_screener), Role.parse("market-screener"));
+    try std.testing.expectEqual(@as(?Role, null), Role.parse("unknown"));
+    try std.testing.expectEqual(@as(?Role, null), Role.parse(""));
+    try std.testing.expectEqual(@as(?Role, null), Role.parse("thesis_analyst")); // underscore form: NOT accepted
 }
