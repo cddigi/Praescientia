@@ -3,7 +3,8 @@
 Single process, two roles:
 
   1. Loop:  scan kb_root commentary chains, embed unindexed entries via
-            llama-server, write rows into LanceDB, advance per-scope cursors.
+            an Ollama daemon, write rows into LanceDB, advance per-scope
+            cursors.
   2. Serve: FastAPI app exposing /similar (k-NN over the Lance table) and
             /health (row count).
 
@@ -38,7 +39,8 @@ class BGEEmbedder(Protocol):
 
 
 class EmbedderUnavailable(RuntimeError):
-    """Raised when the llama-server HTTP call fails for any transport reason.
+    """Raised when the embedder HTTP call fails for any transport or
+    shape-validation reason.
 
     Caller decides whether to back off + retry — for the indexer loop, the
     cursor stays put and we sleep until the next pass.
@@ -129,66 +131,6 @@ class Cursors:
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps(cursors, sort_keys=True))
         tmp.replace(self.path)
-
-
-class LlamaServerEmbedder:
-    """Posts to a long-lived llama-server `--embeddings` daemon.
-
-    Endpoint contract — llama.cpp's /embedding accepts `{"input": ["text1", ...]}`
-    and returns either:
-      - the OpenAI-compatible shape: `[{"embedding": [...]}, ...]`
-      - the legacy shape:            `[[...vec...], ...]`
-
-    Both are handled.
-    """
-
-    def __init__(self, base_url: str, *, client=None, timeout: float = 60.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self._owns_client = client is None
-        self._client = client if client is not None else httpx.Client(timeout=timeout)
-
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-        url = f"{self.base_url}/embedding"
-        try:
-            resp = self._client.post(url, json={"input": texts}, timeout=self.timeout)
-            resp.raise_for_status()
-            payload = resp.json()
-        except (httpx.TransportError, httpx.HTTPStatusError) as e:
-            raise EmbedderUnavailable(f"llama-server unreachable at {url}: {e}") from e
-
-        # Handle both response shapes. OpenAI-compatible has `data` wrapper too
-        # depending on build; tolerate it.
-        if isinstance(payload, dict) and "data" in payload:
-            payload = payload["data"]
-        if not isinstance(payload, list):
-            raise EmbedderUnavailable(f"unexpected /embedding response shape: {type(payload)}")
-
-        vectors: list[list[float]] = []
-        for item in payload:
-            if isinstance(item, dict) and "embedding" in item:
-                emb = item["embedding"]
-            elif isinstance(item, list):
-                emb = item
-            else:
-                raise EmbedderUnavailable(f"unexpected /embedding row shape: {type(item)}")
-            # Modern llama.cpp wraps the pooled embedding in an outer batch
-            # dimension: [[...1024 floats...]]. Older builds emit a flat
-            # [1024]. Unwrap the single-row batch when we see it.
-            if emb and isinstance(emb[0], list):
-                if len(emb) != 1:
-                    raise EmbedderUnavailable(
-                        f"expected one pooled row per input, got {len(emb)}"
-                    )
-                emb = emb[0]
-            vectors.append(list(emb))
-        return vectors
 
 
 class OllamaEmbedder:
@@ -519,7 +461,7 @@ def _parse_args(argv: Optional[list[str]] = None):
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     lance_dir = args.lance_dir or (args.kb_root / ".commentary_index" / "lance")
-    embedder = LlamaServerEmbedder(args.llama_url)
+    embedder = OllamaEmbedder(args.llama_url)
     try:
         if args.once:
             indexed = run_once(
