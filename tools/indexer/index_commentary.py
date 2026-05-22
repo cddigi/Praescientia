@@ -217,7 +217,16 @@ class OllamaEmbedder:
             raise EmbedderUnavailable(
                 f"ollama /api/embed returned {resp.status_code}: {resp.text[:200]}"
             )
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            raise EmbedderUnavailable(
+                f"ollama /api/embed returned non-JSON body: {e}"
+            ) from e
+        if not isinstance(payload, dict):
+            raise EmbedderUnavailable(
+                f"unexpected /api/embed response: expected object, got {type(payload).__name__}"
+            )
         embeddings = payload.get("embeddings")
         if not isinstance(embeddings, list) or len(embeddings) != len(texts):
             raise EmbedderUnavailable(

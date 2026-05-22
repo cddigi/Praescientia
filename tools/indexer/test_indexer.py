@@ -147,7 +147,9 @@ class _FakeHttpClient:
 
 def test_ollama_embedder_happy_path(httpserver):
     httpserver.expect_request(
-        "/api/embed", method="POST"
+        "/api/embed",
+        method="POST",
+        json={"model": "bge-m3", "input": ["alpha", "beta"]},
     ).respond_with_json({
         "embeddings": [[0.1] * 1024, [0.2] * 1024]
     })
