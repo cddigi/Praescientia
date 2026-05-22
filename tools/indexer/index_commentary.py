@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator, Optional, Protocol
+from typing import Iterator, Optional, Protocol, runtime_checkable
 
 import httpx
 import lancedb
@@ -25,10 +25,13 @@ import pyarrow as pa
 VECTOR_DIM = 1024  # BGE-M3 dense output
 
 
+@runtime_checkable
 class BGEEmbedder(Protocol):
     """Embedding backend contract. Implementations must return
     `len(texts)` vectors of `VECTOR_DIM` (1024) floats each.
-    Raises EmbedderUnavailable on any backend failure."""
+    Raises EmbedderUnavailable on any backend failure.
+
+    close() releases any underlying client; not required to be idempotent."""
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
     def close(self) -> None: ...
