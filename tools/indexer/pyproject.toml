@@ -1,7 +1,7 @@
 [project]
 name = "praescientia-indexer"
 version = "0.1.0"
-description = "Commentary chain indexer + query service (LanceDB + llama-server BGE-M3)"
+description = "Commentary chain indexer + query service (LanceDB + Ollama BGE-M3)"
 requires-python = ">=3.11"
 dependencies = [
     "lancedb>=0.13",

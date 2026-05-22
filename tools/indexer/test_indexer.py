@@ -446,6 +446,18 @@ def test_build_query_app_similar_returns_404_for_unknown_anchor(tmp_path: Path) 
         assert r.status_code == 404
 
 
+def test_main_accepts_ollama_url_and_embed_model(tmp_path):
+    from index_commentary import build_arg_parser
+    args = build_arg_parser().parse_args([
+        "--kb-root", str(tmp_path),
+        "--once",
+        "--ollama-url", "http://example:11434",
+        "--embed-model", "bge-m3",
+    ])
+    assert args.ollama_url == "http://example:11434"
+    assert args.embed_model == "bge-m3"
+
+
 def test_run_once_handles_market_and_global_scopes(tmp_path: Path) -> None:
     kb_root = tmp_path / "kb"
     (kb_root / "markets").mkdir(parents=True)

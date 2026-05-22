@@ -74,9 +74,9 @@ praescientia/
 │   ├── signtest.zig             # RSA-PSS sign one-off (Stage 1)
 │   ├── verifytest.zig           # RSA-PSS verify one-off
 │   ├── bench_state_chain.zig    # divergesAt 100k microbenchmark
-│   └── indexer/                 # Python: commentary chain indexer (LanceDB + llama-server BGE-M3) + FastAPI /similar
-│       ├── index_commentary.py  # tail/Cursors/LlamaServerEmbedder/run_once/run_loop/build_query_app
-│       ├── test_indexer.py      # pytest — embed call is mocked; llama-server not required
+│   └── indexer/                 # Python: commentary chain indexer (LanceDB + Ollama BGE-M3) + FastAPI /similar
+│       ├── index_commentary.py  # tail/Cursors/OllamaEmbedder/BGEEmbedder/run_once/run_loop/build_query_app
+│       ├── test_indexer.py      # pytest — embed call is mocked; Ollama daemon not required
 │       └── pyproject.toml       # uv/pip-compatible
 ├── server/
 │   ├── main.zig                 # std.http.Server + Io.Threaded accept loop

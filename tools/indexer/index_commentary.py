@@ -438,12 +438,17 @@ def build_query_app(table, *, lance_dir: Path | None = None):
 # ----- CLI entry --------------------------------------------------------------
 
 
-def _parse_args(argv: Optional[list[str]] = None):
+def build_arg_parser():
     import argparse
 
     p = argparse.ArgumentParser(prog="praescientia-indexer", description="Commentary indexer + query service")
     p.add_argument("--kb-root", required=True, type=Path, help="Path to the praescientia kb_root")
-    p.add_argument("--llama-url", default="http://localhost:8001", help="llama-server base URL")
+    p.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama daemon base URL")
+    p.add_argument(
+        "--embed-model",
+        default="bge-m3",
+        help="Embedding model tag to request from Ollama (default: bge-m3).",
+    )
     p.add_argument(
         "--lance-dir",
         type=Path,
@@ -455,13 +460,17 @@ def _parse_args(argv: Optional[list[str]] = None):
     p.add_argument("--query-port", type=int, default=8002, help="Port for the /similar service")
     p.add_argument("--serve", action="store_true", help="Run the query service alongside the loop")
     p.add_argument("--verbose", action="store_true")
-    return p.parse_args(argv)
+    return p
+
+
+def _parse_args(argv: Optional[list[str]] = None):
+    return build_arg_parser().parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     lance_dir = args.lance_dir or (args.kb_root / ".commentary_index" / "lance")
-    embedder = OllamaEmbedder(args.llama_url)
+    embedder = OllamaEmbedder(args.ollama_url, model=args.embed_model)
     try:
         if args.once:
             indexed = run_once(
