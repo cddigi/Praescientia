@@ -187,8 +187,9 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 | Loss-reflector sub-agent (Sonnet) | `Agent({subagent_type:"praescientia-loss-reflector", prompt:<§8 JSON>, model:"sonnet"})` | `.claude/agents/praescientia-loss-reflector.md` |
 | Market-screener sub-agent (Sonnet) | `Agent({subagent_type:"praescientia-market-screener", prompt:<candidates JSON>, model:"sonnet"})` | `.claude/agents/praescientia-market-screener.md` |
 | Screener CLI | `./zig-out/bin/praescientia-screener validate\|apply --output=PATH --kb-root=PATH [--bucket=...] [--dry-run] [--cap-safe=N\|--cap-moderate=N\|--cap-high-risk=N]` | `tools/screener.zig` + `src/kb/screener.zig` |
+| Screener tick (Zig orchestrates claude) | `./zig-out/bin/praescientia-screener tick --kb-root=PATH [--markets-bin=PATH] [--limit=N] [--live]` | `tools/screener.zig` cmdTick — fetch candidates → spawn `claude -p` → dispatch market-screener Agent → validate → apply |
 | Game-state classifier | `./zig-out/bin/praescientia-game-state classify --ticker=T [--now=...]` or `inspect --kb-root=PATH` | `tools/game_state.zig` + `src/kb/game_state.zig` |
-| Daemon (per-thesis) | `./zig-out/bin/praescientia-orchestrate-daemon --kb-root=PATH --per-thesis-cadence [--interval=DUR] [--max-ticks=N]` | `tools/orchestrate_daemon.zig` (opt-in via flag) |
+| Daemon (per-thesis) | `./zig-out/bin/praescientia-orchestrate-daemon --kb-root=PATH --per-thesis-cadence [--interval=DUR] [--max-ticks=N] [--screener-cadence=DUR] [--screener-bin=PATH]` | `tools/orchestrate_daemon.zig` (opt-in via flag) — `--screener-cadence` spawns `praescientia-screener tick` every DUR (min 60s); state persists to `kb/.ticks/.last_screener_scan.ms` |
 | Commentary indexer | `python tools/indexer/index_commentary.py --kb-root=PATH [--once\|--serve]` | `tools/indexer/index_commentary.py` |
 | KB poller | `zig build run-poll-markets -- --kb-root=./kb` | `tools/poll_markets.zig` |
 | Demo loop smoke | `./scripts/demo_loop_smoke.sh` | `scripts/demo_loop_smoke.sh` |
