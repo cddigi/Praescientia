@@ -261,7 +261,7 @@ class BGEEmbedder(Protocol):
     def close(self) -> None: ...
 ```
 
-Update function signatures of `run_once`, `run_loop`, `build_query_app` to use `embedder: BGEEmbedder` instead of the untyped parameter.
+Update function signatures of `run_once`, `run_loop`, `_run_serve_and_loop` to use `embedder: BGEEmbedder` instead of the untyped parameter.
 
 **Step 4: Run.** `pytest tools/indexer/` — all tests green.
 

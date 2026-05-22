@@ -552,7 +552,7 @@ def _run_serve_and_loop(
     *,
     kb_root: Path,
     lance_dir: Path,
-    embedder,
+    embedder: BGEEmbedder,
     interval: float,
     query_port: int,
     verbose: bool,
