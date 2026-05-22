@@ -72,10 +72,12 @@ fn cmdCreate(ctx: *common.Context) !u8 {
 
     const order_type: []const u8 = ctx.flagValue("--type") orelse "limit";
     const action: []const u8 = ctx.flagValue("--action") orelse "buy";
+    const client_order_id = ctx.flagValue("--client-order-id") orelse
+        try generateClientOrderId(ctx.arena);
 
     var order: common.kalshi.orders.CreateOrder = .{
         .ticker = ticker,
-        .client_order_id = try generateClientOrderId(ctx.arena),
+        .client_order_id = client_order_id,
         .side = side,
         .action = action,
         .@"type" = order_type,

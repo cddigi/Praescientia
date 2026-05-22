@@ -30,6 +30,15 @@
 //!   --game-state-bin=PATH          (default ./zig-out/bin/praescientia-game-state)
 //!                                                   Path to the classifier CLI (only used by
 //!                                                   --per-thesis-cadence mode).
+//!   --screener-cadence=DUR         (optional)       OPT-IN. Spawn `praescientia-screener tick`
+//!                                                   every DUR to discover and materialize new
+//!                                                   theses. Independent of the per-thesis loop.
+//!                                                   State persists to
+//!                                                   kb/.ticks/.last_screener_scan.ms so a
+//!                                                   restart does not re-trigger immediately.
+//!   --screener-bin=PATH            (default ./zig-out/bin/praescientia-screener)
+//!                                                   Path to the screener CLI (only used by
+//!                                                   --screener-cadence mode).
 //!
 //! Signals:
 //!   SIGINT / SIGTERM     Set a shutdown flag. Daemon finishes the
@@ -66,6 +75,8 @@ fn cmdRun(ctx: *common.Context) !u8 {
     const no_dispatch = hasBareFlag(ctx, "--no-dispatch");
     const per_thesis = hasBareFlag(ctx, "--per-thesis-cadence");
     const game_state_bin = ctx.flagValue("--game-state-bin") orelse "./zig-out/bin/praescientia-game-state";
+    const screener_cadence_str = ctx.flagValue("--screener-cadence");
+    const screener_bin = ctx.flagValue("--screener-bin") orelse "./zig-out/bin/praescientia-screener";
 
     const interval_seconds = parseDuration(interval_str) catch {
         try ctx.stderr.print(
@@ -78,6 +89,21 @@ fn cmdRun(ctx: *common.Context) !u8 {
         try ctx.stderr.print("error: --interval must be at least 1s\n", .{});
         return 2;
     }
+
+    const screener_cadence_seconds: ?u64 = if (screener_cadence_str) |s| blk: {
+        const parsed = parseDuration(s) catch {
+            try ctx.stderr.print(
+                "error: --screener-cadence must be of the form Ns / Nm / Nh; got '{s}'\n",
+                .{s},
+            );
+            return 2;
+        };
+        if (parsed < 60) {
+            try ctx.stderr.print("error: --screener-cadence must be >= 60s\n", .{});
+            return 2;
+        }
+        break :blk parsed;
+    } else null;
 
     const max_ticks: ?u32 = if (max_ticks_str) |s|
         std.fmt.parseInt(u32, s, 10) catch {
@@ -94,15 +120,21 @@ fn cmdRun(ctx: *common.Context) !u8 {
     try installSignalHandlers();
 
     try ctx.stdout.print(
-        "[startup] praescientia-orchestrate-daemon kb_root={s} interval={d}s max_ticks={?d} dry_run={} no_dispatch={} per_thesis={}\n",
-        .{ kb_root, interval_seconds, max_ticks, dry_run, no_dispatch, per_thesis },
+        "[startup] praescientia-orchestrate-daemon kb_root={s} interval={d}s max_ticks={?d} dry_run={} no_dispatch={} per_thesis={} screener_cadence={?d}s\n",
+        .{ kb_root, interval_seconds, max_ticks, dry_run, no_dispatch, per_thesis, screener_cadence_seconds },
     );
     try ctx.stdout.flush();
 
     try reapOrphanTicks(ctx, kb_root);
 
+    var last_screener_ms = loadLastScreenerMs(ctx, kb_root);
+    if (screener_cadence_seconds) |c| {
+        try ctx.stdout.print("[startup] screener cadence {d}s; last scan ms={d}\n", .{ c, last_screener_ms });
+        try ctx.stdout.flush();
+    }
+
     if (per_thesis) {
-        return runLoopPerThesis(ctx, kb_root, interval_seconds, max_ticks, dry_run, no_dispatch, game_state_bin);
+        return runLoopPerThesis(ctx, kb_root, interval_seconds, max_ticks, dry_run, no_dispatch, game_state_bin, screener_cadence_seconds, screener_bin, &last_screener_ms);
     }
 
     var tick_count: u32 = 0;
@@ -112,6 +144,13 @@ fn cmdRun(ctx: *common.Context) !u8 {
             tick_count -= 1; // rewind so the post-loop log is accurate
             break;
         };
+
+        if (screener_cadence_seconds) |c| {
+            maybeRunScreenerDispatch(ctx, kb_root, c, screener_bin, &last_screener_ms, no_dispatch) catch |e| {
+                try ctx.stderr.print("[screener] dispatch error: {t} (continuing)\n", .{e});
+                try ctx.stderr.flush();
+            };
+        }
 
         try runTick(ctx, tick_count, max_ticks, kb_root, dry_run, no_dispatch);
         if (shutdown_requested.load(.seq_cst)) break;
@@ -475,6 +514,91 @@ fn nowMs(io: std.Io) i64 {
     return @intCast(@divFloor(std.Io.Clock.real.now(io).nanoseconds, 1_000_000));
 }
 
+// ---------------------------------------------------------------------------
+// Screener cadence — state persistence + dispatch helper.
+// ---------------------------------------------------------------------------
+//
+// The screener cadence is independent of the per-thesis tick cadence.
+// We persist the last successful scan timestamp (unix-ms, ASCII decimal)
+// to kb/.ticks/.last_screener_scan.ms so a daemon restart doesn't
+// re-trigger the screener immediately. Read once at startup, written
+// after each successful dispatch.
+
+const screener_state_path = ".ticks/.last_screener_scan.ms";
+
+fn loadLastScreenerMs(ctx: *common.Context, kb_root: []const u8) i64 {
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, kb_root, .{}) catch return 0;
+    defer dir.close(ctx.io);
+    const bytes = dir.readFileAlloc(ctx.io, screener_state_path, ctx.arena, .limited(64)) catch return 0;
+    const trimmed = std.mem.trim(u8, bytes, " \r\n\t");
+    return std.fmt.parseInt(i64, trimmed, 10) catch 0;
+}
+
+fn saveLastScreenerMs(ctx: *common.Context, kb_root: []const u8, ms: i64) !void {
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, kb_root, .{}) catch |err| {
+        try ctx.stderr.print("[screener] open kb-root {s}: {t}\n", .{ kb_root, err });
+        return err;
+    };
+    defer dir.close(ctx.io);
+    const text = try std.fmt.allocPrint(ctx.arena, "{d}\n", .{ms});
+    try dir.writeFile(ctx.io, .{ .sub_path = screener_state_path, .data = text });
+}
+
+/// If the screener cadence has elapsed since the last scan, spawn
+/// `praescientia-screener tick` and persist the new timestamp. No-op
+/// when not yet due. The `no_dispatch` flag suppresses the actual
+/// subprocess but still advances the timestamp — used by smoke tests
+/// to exercise the gate without paying for a real claude call.
+fn maybeRunScreenerDispatch(
+    ctx: *common.Context,
+    kb_root: []const u8,
+    cadence_seconds: u64,
+    screener_bin: []const u8,
+    last_screener_ms: *i64,
+    no_dispatch: bool,
+) !void {
+    const now = nowMs(ctx.io);
+    const elapsed_ms = now - last_screener_ms.*;
+    const cadence_ms: i64 = @intCast(cadence_seconds * 1000);
+    if (elapsed_ms < cadence_ms) return;
+
+    try ctx.stdout.print(
+        "[screener] cadence elapsed ({d}s since last scan) — dispatching {s} tick\n",
+        .{ @divFloor(elapsed_ms, 1000), screener_bin },
+    );
+    try ctx.stdout.flush();
+
+    if (no_dispatch) {
+        try ctx.stdout.print("[screener] dispatch SKIPPED (--no-dispatch)\n", .{});
+        try ctx.stdout.flush();
+        last_screener_ms.* = now;
+        try saveLastScreenerMs(ctx, kb_root, now);
+        return;
+    }
+
+    var argv: std.array_list.Managed([]const u8) = .init(ctx.arena);
+    try argv.append(screener_bin);
+    try argv.append("--demo");
+    try argv.append("tick");
+    try argv.append(try std.fmt.allocPrint(ctx.arena, "--kb-root={s}", .{kb_root}));
+
+    const r = try runCmd(ctx, argv.items);
+    if (r.exit != 0) {
+        try ctx.stderr.print(
+            "[screener] {s} exited {d}; stderr tail: {s}\n",
+            .{ screener_bin, r.exit, firstLine(r.stderr) },
+        );
+        try ctx.stderr.flush();
+        // Do NOT advance the timestamp on failure — retry on next iteration.
+        return error.ScreenerDispatchFailed;
+    }
+    const summary = firstLine(std.mem.trim(u8, r.stdout, " \r\n\t"));
+    try ctx.stdout.print("[screener] dispatch complete: {s}\n", .{summary});
+    try ctx.stdout.flush();
+    last_screener_ms.* = now;
+    try saveLastScreenerMs(ctx, kb_root, now);
+}
+
 fn findScheduleIndex(schedule: []const ScheduleEntry, thesis_id: []const u8) ?usize {
     for (schedule, 0..) |s, i| {
         if (std.mem.eql(u8, s.thesis_id, thesis_id)) return i;
@@ -743,6 +867,9 @@ fn runLoopPerThesis(
     dry_run: bool,
     no_dispatch: bool,
     game_state_bin: []const u8,
+    screener_cadence_seconds: ?u64,
+    screener_bin: []const u8,
+    last_screener_ms: *i64,
 ) !u8 {
     try ctx.stdout.print(
         "[startup] per-thesis cadence enabled (default_interval={d}s, game_state_bin={s})\n",
@@ -761,6 +888,13 @@ fn runLoopPerThesis(
         if (max_ticks) |m| if (tick_count >= m) break;
 
         const now = nowMs(ctx.io);
+
+        if (screener_cadence_seconds) |c| {
+            maybeRunScreenerDispatch(ctx, kb_root, c, screener_bin, last_screener_ms, no_dispatch) catch |e| {
+                try ctx.stderr.print("[screener] dispatch error: {t} (continuing)\n", .{e});
+                try ctx.stderr.flush();
+            };
+        }
 
         refreshSchedule(ctx, &schedule, kb_root, game_state_bin, now) catch |e| {
             try ctx.stderr.print("[schedule] refresh failed: {t}; sleeping {d}s\n", .{ e, default_interval_seconds });
