@@ -22,6 +22,17 @@ def _write_jsonl_chain(chain_dir: Path, entries: list[dict]) -> None:
     (chain_dir / "main.jsonl").write_text("\n".join(lines) + "\n")
 
 
+def _unused_port() -> int:
+    """Bind a socket to port 0 (kernel picks an unused one), record the
+    port, then close so the next connect attempt gets ECONNREFUSED."""
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 def test_tail_returns_entries_after_cursor(tmp_path: Path) -> None:
     chain_dir = tmp_path / "theses" / "sample" / "commentary"
     _write_jsonl_chain(
@@ -164,8 +175,8 @@ def test_ollama_embedder_happy_path(httpserver):
 
 def test_ollama_embedder_connection_refused():
     from index_commentary import OllamaEmbedder, EmbedderUnavailable
-    e = OllamaEmbedder(base_url="http://127.0.0.1:1")  # unused port
-    with pytest.raises(EmbedderUnavailable):
+    e = OllamaEmbedder(base_url=f"http://127.0.0.1:{_unused_port()}")
+    with pytest.raises(EmbedderUnavailable, match=r"unreachable"):
         e.embed_batch(["alpha"])
 
 
@@ -175,7 +186,7 @@ def test_ollama_embedder_404_model_missing(httpserver):
     )
     from index_commentary import OllamaEmbedder, EmbedderUnavailable
     e = OllamaEmbedder(base_url=httpserver.url_for(""))
-    with pytest.raises(EmbedderUnavailable):
+    with pytest.raises(EmbedderUnavailable, match=r"returned 404"):
         e.embed_batch(["alpha"])
 
 
@@ -185,7 +196,7 @@ def test_ollama_embedder_dim_mismatch(httpserver):
     })
     from index_commentary import OllamaEmbedder, EmbedderUnavailable
     e = OllamaEmbedder(base_url=httpserver.url_for(""))
-    with pytest.raises(EmbedderUnavailable):
+    with pytest.raises(EmbedderUnavailable, match=r"vector 0: expected len 1024"):
         e.embed_batch(["alpha"])
 
 
@@ -195,7 +206,7 @@ def test_ollama_embedder_count_mismatch(httpserver):
     })
     from index_commentary import OllamaEmbedder, EmbedderUnavailable
     e = OllamaEmbedder(base_url=httpserver.url_for(""))
-    with pytest.raises(EmbedderUnavailable):
+    with pytest.raises(EmbedderUnavailable, match=r"1 vectors for 2 inputs"):
         e.embed_batch(["alpha", "beta"])
 
 
