@@ -55,10 +55,247 @@ fn rolePrompt(role: Role) []const u8 {
     };
 }
 
+/// Default knobs for the CLI. `--ollama-url` defaults to localhost on the
+/// canonical Ollama port; `--timeout-ms` and `--temperature` are accepted at
+/// the CLI but plumb-through into `callOllamaChat` / `buildChatRequestBody` is
+/// deferred until those helpers gain timeout / per-call temperature support
+/// (currently the request body uses the hardcoded `ollama_temperature`).
+const default_ollama_url = "http://localhost:11434";
+const default_timeout_ms: u32 = 120_000;
+const default_temperature: f64 = 0.2;
+
+/// Cap on stdin payload size. 1 MiB is well above the largest realistic
+/// thesis context block (a tick.md §2 sub-agent prompt is ~50 KiB tops);
+/// going higher would just mask runaway producers without operational value.
+const max_stdin_bytes: usize = 1 << 20;
+
+/// Parsed CLI surface for the Ollama agent. Held by value through `main`.
+const ParsedArgs = struct {
+    role: Role,
+    model: []const u8,
+    ollama_url: []const u8,
+    timeout_ms: u32,
+    temperature: f64,
+};
+
+/// Outcome of `parseArgs`. `.ok` carries the parsed flags; `.help` signals
+/// that `--help` / `-h` was present and the caller should print usage and
+/// exit 0; `.parse_error` signals argparse failure (a diagnostic was already
+/// written to stderr) and the caller should exit 5.
+const ParseResult = union(enum) {
+    ok: ParsedArgs,
+    help,
+    parse_error,
+};
+
 pub fn main(init: std.process.Init) !u8 {
-    _ = init;
-    std.debug.print("praescientia-ollama-agent stub\n", .{});
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena_alloc = init.arena.allocator();
+
+    var stderr_buf: [4096]u8 = undefined;
+    var stderr_w = std.Io.File.stderr().writer(io, &stderr_buf);
+    const stderr = &stderr_w.interface;
+    defer stderr.flush() catch {};
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_w = std.Io.File.stdout().writer(io, &stdout_buf);
+    const stdout = &stdout_w.interface;
+    defer stdout.flush() catch {};
+
+    const argv = try init.minimal.args.toSlice(arena_alloc);
+
+    const parsed = switch (parseArgs(argv[1..], stderr) catch |e| {
+        try stderr.print("argparse failed: {s}\n", .{@errorName(e)});
+        return 5;
+    }) {
+        .help => {
+            try usage(stderr);
+            return 0;
+        },
+        .parse_error => return 5,
+        .ok => |p| p,
+    };
+
+    // Read all of stdin into the arena. The orchestrator pipes the per-tick
+    // prompt as a single chunk and closes; we don't need streaming.
+    const prompt_payload = readStdinAll(io, arena_alloc) catch |err| {
+        try stderr.print("failed to read stdin: {s}\n", .{@errorName(err)});
+        return 2;
+    };
+
+    const content = callOllamaChat(
+        gpa,
+        io,
+        parsed.ollama_url,
+        parsed.model,
+        parsed.role,
+        prompt_payload,
+    ) catch |err| switch (err) {
+        // The two "shape" errors share exit code 4 so an operator can
+        // distinguish them from a transport failure. The actual
+        // human-readable distinction lives in the stderr breadcrumb
+        // emitted by callOllamaChat / here.
+        error.MalformedResponse, error.EmptyContent => {
+            try stderr.print(
+                "ollama returned a malformed response ({s})\n",
+                .{@errorName(err)},
+            );
+            return 4;
+        },
+        // Everything else — error.OllamaHttp (already breadcrumbed in
+        // callOllamaChat), connection refused, timeout, DNS failure,
+        // allocator failures, etc. — bucket into exit 2. callOllamaChat
+        // emits a single-line diagnostic for transport-class errors before
+        // returning; this branch adds the final "exit 2" framing.
+        else => {
+            try stderr.print(
+                "ollama call failed ({s}) against {s}/api/chat\n",
+                .{ @errorName(err), parsed.ollama_url },
+            );
+            return 2;
+        },
+    };
+    defer gpa.free(content);
+
+    const envelope = extractJsonEnvelope(arena_alloc, content) catch |err| switch (err) {
+        error.NoJsonFound => {
+            const preview = previewSlice(content, 200);
+            try stderr.print(
+                "no JSON envelope found in model output (first {d} chars): {s}\n",
+                .{ preview.len, preview },
+            );
+            return 3;
+        },
+        else => return err,
+    };
+
+    try stdout.print("{s}", .{envelope});
+    try stdout.flush();
     return 0;
+}
+
+/// Parse argv (already trimmed of `argv[0]`). On the happy path returns
+/// `.ok` with the parsed struct; on `--help` / `-h` returns `.help`; on any
+/// argparse failure writes a diagnostic to `stderr` and returns `.parse_error`.
+fn parseArgs(args: []const [:0]const u8, stderr: *std.Io.Writer) !ParseResult {
+    var role_arg: ?[]const u8 = null;
+    var model_arg: ?[]const u8 = null;
+    var ollama_url: []const u8 = default_ollama_url;
+    var timeout_ms: u32 = default_timeout_ms;
+    var temperature: f64 = default_temperature;
+
+    for (args) |a| {
+        if (std.mem.eql(u8, a, "--help") or std.mem.eql(u8, a, "-h")) {
+            return .help;
+        } else if (std.mem.startsWith(u8, a, "--role=")) {
+            role_arg = a["--role=".len..];
+        } else if (std.mem.startsWith(u8, a, "--model=")) {
+            model_arg = a["--model=".len..];
+        } else if (std.mem.startsWith(u8, a, "--ollama-url=")) {
+            ollama_url = a["--ollama-url=".len..];
+        } else if (std.mem.startsWith(u8, a, "--timeout-ms=")) {
+            const raw = a["--timeout-ms=".len..];
+            timeout_ms = std.fmt.parseInt(u32, raw, 10) catch {
+                try stderr.print("--timeout-ms must be a non-negative integer, got: '{s}'\n", .{raw});
+                return .parse_error;
+            };
+        } else if (std.mem.startsWith(u8, a, "--temperature=")) {
+            const raw = a["--temperature=".len..];
+            temperature = std.fmt.parseFloat(f64, raw) catch {
+                try stderr.print("--temperature must be a float, got: '{s}'\n", .{raw});
+                return .parse_error;
+            };
+        } else {
+            try stderr.print("unknown argument: {s}\n", .{a});
+            return .parse_error;
+        }
+    }
+
+    const role_str = role_arg orelse {
+        try stderr.print("--role is required (one of: thesis-analyst, loss-reflector, market-screener)\n", .{});
+        return .parse_error;
+    };
+    const role = Role.parse(role_str) orelse {
+        try stderr.print(
+            "--role must be one of thesis-analyst, loss-reflector, market-screener; got: '{s}'\n",
+            .{role_str},
+        );
+        return .parse_error;
+    };
+
+    const model = model_arg orelse {
+        try stderr.print("--model is required (e.g. --model=qwen3.6:27b-mlx)\n", .{});
+        return .parse_error;
+    };
+    if (model.len == 0) {
+        try stderr.print("--model must not be empty\n", .{});
+        return .parse_error;
+    }
+
+    return .{ .ok = .{
+        .role = role,
+        .model = model,
+        .ollama_url = ollama_url,
+        .timeout_ms = timeout_ms,
+        .temperature = temperature,
+    } };
+}
+
+fn usage(stderr: *std.Io.Writer) !void {
+    try stderr.print(
+        \\Usage: praescientia-ollama-agent --role=ROLE --model=TAG [options] < PROMPT
+        \\
+        \\Pipe a sub-agent prompt payload on stdin; the binary POSTs to
+        \\<ollama-url>/api/chat with the embedded role prompt as the system
+        \\message and the stdin payload as the user message, then strips any
+        \\prose wrapper from the model's reply and writes the JSON envelope
+        \\to stdout.
+        \\
+        \\Required:
+        \\  --role=ROLE              one of: thesis-analyst, loss-reflector, market-screener
+        \\  --model=TAG              Ollama model tag (e.g. qwen3.6:27b-mlx)
+        \\
+        \\Optional:
+        \\  --ollama-url=URL         Ollama base URL (default: {s})
+        \\  --timeout-ms=N           request timeout in ms (default: {d}; accepted but not yet plumbed)
+        \\  --temperature=F          generation temperature (default: {d}; accepted but not yet plumbed)
+        \\  --help, -h               print this usage to stderr and exit 0
+        \\
+        \\Exit codes:
+        \\  0  success; JSON envelope written to stdout
+        \\  2  transport failure (HTTP non-200, refused, timeout, etc.)
+        \\  3  model output did not contain a JSON envelope
+        \\  4  Ollama returned a malformed or empty response body
+        \\  5  argparse / usage error
+        \\
+    , .{ default_ollama_url, default_timeout_ms, default_temperature });
+}
+
+fn readStdinAll(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
+    var read_buf: [4096]u8 = undefined;
+    var reader = std.Io.File.stdin().reader(io, &read_buf);
+    var list: std.array_list.Managed(u8) = .init(allocator);
+    errdefer list.deinit();
+    while (true) {
+        const chunk = reader.interface.peek(1) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        if (chunk.len == 0) break;
+        if (list.items.len + chunk.len > max_stdin_bytes) {
+            return error.StdinTooLarge;
+        }
+        try list.appendSlice(chunk);
+        reader.interface.toss(chunk.len);
+    }
+    return list.toOwnedSlice();
+}
+
+/// Return at most `cap` bytes of `s` for inclusion in a stderr diagnostic.
+/// Keeps the operator-visible blurb short and bounded.
+fn previewSlice(s: []const u8, cap: usize) []const u8 {
+    return if (s.len <= cap) s else s[0..cap];
 }
 
 /// Extract a JSON envelope from `raw`, which may include leading/trailing prose,
@@ -294,6 +531,12 @@ pub fn buildChatRequestBody(
 /// Errors:
 ///   error.MalformedResponse — response is not a JSON object, `message` field
 ///     is missing/not-an-object, or `message.content` is missing/not-a-string.
+///   error.EmptyContent — `message.content` parses but is the empty string.
+///     Promoted to its own error so operators can distinguish "Ollama returned
+///     nothing" from "Ollama returned prose with no JSON envelope" (which
+///     surfaces later as `error.NoJsonFound` from `extractJsonEnvelope`). The
+///     CLI maps both `MalformedResponse` and `EmptyContent` to exit code 4;
+///     the distinction only shows up in the stderr breadcrumb.
 ///   Plus any error from `std.json.parseFromSlice` (invalid JSON).
 pub fn parseChatResponse(
     allocator: std.mem.Allocator,
@@ -310,6 +553,8 @@ pub fn parseChatResponse(
 
     const content_v = message_v.object.get("content") orelse return error.MalformedResponse;
     if (content_v != .string) return error.MalformedResponse;
+
+    if (content_v.string.len == 0) return error.EmptyContent;
 
     return try allocator.dupe(u8, content_v.string);
 }
@@ -353,7 +598,22 @@ pub fn callOllamaChat(
         },
     });
 
-    if (@intFromEnum(result.status) != 200) return error.OllamaHttp;
+    if (@intFromEnum(result.status) != 200) {
+        // I2 breadcrumb: include the status code and a body preview so an
+        // operator can distinguish 404 (wrong model) from 500 (server crash)
+        // without re-running with curl. Cap at 200 chars to keep stderr
+        // readable when Ollama returns a long HTML error page. Transport-
+        // class errors (connection refused / DNS / timeout) are not breadcrumbed
+        // here — they bubble up through `try` and `main`'s catch arm emits a
+        // single-line diagnostic with the URL, which is enough context.
+        const body = resp_body.written();
+        const preview = if (body.len <= 200) body else body[0..200];
+        std.debug.print(
+            "ollama returned HTTP {d} ({s}): {s}\n",
+            .{ @intFromEnum(result.status), url, preview },
+        );
+        return error.OllamaHttp;
+    }
 
     return parseChatResponse(allocator, resp_body.written());
 }
@@ -461,4 +721,71 @@ test "parseChatResponse returns MalformedResponse when root is not an object" {
         error.MalformedResponse,
         parseChatResponse(std.testing.allocator, "[]"),
     );
+}
+
+test "parseChatResponse returns EmptyContent when message.content is empty string" {
+    // Folded-in I1 (option a): empty content is its own error so the CLI can
+    // emit a distinct stderr breadcrumb. Both EmptyContent and MalformedResponse
+    // share exit code 4 — the distinction shows up only in the diagnostic.
+    try std.testing.expectError(
+        error.EmptyContent,
+        parseChatResponse(std.testing.allocator, "{\"message\":{\"role\":\"assistant\",\"content\":\"\"}}"),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// parseArgs — argparse for `main`. The CLI surface is small enough that
+// these tests are end-to-end-ish: given a slice of argv tokens, assert the
+// resulting `ParsedArgs` fields, that `--help` short-circuits, and that
+// missing / malformed flags surface as `.parse_error`.
+// ---------------------------------------------------------------------------
+
+/// Helper: build a `[:0]const u8` slice from a `[]const []const u8` literal.
+/// Tests' string literals come back as `[]const u8`, but `init.minimal.args.toSlice`
+/// hands us `[:0]const u8` — we mirror that to keep the test inputs honest.
+fn z(comptime literals: []const []const u8) [literals.len][:0]const u8 {
+    var out: [literals.len][:0]const u8 = undefined;
+    inline for (literals, 0..) |s, i| out[i] = s ++ "";
+    return out;
+}
+
+test "parseArgs accepts minimal required flags" {
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer sink.deinit();
+    const argv = z(&.{ "--role=thesis-analyst", "--model=qwen3.6:27b-mlx" });
+    const result = try parseArgs(&argv, &sink.writer);
+    try std.testing.expect(result == .ok);
+    try std.testing.expectEqual(Role.thesis_analyst, result.ok.role);
+    try std.testing.expectEqualStrings("qwen3.6:27b-mlx", result.ok.model);
+    // Defaults must match the public CLI contract.
+    try std.testing.expectEqualStrings(default_ollama_url, result.ok.ollama_url);
+    try std.testing.expectEqual(default_timeout_ms, result.ok.timeout_ms);
+}
+
+test "parseArgs returns .help on --help" {
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer sink.deinit();
+    const argv = z(&.{"--help"});
+    const result = try parseArgs(&argv, &sink.writer);
+    try std.testing.expect(result == .help);
+}
+
+test "parseArgs returns .parse_error on missing required flag" {
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer sink.deinit();
+    // Missing --role.
+    const argv = z(&.{"--model=qwen3.6:27b-mlx"});
+    const result = try parseArgs(&argv, &sink.writer);
+    try std.testing.expect(result == .parse_error);
+    // The diagnostic must mention --role so an operator knows what's missing.
+    try std.testing.expect(std.mem.indexOf(u8, sink.written(), "--role") != null);
+}
+
+test "parseArgs returns .parse_error on unknown flag" {
+    var sink: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer sink.deinit();
+    const argv = z(&.{ "--role=thesis-analyst", "--model=m", "--bogus" });
+    const result = try parseArgs(&argv, &sink.writer);
+    try std.testing.expect(result == .parse_error);
+    try std.testing.expect(std.mem.indexOf(u8, sink.written(), "--bogus") != null);
 }

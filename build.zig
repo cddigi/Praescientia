@@ -36,7 +36,10 @@ pub fn build(b: *std.Build) void {
     // Stage 9 / Ollama routing — local-model dispatch worker. Inlined (rather
     // than going through addTool) because the binary needs the role-prompt
     // `.md` files registered as anonymous imports so `@embedFile` can pick
-    // them up from outside the tool's package root.
+    // them up from outside the tool's package root. Now that the binary has
+    // a real `--help`, we still add it to the `--help` smoke step alongside
+    // the Stage 4 CLIs (see below — `smoke_step` is defined after this block,
+    // so the smoke wiring lives in the Stage 4 section).
     const ollama_agent_mod = b.createModule(.{
         .root_source_file = b.path("tools/ollama_agent.zig"),
         .target = target,
@@ -51,7 +54,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(ollama_agent_exe);
     const run_ollama_agent = b.addRunArtifact(ollama_agent_exe);
     if (b.args) |args| run_ollama_agent.addArgs(args);
-    const run_ollama_agent_step = b.step("run-ollama-agent", "Stage 9 Ollama dispatch worker (stub — argparse/HTTP land in Tasks 2.4-2.5)");
+    const run_ollama_agent_step = b.step("run-ollama-agent", "Stage 9 Ollama dispatch worker (argparse + Ollama /api/chat)");
     run_ollama_agent_step.dependOn(&run_ollama_agent.step);
 
     // Stage 4: shared tools/common.zig + one Zig CLI per Julia script.
@@ -88,6 +91,18 @@ pub fn build(b: *std.Build) void {
     for (stage4_tools) |t| {
         const exe = addToolReturn(b, target, optimize, praescientia, tool_common, t.name, t.src, t.step, "Stage 4 CLI");
         const help_run = b.addRunArtifact(exe);
+        help_run.addArg("--help");
+        help_run.expectExitCode(0);
+        help_run.expectStdErrMatch("Usage:");
+        smoke_step.dependOn(&help_run.step);
+    }
+
+    // Wire the Stage 9 Ollama agent into the same --help smoke step. The
+    // binary's executable was registered above (inline because of @embedFile),
+    // but its `--help` contract matches the Stage 4 CLIs: exit 0, "Usage:" on
+    // stderr.
+    {
+        const help_run = b.addRunArtifact(ollama_agent_exe);
         help_run.addArg("--help");
         help_run.expectExitCode(0);
         help_run.expectStdErrMatch("Usage:");
