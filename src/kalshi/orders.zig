@@ -92,10 +92,7 @@ pub fn create(client: *Client, arena: Allocator, order: CreateOrder) !std.json.V
         .method = .POST,
         .body = body,
     });
-    if (!resp.isSuccess()) {
-        std.debug.print("order create HTTP {d}: {s}\n", .{ resp.status, resp.body });
-        return error.HttpStatus;
-    }
+    if (!resp.isSuccess()) return error.HttpStatus;
     return std.json.parseFromSliceLeaky(std.json.Value, arena, resp.body, .{});
 }
 
