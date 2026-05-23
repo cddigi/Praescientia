@@ -275,6 +275,36 @@ def _discover_scopes(kb_root: Path) -> list[tuple[str, Path]]:
     return scopes
 
 
+_FM_PREFIX = "--- src: "
+_FM_SUFFIX = " ---"
+
+
+def strip_source_frontmatter(body: str) -> str:
+    """Remove a leading source-provenance frontmatter line before embedding.
+
+    Curator-written (source-backed) entries lead with:
+
+        --- src: <url> fetched: <iso8601> valid_until: <iso8601> ---\\n
+
+    That line is provenance metadata, not prose — embedding it would pollute
+    the vector with URLs and timestamps and pull unrelated sources together by
+    their shared frontmatter shape. Strip it so similarity reflects content.
+
+    Bodies without the frontmatter prefix (every pre-curator entry, and any
+    model_synthesis entry) are returned unchanged. Must agree byte-for-byte
+    with `parseFrontmatter`/`stripFrontmatter` in src/kb/commentary.zig.
+    """
+    if not body.startswith(_FM_PREFIX):
+        return body
+    nl = body.find("\n")
+    if nl == -1:
+        # Body is only a frontmatter line — nothing but metadata to embed.
+        return ""
+    if not body[:nl].endswith(_FM_SUFFIX):
+        return body  # malformed; leave as-is rather than mangle the prose
+    return body[nl + 1 :]
+
+
 def _row_from_entry(entry: dict, scope_path: str, vector: list[float]) -> dict:
     payload = entry.get("payload", {}) or {}
     agent = payload.get("agent", {}) or {}
@@ -307,7 +337,10 @@ def run_once(*, kb_root: Path, lance_dir: Path, embedder: BGEEmbedder, verbose: 
         if not new_entries:
             continue
 
-        bodies = [(e.get("payload") or {}).get("body", "") for e in new_entries]
+        bodies = [
+            strip_source_frontmatter((e.get("payload") or {}).get("body", ""))
+            for e in new_entries
+        ]
         try:
             vectors = embedder.embed_batch(bodies)
         except EmbedderUnavailable as e:
