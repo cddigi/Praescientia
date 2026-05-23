@@ -197,39 +197,38 @@ Either `thesis` or `ticker` MUST be present (curator can be scoped to a tracked 
 
 ---
 
-## Open decisions (need user input before code lands)
+## Resolved decisions
 
-### D1. Source-tier weighting in the indexer
+All four design choices were resolved by the user on 2026-05-23. Recorded here so Stage 1-5 implementation does not re-litigate them.
 
-**Question:** Should the indexer apply a tier weight when ranking similarity-search results, or leave tier as a metadata flag the thesis-analyst reads?
+### D1. Source-tier weighting in the indexer — **RESOLVED: metadata only**
 
-**Proposed default:** Tier is *metadata only* for MVP. Analyst sees tier in the neighbour list and reasons about it. Indexer-side weighting is a Stage 6 concern.
+**Decision:** Indexer ranks by pure embedding similarity. Tier appears in the neighbour list as a `source:<tier>` tag; the thesis-analyst reasons about it explicitly. Indexer-side tier weighting is deferred to a later stage (after we have data on how the analyst actually uses tier in practice).
 
-**Why this matters:** Indexer-side weighting is invisible to the analyst — convenient but opaque. Analyst-side reasoning is explicit but adds prompt load.
+**Implementation impact:** Stage 1 indexer behaviour unchanged. No tier-aware ranking logic in `tools/indexer/index_commentary.py`. Thesis-analyst prompt will need a one-line addition explaining how to interpret `source:<tier>` tags.
 
-### D2. Curator scope — per-thesis vs cross-thesis caching
+### D2. Curator scope — **RESOLVED: thesis-scope default, global opt-in**
 
-**Question:** When the EU-CPI curator fetches a Eurostat HICP page, is that entry written to `thesis/eu-cpi-may26-above-3pt1/commentary/` or to `commentary/global/` so future Euro-CPI theses can find it?
+**Decision:** All curator entries default to `thesis/<id>/commentary/` scope. A separate daemon flag `--allow-global-sources` enables `commentary/global/` writes when the curator marks an entry as non-thesis-specific. The flag stays off in MVP; we'll audit by hand for a week before flipping the default.
 
-**Proposed default:** Write to `commentary/global/` whenever the source is non-thesis-specific (Eurostat releases, FOMC statements, base rates). Write to `thesis/<id>/` only when the source is thesis-event-specific (e.g., a specific game's injury report). The curator decides scope per-entry.
+**Implementation impact:**
+- Stage 2 agent prompt: curator may emit `scope: "global"` but the *applier* downgrades it to thesis scope unless `--allow-global-sources` is set.
+- Stage 3 validator: when global writes are disabled, applier silently rewrites scope (logged via metrics counter `curator_global_downgrade_total`).
+- Stage 4 daemon: adds `--allow-global-sources` flag (default off).
 
-**Why this matters:** Global scope is the Library-of-Alexandria payoff. Thesis scope is safer (lower blast radius if a source turns out to be junk).
+### D3. Default `--sources-floor` value — **RESOLVED: floor=3** (user override of my recommendation)
 
-### D3. Default `--sources-floor` value
+**Decision:** Curator fires when a thesis has fewer than 3 commentary neighbours. Triggers on first daemon boot for almost every thesis (cold-start cost), and again whenever the existing seed-commentary mechanism wrote only 2 entries.
 
-**Question:** What should the recommended floor be for a daemon operator to start with?
+**Cost implication (note for operators):** This is the more aggressive of the two values floated. On a fresh kb_root with 10 theses and 6-hour cache TTL, expect ~10 curator dispatches in the first hour and then near-zero until the cache expires. Real money on first boot; cheap thereafter.
 
-**Proposed default:** `3` — matches the conversation framing and gives the analyst ≥1 source beyond the 2-neighbour precondition. Operators can override.
+**Implementation impact:** `--sources-floor` default in `tools/orchestrate_daemon.zig` set to `3`. Stage 5 cost guardrails (per-tick wallclock cap, per-tick fetch cap) become load-bearing — they're the safety net that prevents an unexpectedly cold daemon from burning the budget on boot.
 
-**Alternative:** `2` — matches existing precondition; curator only runs when there are zero neighbours, minimising spawns. Tradeoff: lower coverage growth.
+### D4. Curator model — **RESOLVED: Sonnet-only for MVP**
 
-### D4. Curator model
+**Decision:** Sonnet handles fetch, summarise, and persist. Hybrid Sonnet+Ollama is deferred until the bakeoff regression script proves Ollama can compress sources without losing texture — i.e. until we have evidence that Stages 7.1-7.3 of the bakeoff-report fixes have closed the compression-too-far behaviour.
 
-**Question:** Sonnet for everything, or hybrid (Sonnet for fetch/summarise, then Ollama for in-KB re-summarisation passes)?
-
-**Proposed default:** Sonnet-only for MVP. Hybrid is a Stage 6 cost optimisation.
-
-**Why this matters:** Sonnet+WebSearch is the cost driver. If the daemon runs the curator for 10 cold theses on first boot, that's 10× Sonnet dispatches with 3-5 WebFetch calls each. Real money. Worth quantifying before committing to a default-on configuration.
+**Implementation impact:** Stage 2 agent file `model:` line set to `sonnet` (not `inherit`). Stage 6 hybrid path remains a documented future direction, not a flag in this branch.
 
 ---
 
