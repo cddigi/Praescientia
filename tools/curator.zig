@@ -432,8 +432,8 @@ fn cmdTick(ctx: *common.Context) !u8 {
     };
     const counts = try applyEntries(ctx, kb_root, result, thesis_id, allow_global);
     try ctx.stdout.print(
-        "{{\"ok\":true,\"tick_id\":\"{s}\",\"thesis\":\"{s}\",\"written\":{d},\"downgraded\":{d},\"skipped\":{d},\"output_path\":\"{s}\"}}\n",
-        .{ tick_id, thesis_id, counts.written, counts.downgraded, counts.skipped, output_path },
+        "{{\"ok\":true,\"tick_id\":\"{s}\",\"thesis\":\"{s}\",\"written\":{d},\"downgraded\":{d},\"skipped\":{d},\"fetches_consumed\":{d},\"output_path\":\"{s}\"}}\n",
+        .{ tick_id, thesis_id, counts.written, counts.downgraded, counts.skipped, result.output.fetches_consumed, output_path },
     );
     return 0;
 }
