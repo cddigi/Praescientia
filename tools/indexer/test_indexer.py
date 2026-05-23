@@ -2,7 +2,8 @@
 
 Run via `pytest tools/indexer/` from the project root.
 
-llama-server is NOT required — the embed call is mocked.
+The Ollama daemon is NOT required — the embed call is mocked via
+pytest-httpserver.
 """
 
 from __future__ import annotations
@@ -20,6 +21,17 @@ def _write_jsonl_chain(chain_dir: Path, entries: list[dict]) -> None:
     chain_dir.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(entry, sort_keys=False) for entry in entries]
     (chain_dir / "main.jsonl").write_text("\n".join(lines) + "\n")
+
+
+def _unused_port() -> int:
+    """Bind a socket to port 0 (kernel picks an unused one), record the
+    port, then close so the next connect attempt gets ECONNREFUSED."""
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
 
 
 def test_tail_returns_entries_after_cursor(tmp_path: Path) -> None:
@@ -114,75 +126,64 @@ def test_cursors_overwrites_prior_value(tmp_path: Path) -> None:
     assert c.read() == {"k": "v2"}
 
 
-class _FakeHttpClient:
-    """Minimal stand-in for httpx.Client to avoid the network in unit tests."""
-
-    def __init__(self, response_payload, *, raises: BaseException | None = None) -> None:
-        self.response_payload = response_payload
-        self.raises = raises
-        self.last_url: str | None = None
-        self.last_json: dict | None = None
-
-    def post(self, url: str, *, json: dict, timeout: float | None = None):  # noqa: A002
-        self.last_url = url
-        self.last_json = json
-        if self.raises:
-            raise self.raises
-
-        class _R:
-            def __init__(self, payload):
-                self._payload = payload
-
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return self._payload
-
-        return _R(self.response_payload)
-
-    def close(self) -> None:
-        pass
+def test_ollama_embedder_happy_path(httpserver):
+    httpserver.expect_request(
+        "/api/embed",
+        method="POST",
+        json={"model": "bge-m3", "input": ["alpha", "beta"]},
+    ).respond_with_json({
+        "embeddings": [[0.1] * 1024, [0.2] * 1024]
+    })
+    from index_commentary import OllamaEmbedder
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    out = e.embed_batch(["alpha", "beta"])
+    assert len(out) == 2
+    assert len(out[0]) == 1024
+    assert out[0][0] == 0.1
+    assert out[1][0] == 0.2
 
 
-def test_embed_batch_calls_llama_server_with_input_list() -> None:
-    # llama-server's /embedding returns one object per input with .embedding.
-    fake = _FakeHttpClient([{"embedding": [0.0] * 1024}, {"embedding": [1.0] * 1024}])
-    embedder = ic.LlamaServerEmbedder("http://localhost:8001", client=fake)
-
-    vectors = embedder.embed_batch(["hello", "world"])
-
-    assert fake.last_url == "http://localhost:8001/embedding"
-    assert fake.last_json == {"input": ["hello", "world"]}
-    assert len(vectors) == 2
-    assert vectors[0][0] == 0.0
-    assert vectors[1][0] == 1.0
-    assert all(len(v) == 1024 for v in vectors)
+def test_ollama_embedder_connection_refused():
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=f"http://127.0.0.1:{_unused_port()}")
+    with pytest.raises(EmbedderUnavailable, match=r"unreachable"):
+        e.embed_batch(["alpha"])
 
 
-def test_embed_batch_handles_top_level_array_response() -> None:
-    """Older llama-server builds return [[...vec...], ...] directly."""
-    fake = _FakeHttpClient([[0.5] * 1024])
-    embedder = ic.LlamaServerEmbedder("http://localhost:8001", client=fake)
-    vectors = embedder.embed_batch(["solo"])
-    assert vectors == [[0.5] * 1024]
+def test_ollama_embedder_404_model_missing(httpserver):
+    httpserver.expect_request("/api/embed", method="POST").respond_with_data(
+        '{"error":"model not found"}', status=404
+    )
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    with pytest.raises(EmbedderUnavailable, match=r"returned 404"):
+        e.embed_batch(["alpha"])
 
 
-def test_embed_batch_returns_empty_for_empty_input() -> None:
-    fake = _FakeHttpClient([])
-    embedder = ic.LlamaServerEmbedder("http://localhost:8001", client=fake)
-    assert embedder.embed_batch([]) == []
-    # Shouldn't even fire the HTTP call.
-    assert fake.last_url is None
+def test_ollama_embedder_dim_mismatch(httpserver):
+    httpserver.expect_request("/api/embed", method="POST").respond_with_json({
+        "embeddings": [[0.1] * 512]
+    })
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    with pytest.raises(EmbedderUnavailable, match=r"vector 0: expected len 1024"):
+        e.embed_batch(["alpha"])
 
 
-def test_embed_batch_raises_embedder_unavailable_on_network_error() -> None:
-    import httpx
+def test_ollama_embedder_count_mismatch(httpserver):
+    httpserver.expect_request("/api/embed", method="POST").respond_with_json({
+        "embeddings": [[0.1] * 1024]  # 1 vector for 2 inputs
+    })
+    from index_commentary import OllamaEmbedder, EmbedderUnavailable
+    e = OllamaEmbedder(base_url=httpserver.url_for(""))
+    with pytest.raises(EmbedderUnavailable, match=r"1 vectors for 2 inputs"):
+        e.embed_batch(["alpha", "beta"])
 
-    fake = _FakeHttpClient(None, raises=httpx.ConnectError("nope"))
-    embedder = ic.LlamaServerEmbedder("http://localhost:8001", client=fake)
-    with pytest.raises(ic.EmbedderUnavailable):
-        embedder.embed_batch(["x"])
+
+def test_bge_embedder_protocol_accepts_ollama_impl():
+    from index_commentary import BGEEmbedder, OllamaEmbedder
+    e = OllamaEmbedder(base_url="http://localhost:11434")
+    assert isinstance(e, BGEEmbedder)
 
 
 def _make_row(hash_: str, *, scope_path="theses/sample/commentary", agent_run_id="r", tags=None, ts=1779000000000, vec_value=0.5):
@@ -349,7 +350,7 @@ def test_run_once_picks_up_new_entries_after_cursor(tmp_path: Path) -> None:
 
 
 def test_run_once_skips_unavailable_embedder_without_crashing(tmp_path: Path) -> None:
-    """If llama-server is down, the cursor stays put and we log + continue."""
+    """If the embedder is down, the cursor stays put and we log + continue."""
     kb_root = _seed_kb_root_with_commentary(tmp_path)
     lance_dir = kb_root / ".commentary_index" / "lance"
 
@@ -443,6 +444,24 @@ def test_build_query_app_similar_returns_404_for_unknown_anchor(tmp_path: Path) 
     with TestClient(app) as client:
         r = client.post("/similar", json={"anchor_hash": "z" * 64})
         assert r.status_code == 404
+
+
+def test_main_accepts_ollama_url_and_embed_model(tmp_path):
+    from index_commentary import build_arg_parser
+    args = build_arg_parser().parse_args([
+        "--kb-root", str(tmp_path),
+        "--once",
+        "--ollama-url", "http://example:11434",
+        "--embed-model", "bge-m3",
+    ])
+    assert args.ollama_url == "http://example:11434"
+    assert args.embed_model == "bge-m3"
+
+    defaults = build_arg_parser().parse_args(
+        ["--kb-root", str(tmp_path), "--once"]
+    )
+    assert defaults.ollama_url == "http://localhost:11434"
+    assert defaults.embed_model == "bge-m3"
 
 
 def test_run_once_handles_market_and_global_scopes(tmp_path: Path) -> None:

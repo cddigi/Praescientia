@@ -8,7 +8,7 @@
 # Prerequisites:
 #   - `zig build` has produced praescientia-{kb,server} in ./zig-out/bin/
 #   - tools/indexer/.venv set up via `cd tools/indexer && uv pip install -e ".[dev]"`
-#   - llama-server running with BGE-M3 GGUF on port 8001
+#   - `ollama serve` running with bge-m3 pulled (default endpoint http://localhost:11434)
 #     (the indexer's --serve mode depends on the embedder)
 #   - jq on $PATH
 #
@@ -39,10 +39,11 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 2
 fi
 
-LLAMA_URL="${LLAMA_URL:-http://localhost:8001}"
-if ! curl -sf "${LLAMA_URL}/health" >/dev/null && ! curl -sf "${LLAMA_URL}/" >/dev/null 2>&1; then
-    echo "FAIL: llama-server not reachable at $LLAMA_URL" >&2
-    echo "      start it with: llama-server --embeddings -m bge-m3-Q4_K_M.gguf --port 8001 --ctx-size 8192" >&2
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+if ! curl -sf "${OLLAMA_URL}/api/tags" >/dev/null; then
+    echo "FAIL: ollama not reachable at $OLLAMA_URL" >&2
+    echo "      start it with: ollama serve" >&2
+    echo "      and ensure bge-m3 is pulled: ollama pull bge-m3" >&2
     exit 2
 fi
 
@@ -84,7 +85,7 @@ echo "    wrote H1=${H1:0:12} H2=${H2:0:12} H3=${H3:0:12}"
 
 echo "==> 3/7 index pending commentary via the indexer (one-shot)"
 "$INDEXER_DIR/.venv/bin/python" "$INDEXER_DIR/index_commentary.py" \
-    --kb-root="$KB_ROOT" --llama-url="$LLAMA_URL" --once
+    --kb-root="$KB_ROOT" --ollama-url="$OLLAMA_URL" --embed-model=bge-m3 --once
 
 # Assert Lance directory has rows. We do this by querying the directory's
 # structure — LanceDB stores .lance files under <table>.lance/.
@@ -101,7 +102,7 @@ fi
 
 echo "==> 4/7 start the indexer in serve mode (background)"
 "$INDEXER_DIR/.venv/bin/python" "$INDEXER_DIR/index_commentary.py" \
-    --kb-root="$KB_ROOT" --llama-url="$LLAMA_URL" \
+    --kb-root="$KB_ROOT" --ollama-url="$OLLAMA_URL" --embed-model=bge-m3 \
     --serve --query-port="$QUERY_PORT" --interval=600 &
 INDEXER_PID=$!
 # Wait for /health to come up.

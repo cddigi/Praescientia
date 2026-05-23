@@ -3,7 +3,8 @@
 Single process, two roles:
 
   1. Loop:  scan kb_root commentary chains, embed unindexed entries via
-            llama-server, write rows into LanceDB, advance per-scope cursors.
+            an Ollama daemon, write rows into LanceDB, advance per-scope
+            cursors.
   2. Serve: FastAPI app exposing /similar (k-NN over the Lance table) and
             /health (row count).
 
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Protocol, runtime_checkable
 
 import httpx
 import lancedb
@@ -25,8 +26,21 @@ import pyarrow as pa
 VECTOR_DIM = 1024  # BGE-M3 dense output
 
 
+@runtime_checkable
+class BGEEmbedder(Protocol):
+    """Embedding backend contract. Implementations must return
+    `len(texts)` vectors of `VECTOR_DIM` (1024) floats each.
+    Raises EmbedderUnavailable on any backend failure.
+
+    close() releases any underlying client; not required to be idempotent."""
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]: ...
+    def close(self) -> None: ...
+
+
 class EmbedderUnavailable(RuntimeError):
-    """Raised when the llama-server HTTP call fails for any transport reason.
+    """Raised when the embedder HTTP call fails for any transport or
+    shape-validation reason.
 
     Caller decides whether to back off + retry — for the indexer loop, the
     cursor stays put and we sleep until the next pass.
@@ -119,64 +133,68 @@ class Cursors:
         tmp.replace(self.path)
 
 
-class LlamaServerEmbedder:
-    """Posts to a long-lived llama-server `--embeddings` daemon.
+class OllamaEmbedder:
+    """Posts to a long-lived Ollama daemon's `/api/embed` endpoint.
 
-    Endpoint contract — llama.cpp's /embedding accepts `{"input": ["text1", ...]}`
-    and returns either:
-      - the OpenAI-compatible shape: `[{"embedding": [...]}, ...]`
-      - the legacy shape:            `[[...vec...], ...]`
+    Endpoint contract — Ollama's /api/embed accepts
+    `{"model": "<name>", "input": ["text1", ...]}` and returns
+    `{"embeddings": [[...vec...], ...]}` (one vector per input, in order).
 
-    Both are handled.
+    All HTTP failures and shape mismatches surface as `EmbedderUnavailable`
+    so the indexer loop can skip the scope without crashing.
     """
 
-    def __init__(self, base_url: str, *, client=None, timeout: float = 60.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self._owns_client = client is None
-        self._client = client if client is not None else httpx.Client(timeout=timeout)
-
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "bge-m3",
+        timeout_s: float = 30.0,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._timeout_s = timeout_s
+        self._client = httpx.Client(timeout=timeout_s)
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        url = f"{self.base_url}/embedding"
+        url = f"{self._base_url}/api/embed"
         try:
-            resp = self._client.post(url, json={"input": texts}, timeout=self.timeout)
-            resp.raise_for_status()
+            resp = self._client.post(
+                url, json={"model": self._model, "input": texts}
+            )
+        except httpx.HTTPError as e:
+            raise EmbedderUnavailable(
+                f"ollama unreachable at {url}: {e}"
+            ) from e
+        if resp.status_code != 200:
+            raise EmbedderUnavailable(
+                f"ollama /api/embed returned {resp.status_code}: {resp.text[:200]}"
+            )
+        try:
             payload = resp.json()
-        except (httpx.TransportError, httpx.HTTPStatusError) as e:
-            raise EmbedderUnavailable(f"llama-server unreachable at {url}: {e}") from e
+        except ValueError as e:
+            raise EmbedderUnavailable(
+                f"ollama /api/embed returned non-JSON body: {e}"
+            ) from e
+        if not isinstance(payload, dict):
+            raise EmbedderUnavailable(
+                f"unexpected /api/embed response: expected object, got {type(payload).__name__}"
+            )
+        embeddings = payload.get("embeddings")
+        if not isinstance(embeddings, list) or len(embeddings) != len(texts):
+            raise EmbedderUnavailable(
+                f"unexpected /api/embed response shape: got {len(embeddings) if isinstance(embeddings, list) else type(embeddings).__name__} vectors for {len(texts)} inputs"
+            )
+        for i, vec in enumerate(embeddings):
+            if not isinstance(vec, list) or len(vec) != VECTOR_DIM:
+                raise EmbedderUnavailable(
+                    f"vector {i}: expected len {VECTOR_DIM}, got {len(vec) if isinstance(vec, list) else type(vec).__name__}"
+                )
+        return embeddings
 
-        # Handle both response shapes. OpenAI-compatible has `data` wrapper too
-        # depending on build; tolerate it.
-        if isinstance(payload, dict) and "data" in payload:
-            payload = payload["data"]
-        if not isinstance(payload, list):
-            raise EmbedderUnavailable(f"unexpected /embedding response shape: {type(payload)}")
-
-        vectors: list[list[float]] = []
-        for item in payload:
-            if isinstance(item, dict) and "embedding" in item:
-                emb = item["embedding"]
-            elif isinstance(item, list):
-                emb = item
-            else:
-                raise EmbedderUnavailable(f"unexpected /embedding row shape: {type(item)}")
-            # Modern llama.cpp wraps the pooled embedding in an outer batch
-            # dimension: [[...1024 floats...]]. Older builds emit a flat
-            # [1024]. Unwrap the single-row batch when we see it.
-            if emb and isinstance(emb[0], list):
-                if len(emb) != 1:
-                    raise EmbedderUnavailable(
-                        f"expected one pooled row per input, got {len(emb)}"
-                    )
-                emb = emb[0]
-            vectors.append(list(emb))
-        return vectors
+    def close(self) -> None:
+        self._client.close()
 
 
 # ----- LanceDB ---------------------------------------------------------------
@@ -270,7 +288,7 @@ def _row_from_entry(entry: dict, scope_path: str, vector: list[float]) -> dict:
     }
 
 
-def run_once(*, kb_root: Path, lance_dir: Path, embedder, verbose: bool = False) -> int:
+def run_once(*, kb_root: Path, lance_dir: Path, embedder: BGEEmbedder, verbose: bool = False) -> int:
     """One pass over every commentary scope. Returns the number of newly
     indexed rows. Embedder failures (`EmbedderUnavailable`) leave the cursor
     untouched for that scope and the loop continues to the next.
@@ -320,7 +338,7 @@ def run_loop(
     *,
     kb_root: Path,
     lance_dir: Path,
-    embedder,
+    embedder: BGEEmbedder,
     interval_seconds: float = 60.0,
     verbose: bool = False,
 ) -> None:
@@ -420,12 +438,17 @@ def build_query_app(table, *, lance_dir: Path | None = None):
 # ----- CLI entry --------------------------------------------------------------
 
 
-def _parse_args(argv: Optional[list[str]] = None):
+def build_arg_parser():
     import argparse
 
     p = argparse.ArgumentParser(prog="praescientia-indexer", description="Commentary indexer + query service")
     p.add_argument("--kb-root", required=True, type=Path, help="Path to the praescientia kb_root")
-    p.add_argument("--llama-url", default="http://localhost:8001", help="llama-server base URL")
+    p.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama daemon base URL")
+    p.add_argument(
+        "--embed-model",
+        default="bge-m3",
+        help="Embedding model tag to request from Ollama (default: bge-m3)",
+    )
     p.add_argument(
         "--lance-dir",
         type=Path,
@@ -437,13 +460,17 @@ def _parse_args(argv: Optional[list[str]] = None):
     p.add_argument("--query-port", type=int, default=8002, help="Port for the /similar service")
     p.add_argument("--serve", action="store_true", help="Run the query service alongside the loop")
     p.add_argument("--verbose", action="store_true")
-    return p.parse_args(argv)
+    return p
+
+
+def _parse_args(argv: Optional[list[str]] = None):
+    return build_arg_parser().parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     lance_dir = args.lance_dir or (args.kb_root / ".commentary_index" / "lance")
-    embedder = LlamaServerEmbedder(args.llama_url)
+    embedder = OllamaEmbedder(args.ollama_url, model=args.embed_model)
     try:
         if args.once:
             indexed = run_once(
@@ -479,7 +506,7 @@ def _run_serve_and_loop(
     *,
     kb_root: Path,
     lance_dir: Path,
-    embedder,
+    embedder: BGEEmbedder,
     interval: float,
     query_port: int,
     verbose: bool,
