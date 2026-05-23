@@ -511,3 +511,83 @@ def test_run_once_handles_market_and_global_scopes(tmp_path: Path) -> None:
     cursors = ic.Cursors(kb_root / ".commentary_index" / "cursors.json").read()
     assert cursors["markets/KXBTC/commentary"] == "1" * 64
     assert cursors["commentary/global"] == "2" * 64
+
+
+# ----- Source-frontmatter stripping ------------------------------------------
+
+
+def test_strip_source_frontmatter_removes_provenance_line() -> None:
+    body = (
+        "--- src: https://ec.europa.eu/eurostat/x fetched: 2026-05-23T14:00:00Z "
+        "valid_until: 2026-06-23T14:00:00Z ---\n"
+        "Euro-area HICP flash printed 2.2% YoY."
+    )
+    assert ic.strip_source_frontmatter(body) == "Euro-area HICP flash printed 2.2% YoY."
+
+
+def test_strip_source_frontmatter_passes_plain_bodies_through() -> None:
+    plain = "just prose, no frontmatter line"
+    assert ic.strip_source_frontmatter(plain) == plain
+
+
+def test_strip_source_frontmatter_handles_frontmatter_only_body() -> None:
+    body = "--- src: https://x fetched: t valid_until: u ---"
+    assert ic.strip_source_frontmatter(body) == ""
+
+
+def test_strip_source_frontmatter_leaves_malformed_line_intact() -> None:
+    # Prefix present but no closing suffix — don't mangle, embed as-is.
+    body = "--- src: https://x fetched: t valid_until: u\nbody"
+    assert ic.strip_source_frontmatter(body) == body
+
+
+class _CapturingEmbedder:
+    """Records the exact texts handed to embed_batch so a test can assert the
+    indexer stripped frontmatter before embedding."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        self.seen.extend(texts)
+        return [[0.0] * ic.VECTOR_DIM for _ in texts]
+
+    def close(self) -> None:
+        pass
+
+
+def test_run_once_strips_frontmatter_before_embedding(tmp_path: Path) -> None:
+    kb_root = tmp_path / "kb"
+    (kb_root / "markets").mkdir(parents=True)
+    (kb_root / "theses").mkdir(parents=True)
+    chain_dir = kb_root / "theses" / "sample" / "commentary"
+    _write_jsonl_chain(
+        chain_dir,
+        [
+            {
+                "tx_id": "tx_a",
+                "prev_hash": "0" * 64,
+                "hash": "a" * 64,
+                "payload": {
+                    "agent": {"model": "praescientia-source-curator", "run_id": "r1"},
+                    "body": (
+                        "--- src: https://eurostat.example/hicp fetched: 2026-05-23T14:00:00Z "
+                        "valid_until: 2026-06-23T14:00:00Z ---\n"
+                        "Euro HICP flash 2.2% YoY, below the 3.1% strike."
+                    ),
+                    "kind": "commentary",
+                    "tags": ["source:primary"],
+                    "ts": 1779000000000,
+                },
+            },
+        ],
+    )
+
+    embedder = _CapturingEmbedder()
+    indexed = ic.run_once(
+        kb_root=kb_root, lance_dir=kb_root / ".commentary_index" / "lance", embedder=embedder
+    )
+    assert indexed == 1
+    # The embedder must have seen prose only — no "--- src:" provenance line.
+    assert embedder.seen == ["Euro HICP flash 2.2% YoY, below the 3.1% strike."]
+    assert not any(t.startswith("--- src:") for t in embedder.seen)

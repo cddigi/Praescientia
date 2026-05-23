@@ -78,6 +78,14 @@ fn cmdRun(ctx: *common.Context) !u8 {
     const screener_cadence_str = ctx.flagValue("--screener-cadence");
     const screener_bin = ctx.flagValue("--screener-bin") orelse "./zig-out/bin/praescientia-screener";
 
+    // Stage 4: source-curator grounding flags.
+    const sources_floor_str = ctx.flagValue("--sources-floor");
+    const sources_curator_bin = ctx.flagValue("--sources-curator-bin") orelse "./zig-out/bin/praescientia-curator";
+    const sources_cache_ttl_str = ctx.flagValue("--sources-cache-ttl") orelse "6h";
+    const sources_thesis_cap_str = ctx.flagValue("--sources-thesis-cap") orelse "90s";
+    const sources_tick_fetch_cap_str = ctx.flagValue("--sources-tick-fetch-cap");
+    const allow_global_sources = hasBareFlag(ctx, "--allow-global-sources");
+
     const interval_seconds = parseDuration(interval_str) catch {
         try ctx.stderr.print(
             "error: --interval must be of the form Ns / Nm / Nh; got '{s}'\n",
@@ -117,6 +125,43 @@ fn cmdRun(ctx: *common.Context) !u8 {
         return 2;
     };
 
+    const sources_floor: u32 = if (sources_floor_str) |s|
+        std.fmt.parseInt(u32, s, 10) catch {
+            try ctx.stderr.print("error: --sources-floor must be a non-negative integer\n", .{});
+            return 2;
+        }
+    else
+        0;
+    const sources_cache_ttl_seconds = parseDuration(sources_cache_ttl_str) catch {
+        try ctx.stderr.print("error: --sources-cache-ttl must be Ns / Nm / Nh; got '{s}'\n", .{sources_cache_ttl_str});
+        return 2;
+    };
+    const sources_thesis_cap_seconds = parseDuration(sources_thesis_cap_str) catch {
+        try ctx.stderr.print("error: --sources-thesis-cap must be Ns / Nm / Nh; got '{s}'\n", .{sources_thesis_cap_str});
+        return 2;
+    };
+    const sources_tick_fetch_cap: u32 = if (sources_tick_fetch_cap_str) |s|
+        std.fmt.parseInt(u32, s, 10) catch {
+            try ctx.stderr.print("error: --sources-tick-fetch-cap must be a non-negative integer\n", .{});
+            return 2;
+        }
+    else
+        30;
+    const sources_cfg: SourcesConfig = .{
+        .floor = sources_floor,
+        .curator_bin = sources_curator_bin,
+        .cache_ttl_seconds = sources_cache_ttl_seconds,
+        .thesis_cap_seconds = sources_thesis_cap_seconds,
+        .tick_fetch_cap = sources_tick_fetch_cap,
+        .allow_global = allow_global_sources,
+    };
+    if (sources_floor > 0 and !per_thesis) {
+        try ctx.stderr.print(
+            "warning: --sources-floor has no effect without --per-thesis-cadence (grounding is per-thesis)\n",
+            .{},
+        );
+    }
+
     try installSignalHandlers();
 
     try ctx.stdout.print(
@@ -133,8 +178,16 @@ fn cmdRun(ctx: *common.Context) !u8 {
         try ctx.stdout.flush();
     }
 
+    if (sources_floor > 0) {
+        try ctx.stdout.print(
+            "[startup] sources-floor={d} curator_bin={s} cache_ttl={d}s thesis_cap={d}s tick_fetch_cap={d} allow_global={}\n",
+            .{ sources_floor, sources_curator_bin, sources_cache_ttl_seconds, sources_thesis_cap_seconds, sources_tick_fetch_cap, allow_global_sources },
+        );
+        try ctx.stdout.flush();
+    }
+
     if (per_thesis) {
-        return runLoopPerThesis(ctx, kb_root, interval_seconds, max_ticks, dry_run, no_dispatch, game_state_bin, screener_cadence_seconds, screener_bin, &last_screener_ms);
+        return runLoopPerThesis(ctx, kb_root, interval_seconds, max_ticks, dry_run, no_dispatch, game_state_bin, screener_cadence_seconds, screener_bin, &last_screener_ms, sources_cfg);
     }
 
     var tick_count: u32 = 0;
@@ -599,6 +652,185 @@ fn maybeRunScreenerDispatch(
     try saveLastScreenerMs(ctx, kb_root, now);
 }
 
+// ---------------------------------------------------------------------------
+// Source-curator grounding hook (Stage 4, --sources-floor).
+// ---------------------------------------------------------------------------
+//
+// Per-thesis grounding: before the daemon dispatches claude for a due thesis,
+// it counts that thesis's *source-backed* commentary (entries tagged
+// `source:<external-tier>`; model_synthesis analyst commentary does NOT count).
+// If the count is below --sources-floor and the per-thesis cache window has
+// elapsed, it spawns `praescientia-curator tick --thesis=<id>` to fetch and
+// persist sources, then lets the analyst run against the freshened neighbours.
+//
+// State persists to kb/.ticks/<thesis_id>.last_curator_run.ms (per thesis, so
+// a restart doesn't re-ground everything). The wallclock of each dispatch is
+// measured against --sources-thesis-cap; exceeding it is logged (Stage 5 will
+// promote this to a hard kill + metric).
+
+const SourcesConfig = struct {
+    floor: u32, // 0 = off
+    curator_bin: []const u8,
+    cache_ttl_seconds: u64,
+    thesis_cap_seconds: u64,
+    tick_fetch_cap: u32, // per-tick total fetch budget across all groundings
+    allow_global: bool,
+};
+
+/// Parse `fetches_consumed` out of a curator-tick stdout line. Returns 0 when
+/// the field is absent (stub bins, malformed output) so a missing count never
+/// blocks the grounding loop.
+fn parseFetchesConsumed(arena: std.mem.Allocator, stdout: []const u8) usize {
+    const slice = std.mem.trim(u8, stdout, " \r\n\t");
+    var parsed = std.json.parseFromSlice(std.json.Value, arena, slice, .{}) catch return 0;
+    defer parsed.deinit();
+    if (parsed.value != .object) return 0;
+    const v = parsed.value.object.get("fetches_consumed") orelse return 0;
+    if (v != .integer or v.integer < 0) return 0;
+    return @intCast(v.integer);
+}
+
+fn curatorStatePath(arena: std.mem.Allocator, thesis_id: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, ".ticks/{s}.last_curator_run.ms", .{thesis_id});
+}
+
+fn loadLastCuratorMs(ctx: *common.Context, kb_root: []const u8, thesis_id: []const u8) i64 {
+    const path = curatorStatePath(ctx.arena, thesis_id) catch return 0;
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, kb_root, .{}) catch return 0;
+    defer dir.close(ctx.io);
+    const bytes = dir.readFileAlloc(ctx.io, path, ctx.arena, .limited(64)) catch return 0;
+    const trimmed = std.mem.trim(u8, bytes, " \r\n\t");
+    return std.fmt.parseInt(i64, trimmed, 10) catch 0;
+}
+
+fn saveLastCuratorMs(ctx: *common.Context, kb_root: []const u8, thesis_id: []const u8, ms: i64) !void {
+    const path = try curatorStatePath(ctx.arena, thesis_id);
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, kb_root, .{}) catch |err| {
+        try ctx.stderr.print("[curator] open kb-root {s}: {t}\n", .{ kb_root, err });
+        return err;
+    };
+    defer dir.close(ctx.io);
+    // The .ticks state dir may not exist yet on a fresh kb (the claude tick
+    // lifecycle creates it lazily). Materialise it so the cache timestamp
+    // write doesn't fail on first grounding.
+    dir.createDirPath(ctx.io, ".ticks") catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => {},
+    };
+    const text = try std.fmt.allocPrint(ctx.arena, "{d}\n", .{ms});
+    try dir.writeFile(ctx.io, .{ .sub_path = path, .data = text });
+}
+
+/// Count a thesis's source-backed commentary entries — those carrying a
+/// `source:<tier>` tag where the tier is NOT model_synthesis. This is the
+/// grounding metric the --sources-floor gates on: analyst/loss-reflector
+/// commentary (model_synthesis) does not count as external grounding.
+fn countSourceNeighbors(ctx: *common.Context, kb_root: []const u8, thesis_id: []const u8) usize {
+    const rel = std.fmt.allocPrint(ctx.arena, "theses/{s}/commentary/main.jsonl", .{thesis_id}) catch return 0;
+    var dir = std.Io.Dir.cwd().openDir(ctx.io, kb_root, .{}) catch return 0;
+    defer dir.close(ctx.io);
+    const raw = dir.readFileAlloc(ctx.io, rel, ctx.arena, .unlimited) catch return 0;
+
+    var count: usize = 0;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, ctx.arena, line, .{}) catch continue;
+        defer parsed.deinit();
+        if (parsed.value != .object) continue;
+        const payload = parsed.value.object.get("payload") orelse continue;
+        if (payload != .object) continue;
+        const tags = payload.object.get("tags") orelse continue;
+        if (tags != .array) continue;
+        for (tags.array.items) |t| {
+            if (t != .string) continue;
+            if (std.mem.startsWith(u8, t.string, "source:") and
+                !std.mem.eql(u8, t.string, "source:model_synthesis"))
+            {
+                count += 1;
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+/// Ground a single due thesis if it's under the sources floor and the cache
+/// window has elapsed. Mirrors maybeRunScreenerDispatch's no-advance-on-failure
+/// discipline; the cache timestamp only advances on a successful dispatch.
+/// Outcome of a single thesis's grounding attempt, for the per-tick summary.
+const GroundOutcome = struct {
+    /// One of: "off", "cached", "grounded_enough", "skipped_no_dispatch",
+    /// "dispatched", "failed".
+    status: []const u8,
+    fetches: usize = 0,
+};
+
+fn maybeRunCuratorForThesis(
+    ctx: *common.Context,
+    kb_root: []const u8,
+    thesis_id: []const u8,
+    cfg: SourcesConfig,
+    no_dispatch: bool,
+) !GroundOutcome {
+    if (cfg.floor == 0) return .{ .status = "off" };
+
+    const now = nowMs(ctx.io);
+    const last = loadLastCuratorMs(ctx, kb_root, thesis_id);
+    const ttl_ms: i64 = @intCast(cfg.cache_ttl_seconds * 1000);
+    if (last != 0 and now - last < ttl_ms) return .{ .status = "cached" };
+
+    const neighbors = countSourceNeighbors(ctx, kb_root, thesis_id);
+    if (neighbors >= cfg.floor) return .{ .status = "grounded_enough" };
+
+    try ctx.stdout.print(
+        "[curator] {s}: {d} source neighbours < floor {d} — grounding\n",
+        .{ thesis_id, neighbors, cfg.floor },
+    );
+    try ctx.stdout.flush();
+
+    if (no_dispatch) {
+        try ctx.stdout.print("[curator] {s}: dispatch SKIPPED (--no-dispatch)\n", .{thesis_id});
+        try ctx.stdout.flush();
+        try saveLastCuratorMs(ctx, kb_root, thesis_id, now);
+        return .{ .status = "skipped_no_dispatch" };
+    }
+
+    var argv: std.array_list.Managed([]const u8) = .init(ctx.arena);
+    try argv.append(cfg.curator_bin);
+    try argv.append("tick");
+    try argv.append(try std.fmt.allocPrint(ctx.arena, "--thesis={s}", .{thesis_id}));
+    try argv.append(try std.fmt.allocPrint(ctx.arena, "--kb-root={s}", .{kb_root}));
+    if (cfg.allow_global) try argv.append("--allow-global-sources");
+
+    const spawn_at = nowMs(ctx.io);
+    const r = try runCmd(ctx, argv.items);
+    const elapsed_s = @divFloor(nowMs(ctx.io) - spawn_at, 1000);
+    if (elapsed_s > @as(i64, @intCast(cfg.thesis_cap_seconds))) {
+        try ctx.stderr.print(
+            "[curator] {s}: dispatch took {d}s > per-thesis cap {d}s\n",
+            .{ thesis_id, elapsed_s, cfg.thesis_cap_seconds },
+        );
+        try ctx.stderr.flush();
+    }
+    if (r.exit != 0) {
+        try ctx.stderr.print(
+            "[curator] {s}: {s} exited {d}; stderr tail: {s}\n",
+            .{ thesis_id, cfg.curator_bin, r.exit, firstLine(r.stderr) },
+        );
+        try ctx.stderr.flush();
+        return error.CuratorDispatchFailed; // do NOT advance — retry next tick
+    }
+    const fetches = parseFetchesConsumed(ctx.arena, r.stdout);
+    try ctx.stdout.print(
+        "[curator] {s}: grounding complete ({d} fetches): {s}\n",
+        .{ thesis_id, fetches, firstLine(std.mem.trim(u8, r.stdout, " \r\n\t")) },
+    );
+    try ctx.stdout.flush();
+    try saveLastCuratorMs(ctx, kb_root, thesis_id, now);
+    return .{ .status = "dispatched", .fetches = fetches };
+}
+
 fn findScheduleIndex(schedule: []const ScheduleEntry, thesis_id: []const u8) ?usize {
     for (schedule, 0..) |s, i| {
         if (std.mem.eql(u8, s.thesis_id, thesis_id)) return i;
@@ -870,6 +1102,7 @@ fn runLoopPerThesis(
     screener_cadence_seconds: ?u64,
     screener_bin: []const u8,
     last_screener_ms: *i64,
+    sources_cfg: SourcesConfig,
 ) !u8 {
     try ctx.stdout.print(
         "[startup] per-thesis cadence enabled (default_interval={d}s, game_state_bin={s})\n",
@@ -964,6 +1197,49 @@ fn runLoopPerThesis(
             .{ tick_count, due.items.len, theses_csv },
         );
         try ctx.stdout.flush();
+
+        // Grounding pass: ground each due thesis below the sources floor
+        // BEFORE the analyst dispatch, so claude's thesis-analyst sees the
+        // freshened neighbours. Blocking by design (per IMPLEMENTATION_PLAN
+        // Stage 4); a curator failure on one thesis is logged and the others
+        // proceed. The per-tick fetch cap bounds total grounding cost on a
+        // cold boot — once the budget is spent, remaining theses defer to the
+        // next tick (their analyst still runs, just ungrounded this tick).
+        if (sources_cfg.floor > 0) {
+            var g_dispatched: usize = 0;
+            var g_cached: usize = 0;
+            var g_enough: usize = 0;
+            var g_failed: usize = 0;
+            var g_fetches: usize = 0;
+            var g_deferred: usize = 0;
+            for (due.items) |tid| {
+                if (g_fetches >= sources_cfg.tick_fetch_cap) {
+                    g_deferred += 1;
+                    continue;
+                }
+                const outcome = maybeRunCuratorForThesis(ctx, kb_root, tid, sources_cfg, no_dispatch) catch |e| {
+                    try ctx.stderr.print("[curator] {s}: {t} (continuing)\n", .{ tid, e });
+                    try ctx.stderr.flush();
+                    g_failed += 1;
+                    continue;
+                };
+                g_fetches += outcome.fetches;
+                if (std.mem.eql(u8, outcome.status, "dispatched")) {
+                    g_dispatched += 1;
+                } else if (std.mem.eql(u8, outcome.status, "skipped_no_dispatch")) {
+                    g_dispatched += 1;
+                } else if (std.mem.eql(u8, outcome.status, "cached")) {
+                    g_cached += 1;
+                } else if (std.mem.eql(u8, outcome.status, "grounded_enough")) {
+                    g_enough += 1;
+                }
+            }
+            try ctx.stdout.print(
+                "[curator] tick {d} summary: grounded={d} cached={d} already_grounded={d} failed={d} deferred_over_cap={d} fetches={d}/{d}\n",
+                .{ tick_count, g_dispatched, g_cached, g_enough, g_failed, g_deferred, g_fetches, sources_cfg.tick_fetch_cap },
+            );
+            try ctx.stdout.flush();
+        }
 
         if (paused) {
             try logTickStep(ctx, tick_count, max_ticks, 0, "PAUSED sentinel — orchestrator will skip step 9");

@@ -72,6 +72,129 @@ pub const Scope = union(enum) {
     global,
 };
 
+// ----- Source-tier conventions (Stage 1, source-curator) ---------------------
+//
+// Source-backed commentary rides on the existing payload schema — no new
+// hashed fields. Two conventions carry the metadata:
+//
+//   1. A `source:<tier>` tag declares provenance quality. Exactly one is
+//      allowed. Pre-curator entries (analyst, loss-reflector) carry no such
+//      tag and are treated as `model_synthesis` for back-compat.
+//   2. When the tier is anything other than `model_synthesis`, the body MUST
+//      lead with a provenance frontmatter line of the exact form:
+//
+//        --- src: <url> fetched: <iso8601> valid_until: <iso8601> ---
+//
+//      followed by a newline and the prose. The Python indexer strips this
+//      line before embedding so the vector reflects content, not URLs/timestamps
+//      (see strip_source_frontmatter in tools/indexer/index_commentary.py — the
+//      two implementations must agree on this format byte-for-byte).
+
+pub const source_tag_prefix = "source:";
+
+pub const SourceTier = enum {
+    primary,
+    sportsbook,
+    news_org,
+    aggregator,
+    forum,
+    model_synthesis,
+
+    pub fn parse(s: []const u8) ?SourceTier {
+        if (std.mem.eql(u8, s, "primary")) return .primary;
+        if (std.mem.eql(u8, s, "sportsbook")) return .sportsbook;
+        if (std.mem.eql(u8, s, "news_org")) return .news_org;
+        if (std.mem.eql(u8, s, "aggregator")) return .aggregator;
+        if (std.mem.eql(u8, s, "forum")) return .forum;
+        if (std.mem.eql(u8, s, "model_synthesis")) return .model_synthesis;
+        return null;
+    }
+
+    pub fn key(self: SourceTier) []const u8 {
+        return switch (self) {
+            .primary => "primary",
+            .sportsbook => "sportsbook",
+            .news_org => "news_org",
+            .aggregator => "aggregator",
+            .forum => "forum",
+            .model_synthesis => "model_synthesis",
+        };
+    }
+
+    /// Non-synthesis tiers point at a fetched external source, so they require
+    /// the provenance frontmatter. `model_synthesis` is an agent's own
+    /// analysis — no external URL, no frontmatter.
+    pub fn requiresFrontmatter(self: SourceTier) bool {
+        return self != .model_synthesis;
+    }
+};
+
+/// Determine an entry's source tier from its tags.
+///   - zero `source:*` tags → `.model_synthesis` (back-compat: pre-curator
+///     entries carry no source tag and are treated as model synthesis).
+///   - exactly one          → the parsed tier.
+///   - more than one, or an unrecognised tier value → error.
+pub fn sourceTierFromTags(tags: []const []const u8) !SourceTier {
+    var found: ?SourceTier = null;
+    for (tags) |t| {
+        if (!std.mem.startsWith(u8, t, source_tag_prefix)) continue;
+        const tier = SourceTier.parse(t[source_tag_prefix.len..]) orelse return error.UnknownSourceTier;
+        if (found != null) return error.MultipleSourceTags;
+        found = tier;
+    }
+    return found orelse .model_synthesis;
+}
+
+pub const Frontmatter = struct {
+    src: []const u8,
+    fetched: []const u8,
+    valid_until: []const u8,
+    /// Body content after the frontmatter line (the leading newline consumed).
+    /// Empty slice when the body was only a frontmatter line.
+    rest: []const u8,
+};
+
+const fm_prefix = "--- src: ";
+const fm_fetched = " fetched: ";
+const fm_valid = " valid_until: ";
+const fm_suffix = " ---";
+
+/// Parse the leading provenance frontmatter line. The line is everything up to
+/// the first newline (or the whole body if there is none). The delimiters are
+/// space-bounded fixed markers; URLs and ISO-8601 timestamps never contain
+/// spaces, so the markers are unambiguous.
+pub fn parseFrontmatter(body: []const u8) !Frontmatter {
+    const line_end = std.mem.indexOfScalar(u8, body, '\n') orelse body.len;
+    const line = body[0..line_end];
+    const rest = if (line_end < body.len) body[line_end + 1 ..] else body[body.len..];
+
+    if (!std.mem.startsWith(u8, line, fm_prefix)) return error.MissingSourceFrontmatter;
+    if (!std.mem.endsWith(u8, line, fm_suffix)) return error.MalformedSourceFrontmatter;
+
+    const inner = line[fm_prefix.len .. line.len - fm_suffix.len];
+
+    const fetched_at = std.mem.indexOf(u8, inner, fm_fetched) orelse return error.MalformedSourceFrontmatter;
+    const src = inner[0..fetched_at];
+
+    const after_fetched = inner[fetched_at + fm_fetched.len ..];
+    const valid_at = std.mem.indexOf(u8, after_fetched, fm_valid) orelse return error.MalformedSourceFrontmatter;
+    const fetched = after_fetched[0..valid_at];
+
+    const valid_until = after_fetched[valid_at + fm_valid.len ..];
+
+    if (src.len == 0 or fetched.len == 0 or valid_until.len == 0) return error.MalformedSourceFrontmatter;
+
+    return .{ .src = src, .fetched = fetched, .valid_until = valid_until, .rest = rest };
+}
+
+/// Return the body with any leading provenance frontmatter removed. Bodies
+/// without a frontmatter line (every pre-curator and model_synthesis entry)
+/// are returned unchanged. Mirrors the indexer's `strip_source_frontmatter`.
+pub fn stripFrontmatter(body: []const u8) []const u8 {
+    const fm = parseFrontmatter(body) catch return body;
+    return fm.rest;
+}
+
 const empty_branches_json =
     "{\"active\":\"main\",\"branches\":[{\"name\":\"main\"," ++
     "\"head_hash\":\"0000000000000000000000000000000000000000000000000000000000000000\"," ++
@@ -326,6 +449,16 @@ pub fn validatePayload(p: *const CommentaryPayload) !void {
     for (p.inputs.market_set_heads) |h| {
         if (!isHexHash(h)) return error.InvalidHashFormat;
     }
+
+    // Source-tier convention: a non-synthesis tier declares a fetched external
+    // source, so the body must lead with the provenance frontmatter. Returns
+    // UnknownSourceTier / MultipleSourceTags / MissingSourceFrontmatter /
+    // MalformedSourceFrontmatter as appropriate. Entries with no `source:*` tag
+    // resolve to model_synthesis and are exempt (back-compat).
+    const tier = try sourceTierFromTags(p.tags);
+    if (tier.requiresFrontmatter()) {
+        _ = try parseFrontmatter(p.body);
+    }
 }
 
 fn isHexHash(s: []const u8) bool {
@@ -429,6 +562,110 @@ test "validatePayload rejects malformed parent_hash" {
     var p = validPayload();
     p.parent_hash = "abc";
     try std.testing.expectError(error.InvalidHashFormat, validatePayload(&p));
+}
+
+// ----- Source-tier conventions -----------------------------------------------
+
+test "SourceTier.parse round-trips every tier via key()" {
+    inline for (.{ "primary", "sportsbook", "news_org", "aggregator", "forum", "model_synthesis" }) |name| {
+        const tier = SourceTier.parse(name) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqualStrings(name, tier.key());
+    }
+    try std.testing.expect(SourceTier.parse("bogus") == null);
+}
+
+test "sourceTierFromTags defaults to model_synthesis when no source tag present" {
+    const tags = [_][]const u8{ "macro", "fresh-chain" };
+    try std.testing.expectEqual(SourceTier.model_synthesis, try sourceTierFromTags(&tags));
+}
+
+test "sourceTierFromTags returns the single declared tier" {
+    const tags = [_][]const u8{ "macro", "source:primary" };
+    try std.testing.expectEqual(SourceTier.primary, try sourceTierFromTags(&tags));
+}
+
+test "sourceTierFromTags rejects two source tags" {
+    const tags = [_][]const u8{ "source:primary", "source:forum" };
+    try std.testing.expectError(error.MultipleSourceTags, sourceTierFromTags(&tags));
+}
+
+test "sourceTierFromTags rejects an unknown tier value" {
+    const tags = [_][]const u8{"source:wikipedia"};
+    try std.testing.expectError(error.UnknownSourceTier, sourceTierFromTags(&tags));
+}
+
+test "parseFrontmatter extracts src, fetched, valid_until, and rest" {
+    const body =
+        "--- src: https://ec.europa.eu/eurostat/x fetched: 2026-05-23T14:00:00Z valid_until: 2026-06-23T14:00:00Z ---\n" ++
+        "Euro-area HICP flash printed 2.2% YoY.";
+    const fm = try parseFrontmatter(body);
+    try std.testing.expectEqualStrings("https://ec.europa.eu/eurostat/x", fm.src);
+    try std.testing.expectEqualStrings("2026-05-23T14:00:00Z", fm.fetched);
+    try std.testing.expectEqualStrings("2026-06-23T14:00:00Z", fm.valid_until);
+    try std.testing.expectEqualStrings("Euro-area HICP flash printed 2.2% YoY.", fm.rest);
+}
+
+test "parseFrontmatter rejects a body without the prefix" {
+    try std.testing.expectError(error.MissingSourceFrontmatter, parseFrontmatter("just prose, no frontmatter"));
+}
+
+test "parseFrontmatter rejects a frontmatter line missing the suffix" {
+    const body = "--- src: https://x fetched: t valid_until: u\nbody";
+    try std.testing.expectError(error.MalformedSourceFrontmatter, parseFrontmatter(body));
+}
+
+test "parseFrontmatter rejects a frontmatter line missing the fetched marker" {
+    const body = "--- src: https://x valid_until: u ---\nbody";
+    try std.testing.expectError(error.MalformedSourceFrontmatter, parseFrontmatter(body));
+}
+
+test "parseFrontmatter handles a body that is only a frontmatter line" {
+    const body = "--- src: https://x fetched: t valid_until: u ---";
+    const fm = try parseFrontmatter(body);
+    try std.testing.expectEqualStrings("https://x", fm.src);
+    try std.testing.expectEqualStrings("", fm.rest);
+}
+
+test "stripFrontmatter removes the line for source entries, passes plain bodies through" {
+    const sourced = "--- src: https://x fetched: t valid_until: u ---\nthe prose";
+    try std.testing.expectEqualStrings("the prose", stripFrontmatter(sourced));
+
+    const plain = "no frontmatter here";
+    try std.testing.expectEqualStrings(plain, stripFrontmatter(plain));
+}
+
+test "validatePayload requires frontmatter for a non-synthesis tier" {
+    var p = validPayload();
+    p.tags = &.{"source:news_org"};
+    p.body = "no frontmatter, just prose";
+    try std.testing.expectError(error.MissingSourceFrontmatter, validatePayload(&p));
+}
+
+test "validatePayload accepts a source entry whose body leads with frontmatter" {
+    var p = validPayload();
+    p.tags = &.{"source:primary"};
+    p.body = "--- src: https://x fetched: 2026-05-23T00:00:00Z valid_until: 2026-06-23T00:00:00Z ---\ngrounded prose";
+    try validatePayload(&p);
+}
+
+test "validatePayload exempts model_synthesis and tagless entries from frontmatter" {
+    // Explicit model_synthesis tier.
+    var synth = validPayload();
+    synth.tags = &.{"source:model_synthesis"};
+    synth.body = "plain analysis, no frontmatter";
+    try validatePayload(&synth);
+
+    // Back-compat: an existing entry with no source tag at all.
+    var legacy = validPayload();
+    legacy.tags = &.{"macro"};
+    legacy.body = "plain analysis, no frontmatter";
+    try validatePayload(&legacy);
+}
+
+test "validatePayload surfaces an unknown source tier" {
+    var p = validPayload();
+    p.tags = &.{"source:tabloid"};
+    try std.testing.expectError(error.UnknownSourceTier, validatePayload(&p));
 }
 
 test "scopeRelativePath maps each scope to the right chain dir" {
