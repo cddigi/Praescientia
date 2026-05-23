@@ -111,8 +111,13 @@ fn resolveScope(
     };
 }
 
-/// Stamp the source:<tier> tag onto the agent's tags if not already present.
-/// Caps at commentary.max_tags; the source tag takes priority if we're at the cap.
+/// Stamp the source:<tier> tag onto the agent's tags if not already present,
+/// and sanitize: drop empty or over-length (> max_tag_len) tags so the entry
+/// never trips commentary.validatePayload at write time. Agents sometimes emit
+/// tags embedding the full ticker (e.g. `market:KXTEMPNYCH-26MAY2319-T61.99`,
+/// 34 chars > the 32 cap) — an over-long *tag* must not sink an otherwise good
+/// source, so we drop it here rather than reject the dispatch. Caps the total
+/// at commentary.max_tags; the source tag takes priority.
 fn buildTags(
     arena: std.mem.Allocator,
     entry: curator_mod.CuratorEntry,
@@ -126,6 +131,7 @@ fn buildTags(
     if (!has_source) try list.append(source_tag);
     for (entry.tags) |t| {
         if (list.items.len >= commentary_mod.max_tags) break;
+        if (t.len == 0 or t.len > commentary_mod.max_tag_len) continue; // sanitize malformed tags
         try list.append(t);
     }
     return list.items;
@@ -473,6 +479,26 @@ test "buildTags — stamps source tier when absent" {
     const tags = try buildTags(arena, testEntry());
     try std.testing.expectEqualStrings("source:primary", tags[0]);
     try std.testing.expectEqual(@as(usize, 2), tags.len);
+}
+
+test "buildTags — drops empty and over-length tags (sanitization)" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var e = testEntry();
+    // 34-char ticker tag (> 32 cap), an empty tag, and a valid one.
+    e.tags = &.{ "market:KXTEMPNYCH-26MAY2319-T61.99", "", "topic:temperature" };
+    const tags = try buildTags(arena, e);
+    for (tags) |t| {
+        try std.testing.expect(t.len > 0 and t.len <= commentary_mod.max_tag_len);
+    }
+    // The valid tag survives; the over-long + empty ones are gone.
+    var saw_valid = false;
+    for (tags) |t| {
+        if (std.mem.eql(u8, t, "topic:temperature")) saw_valid = true;
+        try std.testing.expect(!std.mem.eql(u8, t, "market:KXTEMPNYCH-26MAY2319-T61.99"));
+    }
+    try std.testing.expect(saw_valid);
 }
 
 test "buildTags — does not double-stamp an existing source tag" {
