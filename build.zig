@@ -86,6 +86,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "praescientia-ticks", .src = "tools/ticks.zig", .step = "run-ticks" },
         .{ .name = "praescientia-orchestrate-daemon", .src = "tools/orchestrate_daemon.zig", .step = "run-orchestrate-daemon" },
         .{ .name = "praescientia-screener", .src = "tools/screener.zig", .step = "run-screener" },
+        .{ .name = "praescientia-curator", .src = "tools/curator.zig", .step = "run-curator" },
         .{ .name = "praescientia-game-state", .src = "tools/game_state.zig", .step = "run-game-state" },
     };
     for (stage4_tools) |t| {
@@ -199,6 +200,22 @@ pub fn build(b: *std.Build) void {
     const screener_tests = b.addTest(.{ .root_module = screener_test_mod });
     const run_screener_tests = b.addRunArtifact(screener_tests);
     test_step.dependOn(&run_screener_tests.step);
+
+    // tools/curator.zig has inline helper tests for the `validate` / `apply`
+    // subcommands of the source-curator CLI.
+    const curator_test_mod = b.createModule(.{
+        .root_source_file = b.path("tools/curator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "praescientia", .module = praescientia },
+            .{ .name = "common", .module = tool_common },
+        },
+    });
+    const curator_tests = b.addTest(.{ .root_module = curator_test_mod });
+    const run_curator_tests = b.addRunArtifact(curator_tests);
+    test_step.dependOn(&run_curator_tests.step);
 
     // tools/game_state.zig — inline helper tests for the classify CLI.
     const game_state_test_mod = b.createModule(.{
