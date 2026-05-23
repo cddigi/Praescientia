@@ -178,7 +178,7 @@ Either `thesis` or `ticker` MUST be present (curator can be scoped to a tracked 
 **Guardrails to add:**
 
 - Per-tick TOTAL fetch cap across all curator dispatches in one tick (daemon-level). Default `30`.
-- Per-tick total wallclock cap on curator phase (default `5min`). Excess theses fall back to "skip analyst, no grounding" with a metrics counter.
+- **Per-thesis** wallclock cap on each curator dispatch (`--sources-thesis-cap=DUR`, default `90s`). A slow or hanging curator on one thesis cannot starve the others — each thesis gets its own budget. If a thesis's curator exceeds the cap, that thesis falls back to "skip analyst, no grounding" with a metrics counter; sibling theses are unaffected. Total tick time is therefore bounded by `N_theses × thesis_cap`, which is acceptable under the per-thesis-cadence daemon since grounding is amortised across ticks (warm cache skips the curator entirely). This replaces the earlier per-tick wallclock cap, which had the failure mode of letting one cold thesis consume the whole tick's budget and silently skip every subsequent thesis's analyst.
 - New Prometheus counters in `src/kb/metrics.zig`:
   - `curator_dispatches_total{result=ok|error|skipped}`
   - `curator_entries_written_total{tier}`
@@ -243,13 +243,22 @@ All four design choices were resolved by the user on 2026-05-23. Recorded here s
 
 ## Status checklist
 
-- [ ] Stage 1: Source-tier + TTL conventions documented in `src/kb/commentary.zig` + tests pass
-- [ ] Stage 2: `.claude/agents/praescientia-source-curator.md` lands and hand-dispatch produces valid envelope
-- [ ] Stage 3: `src/kb/curator.zig` + `tools/curator.zig` + `scripts/curator_smoke.sh` green
-- [ ] Stage 4: Daemon hook lands + `scripts/curator_daemon_smoke.sh` green
-- [ ] Stage 5: `scripts/ollama_vs_sonnet_smoke.sh` green; Ollama gap measurably closes
+- [x] Stage 1: Source-tier + TTL conventions documented in `src/kb/commentary.zig` + tests pass (349/349 zig, 33/33 pytest; 2026-05-23) — commit 6850ed0
+- [x] Stage 2: `.claude/agents/praescientia-source-curator.md` lands and hand-dispatch produces valid envelope (verified via live Eurostat/ECB fetch; 6 tool round-trips) — commit b5549b5
+- [x] Stage 3: `src/kb/curator.zig` + `tools/curator.zig` + `scripts/curator_smoke.sh` green (370/370 zig) — commit f5a91ac
+- [x] Stage 4: Daemon hook lands + `scripts/curator_daemon_smoke.sh` green — commit 3951bd5
+- [x] Stage 5: grounding regression green; curator measurably closes the gap (ungrounded=0 vs grounded=6-7 supplied-figure citations) — commit d613097
 
-Remove this file when all five stages are complete and the smoke script is canonicalised.
+All five stages complete (2026-05-23). Remove this file once the PR merges.
+
+---
+
+## Realized-scope deviations (for the reviewer)
+
+1. **Stage 5 regression named `curator_grounding_regression.sh`, not `ollama_vs_sonnet_smoke.sh`.** A true Ollama-vs-Sonnet diff needs paid Sonnet/claude calls and can't be a deterministic local gate. The runnable proxy isolating the same causal claim is grounded-vs-ungrounded *Ollama* (one model, two inputs differing only in source neighbours) — fully local and free.
+2. **No `metrics.zig` counters.** Those are process-global atomics exposed by the server's `/metrics`, but the daemon is a separate process; daemon-side counters would never surface there. The daemon emits a per-tick curator summary line to stdout instead — the honest operational signal for a separate-process daemon.
+3. **Per-thesis wallclock cap is measured + logged, not a hard kill.** A true subprocess timeout-kill needs async plumbing the current Zig stdlib usage doesn't have; deferred. The cap surfaces over-budget dispatches in the logs.
+4. **Empirical finding (regression):** curator-supplied figures reliably reach `domain_state` / `base_rate` / `commentary_review`, but `external_cross_ref` only sometimes — Qwen reads that field as "sources I fetched myself," distinct from in-context neighbours. Corroborates bakeoff §7.2 (the agent prompt still needs a positive example for that field). Tracked as informational in the regression, not a hard assertion.
 
 ---
 
