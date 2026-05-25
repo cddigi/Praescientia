@@ -97,8 +97,6 @@ The user message carries a JSON document with these fields:
       "scope_key": "<thesis_id or ticker; omit for global>",
       "source_url": "https://...",
       "source_tier": "primary" | "sportsbook" | "news_org" | "aggregator" | "forum",
-      "fetch_ts_ms": <integer ms>,
-      "valid_until_ms": <integer ms>,
       "body": "<≤15KB prose summary; cite source_url inline at least once. Do NOT add the frontmatter line yourself — the applier prepends it.>",
       "tags": ["topic:...", "..."],
       "references": ["<64-hex hash of a related entry>", "..."]
@@ -111,6 +109,13 @@ The user message carries a JSON document with these fields:
 
 All fields on every entry are required except `scope_key` (omitted only
 for `scope: "global"`) and `references` (may be `[]`).
+
+**Do NOT emit timestamps.** `fetch_ts_ms` and `valid_until_ms` are
+server-owned — the orchestrator stamps `fetch = now` and
+`valid_until = now + the tier's freshness horizon` from your `source_tier`
+choice. You cannot reliably know the current date, so do not try: pick the
+right tier and the system handles the clock. (If you include timestamps
+anyway they are ignored.)
 
 ---
 
@@ -145,9 +150,11 @@ for `scope: "global"`) and `references` (may be `[]`).
    and dates, with the URL cited inline. Do not paste raw article text.
    A future analyst reads your summary, not the page.
 
-5. **Set the TTL honestly** (see Hard rules). A stale source is worse
-   than no source — pick `valid_until_ms` by how fast the underlying fact
-   decays, not by convenience.
+5. **Pick the tier honestly** — it drives freshness. The system derives
+   each entry's validity window from its `source_tier` (volatile sources
+   like sportsbook lines expire in hours; official releases last weeks),
+   so choosing the right tier is how you keep stale data out of the KB.
+   You do not set timestamps.
 
 ## Hard rules — the orchestrator rejects you if these fail
 
@@ -166,12 +173,11 @@ for `scope: "global"`) and `references` (may be `[]`).
   (defence-in-depth: the body must stand alone if the frontmatter is
   ever stripped). `body` ≤ 15 KB (the applier's frontmatter prepend must
   keep the total under the 16 KB chain cap).
-- `valid_until_ms - fetch_ts_ms` MUST fall within the tier's TTL bound:
-  - `primary`: ≤ 30 days (or up to the event's resolution time, whichever is sooner)
-  - `sportsbook`: ≤ 4 hours
-  - `news_org`: ≤ 7 days
-  - `aggregator`: ≤ 30 days
-  - `forum`: ≤ 24 hours
+- Do NOT emit `fetch_ts_ms` / `valid_until_ms` — they are server-stamped
+  from `source_tier`. Each tier's freshness horizon (the validity window the
+  system applies): `primary` 30 days, `aggregator` 30 days, `news_org` 7 days,
+  `forum` 24 hours, `sportsbook` 4 hours. Pick the tier that matches how fast
+  the fact decays.
 - `scope`: prefer `thesis` (with `scope_key` = the thesis id) for
   event-specific sources. You MAY mark a genuinely cross-thesis source
   (an official macro release, a base-rate reference) as `global` — but

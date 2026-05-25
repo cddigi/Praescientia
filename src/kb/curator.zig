@@ -13,10 +13,15 @@
 //!   5. `source_url` is a non-empty http/https URL.
 //!   6. body contains `source_url` inline (defence-in-depth) and, once the
 //!      provenance frontmatter is prepended at apply-time, stays ≤ 16 KB.
-//!   7. Per-tier TTL bound: `0 < valid_until_ms - fetch_ts_ms ≤ tierMax`.
-//!   8. `valid_until_ms > now_ms + 60_000` (no pre-expired entries).
-//!   9. No two entries share the same `source_url + scope + scope_key`.
-//!  10. `references[]` are 64-char hex (chain-existence is checked at apply).
+//!   7. No two entries share the same `source_url + scope + scope_key`.
+//!   8. `references[]` are 64-char hex (chain-existence is checked at apply).
+//!
+//! Timestamps are server-owned: `fetch_ts_ms` and `valid_until_ms` emitted by
+//! the agent are IGNORED and overwritten with `fetch = now`,
+//! `valid_until = now + tierTtlMaxMs(tier)`. The agent cannot reliably know the
+//! current date (the live 3-market test had it stamp 2025 dates and zero TTLs),
+//! so tier choice — a closed enum we validate — is the only timestamp input it
+//! controls. This makes per-tier-bound and pre-expiry violations unreachable.
 //!
 //! Cross-KB URL-keyed replacement (the "if a non-expired entry with the same
 //! URL already exists, replace not append" rule) is an apply-time concern that
@@ -241,12 +246,16 @@ fn parseEntry(arena: Allocator, obj: std.json.ObjectMap, now_ms: i64) Validation
     if (url_v != .string or url_v.string.len == 0 or !isHttpUrl(url_v.string)) return error.InvalidSourceUrl;
     const source_url = url_v.string;
 
-    const fetch_ts_ms = intField(obj, "fetch_ts_ms") orelse return error.TtlOutOfBounds;
-    const valid_until_ms = intField(obj, "valid_until_ms") orelse return error.TtlOutOfBounds;
-
-    const ttl = valid_until_ms - fetch_ts_ms;
-    if (ttl <= 0 or ttl > tierTtlMaxMs(tier)) return error.TtlOutOfBounds;
-    if (valid_until_ms <= now_ms + 60_000) return error.EntryExpired;
+    // Server-owned timestamps. The agent cannot reliably know "now" — the live
+    // 3-market test had the BTC dispatch stamp 2025 dates (its training-era
+    // clock) and the NYC dispatch set a zero TTL, both rejected. So we ignore
+    // any fetch_ts_ms / valid_until_ms the agent emitted and stamp them here:
+    // fetch = now, valid_until = now + the tier's freshness horizon. Tier choice
+    // (a closed enum we already validate) is the only timestamp input the agent
+    // controls. This makes TtlOutOfBounds / EntryExpired unreachable on real
+    // input by construction.
+    const fetch_ts_ms = now_ms;
+    const valid_until_ms = now_ms + tierTtlMaxMs(tier);
 
     const body_v = obj.get("body") orelse return error.BodyTooLong;
     if (body_v != .string) return error.BodyTooLong;
@@ -286,12 +295,6 @@ fn parseStringArray(arena: Allocator, obj: std.json.ObjectMap, key: []const u8) 
     return list.items;
 }
 
-fn intField(obj: std.json.ObjectMap, key: []const u8) ?i64 {
-    const v = obj.get(key) orelse return null;
-    if (v != .integer) return null;
-    return v.integer;
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -322,6 +325,34 @@ test "validate — positive single primary entry" {
     try std.testing.expectEqual(@as(usize, 1), result.output.entries.len);
     try std.testing.expectEqual(@as(usize, 1), result.counts.primary);
     try std.testing.expectEqual(Scope.thesis, result.output.entries[0].scope);
+}
+
+test "validate — server-stamps fetch/valid_until from now + tier, ignoring agent values" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // Agent supplies a stale 2025 fetch and a nonsense 1000-year TTL — both ignored.
+    const body = try std.fmt.allocPrint(arena,
+        \\{{"tick_id":"{s}","entries":[{{"scope":"thesis","scope_key":"eu-cpi","source_url":"https://x.test/a","source_tier":"primary","fetch_ts_ms":1700000000000,"valid_until_ms":9999999999999,"body":"see https://x.test/a","tags":[],"references":[]}}],"fetches_consumed":1,"summary":""}}
+    , .{test_tick});
+    const result = try validate(arena, body, test_tick, test_now, 5);
+    const e = result.output.entries[0];
+    try std.testing.expectEqual(test_now, e.fetch_ts_ms);
+    try std.testing.expectEqual(test_now + tierTtlMaxMs(.primary), e.valid_until_ms);
+}
+
+test "validate — accepts an entry that omits agent timestamps entirely" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // No fetch_ts_ms / valid_until_ms fields at all — server stamps them.
+    const body = try std.fmt.allocPrint(arena,
+        \\{{"tick_id":"{s}","entries":[{{"scope":"thesis","scope_key":"eu-cpi","source_url":"https://x.test/a","source_tier":"news_org","body":"see https://x.test/a","tags":[],"references":[]}}],"fetches_consumed":1,"summary":""}}
+    , .{test_tick});
+    const result = try validate(arena, body, test_tick, test_now, 5);
+    const e = result.output.entries[0];
+    try std.testing.expectEqual(test_now, e.fetch_ts_ms);
+    try std.testing.expectEqual(test_now + tierTtlMaxMs(.news_org), e.valid_until_ms);
 }
 
 test "validate — rejects tick_id mismatch" {
@@ -378,29 +409,9 @@ test "validate — rejects body missing the source_url inline" {
     try std.testing.expectError(error.BodyMissingUrl, validate(arena, body, test_tick, test_now, 5));
 }
 
-test "validate — rejects TTL beyond the tier bound" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    // sportsbook bound is 4h; give it 7 days.
-    const body = try std.fmt.allocPrint(arena,
-        \\{{"tick_id":"{s}","entries":[{{"scope":"thesis","scope_key":"x","source_url":"https://x.test/a","source_tier":"sportsbook","fetch_ts_ms":{d},"valid_until_ms":{d},"body":"see https://x.test/a","tags":[],"references":[]}}],"fetches_consumed":0,"summary":""}}
-    , .{ test_tick, test_fetch, test_valid });
-    try std.testing.expectError(error.TtlOutOfBounds, validate(arena, body, test_tick, test_now, 5));
-}
-
-test "validate — rejects an already-expired entry" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    // valid_until in the past relative to now.
-    const past_fetch: i64 = test_now - 10 * 24 * 60 * 60 * 1000;
-    const past_valid: i64 = test_now - 1000;
-    const body = try std.fmt.allocPrint(arena,
-        \\{{"tick_id":"{s}","entries":[{{"scope":"thesis","scope_key":"x","source_url":"https://x.test/a","source_tier":"primary","fetch_ts_ms":{d},"valid_until_ms":{d},"body":"see https://x.test/a","tags":[],"references":[]}}],"fetches_consumed":0,"summary":""}}
-    , .{ test_tick, past_fetch, past_valid });
-    try std.testing.expectError(error.EntryExpired, validate(arena, body, test_tick, test_now, 5));
-}
+// (Former TtlOutOfBounds / EntryExpired rejection tests removed: timestamps are
+// now server-stamped, so a stale or over-bound agent value can no longer reach
+// validation — see the two server-stamping tests above.)
 
 test "validate — rejects duplicate source within the dispatch" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

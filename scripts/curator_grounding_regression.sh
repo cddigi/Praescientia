@@ -103,9 +103,20 @@ print("  wrote ungrounded.json (2 neighbours) + grounded.json (4 neighbours, 2 s
 PY
 
 run_analyst() {
-  local infile="$1" outfile="$2"
-  "$BIN/praescientia-ollama-agent" --role=thesis-analyst --model="$MODEL" \
-    --timeout-ms=600000 < "$infile" > "$outfile" 2>/dev/null
+  # Retry on transient local-model failures: Ollama agent exit 3 ("no JSON
+  # envelope") is probabilistic — a 27B model occasionally emits prose-only.
+  # Retry up to 3x before treating it as a real failure.
+  local infile="$1" outfile="$2" attempt=1 max=3
+  while [ "$attempt" -le "$max" ]; do
+    if "$BIN/praescientia-ollama-agent" --role=thesis-analyst --model="$MODEL" \
+         --timeout-ms=600000 < "$infile" > "$outfile" 2>/dev/null \
+       && jq -e . "$outfile" >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "  (analyst attempt $attempt/$max produced no valid JSON; retrying)" >&2
+    attempt=$((attempt + 1))
+  done
+  return 1
 }
 
 STOCK="No external reference identified."
