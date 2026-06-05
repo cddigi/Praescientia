@@ -231,10 +231,10 @@ All Kalshi tools accept `--demo` (default) / `--live` / `--verbose` / `--help`.
 
 ## GitButler Workflow
 
-GitButler (`but`) is the canonical version-control interface — never use `git` write commands. The full skill lives at `~/.claude/skills/gitbutler/`. Mandatory points:
+GitButler (`but`) is the canonical version-control interface — never use `git` write commands. The full skill lives at `~/.claude/skills/gitbutler/`. As of GitButler 0.20 the `but claude` auto-commit hooks no longer exist — commits are made explicitly via `but commit`; the Stop hook only captures transcripts (`but agentlog hook --agent claude`). Mandatory points:
 
 - `but status -fv` before any mutation to gather fresh CLI IDs.
-- After `but branch new <name>`, **immediately** run `but mark <name>` so the post-tool hook auto-stages to the intended branch instead of creating a parallel `cd-branch-N`. Without this, work gets scattered across two virtual branches that have to be consolidated by hand in the GUI.
+- After `but branch new <name>`, **immediately** run `but mark <name>` so GitButler's auto-stage rule routes changes to the intended branch instead of creating a parallel `cd-branch-N`. Without this, work gets scattered across two virtual branches that have to be consolidated by hand in the GUI.
 - Use `--status-after` on every mutation so the IDs in the output match the workspace.
 - File IDs from `but status -fv` / `but diff` / `but show`; never hardcode.
 - `but commit <branch> -m "..." --changes <id1>,<id2> --status-after` is the standard commit shape.
